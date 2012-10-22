@@ -26,13 +26,22 @@ static unsigned adjustFixupValue(unsigned Kind, uint64_t Value) {
   switch (Kind) {
     // FIXME: List all valid fixups instead
     default:
-      break;
+      return 0;
     case OR1K::fixup_OR1K_REL26:
+    case OR1K::fixup_OR1K_PLT26:
       // Currently this is used only for branches
       // Branch instructions require the value shifted down to to provide
       // a larger address range that can be branched to.
       Value >>= 2;
     break;
+    // Values taken from BFD Relocation definitions
+    case OR1K::fixup_OR1K_HI16_INSN:
+    case OR1K::fixup_OR1K_GOTPC_HI16:
+    case OR1K::fixup_OR1K_GOTOFF_HI16:
+      Value >>= 16;
+      Value &= 0xffff;
+    break;
+
   }
   return Value;
 }
