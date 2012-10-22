@@ -294,11 +294,11 @@ let isAsCheapAsAMove = 1 in {
 let Uses = [SR], Predicates = [HasCmov] in
   def CMOV : ALU1_RR<0xe, "l.cmov", OR1Kselectcc>;
 
-let isCommutable=1, Predicates=[HasMul] in {
+let isCommutable=1, Predicates=[HasMul], op2=3 in {
   def MUL  : ALU1_RR<0x6, "l.mul", mul>;
   def MULU : ALU1_RR<0xb, "l.mulu", mul>;
 }
-let Predicates=[HasDiv] in {
+let Predicates=[HasDiv], op2=3 in {
   def DIV  : ALU1_RR<0x9, "l.div", sdiv>;
   def DIVU : ALU1_RR<0xa, "l.divu", udiv>;
 }
