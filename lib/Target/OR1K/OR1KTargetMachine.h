@@ -21,6 +21,7 @@
 //#include "OR1KIntrinsicInfo.h"
 #include "OR1KFrameLowering.h"
 #include "llvm/Target/TargetMachine.h"
+#include "llvm/Target/TargetTransformImpl.h"
 #include "llvm/DataLayout.h"
 #include "llvm/Target/TargetFrameLowering.h"
 
@@ -35,6 +36,8 @@ namespace llvm {
     OR1KSelectionDAGInfo TSInfo;
     OR1KFrameLowering   FrameLowering;
 /*    OR1KIntrinsicInfo IntrinsicInfo;*/
+    ScalarTargetTransformImpl STTI;
+    VectorTargetTransformImpl VTTI;
   public:
     OR1KTargetMachine(const Target &T, StringRef TT,
                         StringRef CPU, StringRef FS,
@@ -66,6 +69,12 @@ namespace llvm {
 /*    const TargetIntrinsicInfo *getIntrinsicInfo() const
     { return &IntrinsicInfo; }
 */
+
+  virtual const ScalarTargetTransformInfo *getScalarTargetTransformInfo() const
+  { return &STTI; }
+  
+  virtual const VectorTargetTransformInfo *getVectorTargetTransformInfo() const 
+  { return &VTTI; }
     // Pass Pipeline Configuration
     virtual TargetPassConfig *createPassConfig(PassManagerBase &PM);
   };
