@@ -16,7 +16,7 @@
 #include "llvm/Analysis/ConstantFolding.h"
 #include "llvm/Analysis/InstructionSimplify.h"
 #include "llvm/Analysis/MemoryBuiltins.h"
-#include "llvm/Target/TargetData.h"
+#include "llvm/DataLayout.h"
 #include "llvm/Target/TargetLibraryInfo.h"
 #include "llvm/Support/ConstantRange.h"
 #include "llvm/Support/GetElementPtrTypeIterator.h"
@@ -474,7 +474,7 @@ FoldCmpLoadFromIndexedGlobal(GetElementPtrInst *GEP, GlobalVariable *GV,
 /// If we can't emit an optimized form for this expression, this returns null.
 ///
 static Value *EvaluateGEPOffsetExpression(User *GEP, InstCombiner &IC) {
-  TargetData &TD = *IC.getTargetData();
+  DataLayout &TD = *IC.getDataLayout();
   gep_type_iterator GTI = gep_type_begin(GEP);
 
   // Check to see if this gep only has a single variable index.  If so, and if
@@ -2895,10 +2895,6 @@ Instruction *InstCombiner::visitFCmpInst(FCmpInst &I) {
         if (!RHSF)
           break;
 
-        // We can't convert a PPC double double.
-        if (RHSF->getType()->isPPC_FP128Ty())
-          break;
-
         const fltSemantics *Sem;
         // FIXME: This shouldn't be here.
         if (LHSExt->getSrcTy()->isHalfTy())
@@ -2911,6 +2907,8 @@ Instruction *InstCombiner::visitFCmpInst(FCmpInst &I) {
           Sem = &APFloat::IEEEquad;
         else if (LHSExt->getSrcTy()->isX86_FP80Ty())
           Sem = &APFloat::x87DoubleExtended;
+        else if (LHSExt->getSrcTy()->isPPC_FP128Ty())
+          Sem = &APFloat::PPCDoubleDouble;
         else
           break;
 

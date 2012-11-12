@@ -118,6 +118,9 @@ protected:
   /// HasBMI2 - Processor has BMI2 instructions.
   bool HasBMI2;
 
+  /// HasRTM - Processor has RTM instructions.
+  bool HasRTM;
+
   /// IsBTMemSlow - True if BT (bit test) of memory instructions are slow.
   bool IsBTMemSlow;
 
@@ -219,6 +222,7 @@ public:
   bool hasLZCNT() const { return HasLZCNT; }
   bool hasBMI() const { return HasBMI; }
   bool hasBMI2() const { return HasBMI2; }
+  bool hasRTM() const { return HasRTM; }
   bool isBTMemSlow() const { return IsBTMemSlow; }
   bool isUnalignedMemAccessFast() const { return IsUAMemFast; }
   bool hasVectorUAMem() const { return HasVectorUAMem; }
@@ -304,12 +308,6 @@ public:
   /// memset with zero passed as the second argument. Otherwise it
   /// returns null.
   const char *getBZeroEntry() const;
-
-  /// getSpecialAddressLatency - For targets where it is beneficial to
-  /// backschedule instructions that compute addresses, return a value
-  /// indicating the number of scheduling cycles of backscheduling that
-  /// should be attempted.
-  unsigned getSpecialAddressLatency() const;
 
   /// enablePostRAScheduler - run for Atom optimization.
   bool enablePostRAScheduler(CodeGenOpt::Level OptLevel,

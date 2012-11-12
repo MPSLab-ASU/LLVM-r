@@ -198,12 +198,6 @@ INITIALIZE_PASS_END(RegisterCoalescer, "simple-register-coalescing",
 
 char RegisterCoalescer::ID = 0;
 
-static unsigned compose(const TargetRegisterInfo &tri, unsigned a, unsigned b) {
-  if (!a) return b;
-  if (!b) return a;
-  return tri.composeSubRegIndices(a, b);
-}
-
 static bool isMoveInstr(const TargetRegisterInfo &tri, const MachineInstr *MI,
                         unsigned &Src, unsigned &Dst,
                         unsigned &SrcSub, unsigned &DstSub) {
@@ -214,8 +208,8 @@ static bool isMoveInstr(const TargetRegisterInfo &tri, const MachineInstr *MI,
     SrcSub = MI->getOperand(1).getSubReg();
   } else if (MI->isSubregToReg()) {
     Dst = MI->getOperand(0).getReg();
-    DstSub = compose(tri, MI->getOperand(0).getSubReg(),
-                     MI->getOperand(3).getImm());
+    DstSub = tri.composeSubRegIndices(MI->getOperand(0).getSubReg(),
+                                      MI->getOperand(3).getImm());
     Src = MI->getOperand(2).getReg();
     SrcSub = MI->getOperand(2).getSubReg();
   } else
@@ -354,7 +348,8 @@ bool CoalescerPair::isCoalescable(const MachineInstr *MI) const {
     if (DstReg != Dst)
       return false;
     // Registers match, do the subregisters line up?
-    return compose(TRI, SrcIdx, SrcSub) == compose(TRI, DstIdx, DstSub);
+    return TRI.composeSubRegIndices(SrcIdx, SrcSub) ==
+           TRI.composeSubRegIndices(DstIdx, DstSub);
   }
 }
 
@@ -430,7 +425,8 @@ bool RegisterCoalescer::adjustCopiesBackFrom(const CoalescerPair &CP,
   // If AValNo is defined as a copy from IntB, we can potentially process this.
   // Get the instruction that defines this value number.
   MachineInstr *ACopyMI = LIS->getInstructionFromIndex(AValNo->def);
-  if (!CP.isCoalescable(ACopyMI))
+  // Don't allow any partial copies, even if isCoalescable() allows them.
+  if (!CP.isCoalescable(ACopyMI) || !ACopyMI->isFullCopy())
     return false;
 
   // Get the LiveRange in IntB that this value number starts with.
@@ -895,7 +891,7 @@ bool RegisterCoalescer::canJoinPhys(CoalescerPair &CP) {
   /// Always join simple intervals that are defined by a single copy from a
   /// reserved register. This doesn't increase register pressure, so it is
   /// always beneficial.
-  if (!RegClassInfo.isReserved(CP.getDstReg())) {
+  if (!MRI->isReserved(CP.getDstReg())) {
     DEBUG(dbgs() << "\tCan only merge into reserved registers.\n");
     return false;
   }
@@ -1070,7 +1066,7 @@ bool RegisterCoalescer::joinCopy(MachineInstr *CopyMI, bool &Again) {
 /// Attempt joining with a reserved physreg.
 bool RegisterCoalescer::joinReservedPhysReg(CoalescerPair &CP) {
   assert(CP.isPhys() && "Must be a physreg copy");
-  assert(RegClassInfo.isReserved(CP.getDstReg()) && "Not a reserved register");
+  assert(MRI->isReserved(CP.getDstReg()) && "Not a reserved register");
   LiveInterval &RHS = LIS->getInterval(CP.getSrcReg());
   DEBUG(dbgs() << "\t\tRHS = " << PrintReg(CP.getSrcReg()) << ' ' << RHS
                << '\n');
@@ -1241,6 +1237,9 @@ class JoinVals {
     // Value in the other live range that overlaps this def, if any.
     VNInfo *OtherVNI;
 
+    // Is this value an IMPLICIT_DEF?
+    bool IsImplicitDef;
+
     // True when the live range of this value will be pruned because of an
     // overlapping CR_Replace value in the other live range.
     bool Pruned;
@@ -1249,7 +1248,8 @@ class JoinVals {
     bool PrunedComputed;
 
     Val() : Resolution(CR_Keep), WriteLanes(0), ValidLanes(0),
-            RedefVNI(0), OtherVNI(0), Pruned(false), PrunedComputed(false) {}
+            RedefVNI(0), OtherVNI(0), IsImplicitDef(false), Pruned(false),
+            PrunedComputed(false) {}
 
     bool isAnalyzed() const { return WriteLanes != 0; }
   };
@@ -1298,7 +1298,7 @@ public:
                    SmallVectorImpl<unsigned> &ShrinkRegs);
 
   /// Get the value assignments suitable for passing to LiveInterval::join.
-  const int *getAssignments() const { return &Assignments[0]; }
+  const int *getAssignments() const { return Assignments.data(); }
 };
 } // end anonymous namespace
 
@@ -1310,7 +1310,8 @@ unsigned JoinVals::computeWriteLanes(const MachineInstr *DefMI, bool &Redef) {
   for (ConstMIOperands MO(DefMI); MO.isValid(); ++MO) {
     if (!MO->isReg() || MO->getReg() != LI.reg || !MO->isDef())
       continue;
-    L |= TRI->getSubRegIndexLaneMask(compose(*TRI, SubIdx, MO->getSubReg()));
+    L |= TRI->getSubRegIndexLaneMask(
+           TRI->composeSubRegIndices(SubIdx, MO->getSubReg()));
     if (MO->readsReg())
       Redef = true;
   }
@@ -1385,8 +1386,10 @@ JoinVals::analyzeValue(unsigned ValNo, JoinVals &Other) {
     }
 
     // An IMPLICIT_DEF writes undef values.
-    if (DefMI->isImplicitDef())
+    if (DefMI->isImplicitDef()) {
+      V.IsImplicitDef = true;
       V.ValidLanes &= ~V.WriteLanes;
+    }
   }
 
   // Find the value in Other that overlaps VNI->def, if any.
@@ -1485,6 +1488,20 @@ JoinVals::analyzeValue(unsigned ValNo, JoinVals &Other) {
   // handles this complex value mapping.
   if ((V.WriteLanes & OtherV.ValidLanes) == 0)
     return CR_Replace;
+
+  // If the other live range is killed by DefMI and the live ranges are still
+  // overlapping, it must be because we're looking at an early clobber def:
+  //
+  //   %dst<def,early-clobber> = ASM %src<kill>
+  //
+  // In this case, it is illegal to merge the two live ranges since the early
+  // clobber def would clobber %src before it was read.
+  if (OtherLRQ.isKill()) {
+    // This case where the def doesn't overlap the kill is handled above.
+    assert(VNI->def.isEarlyClobber() &&
+           "Only early clobber defs can overlap a kill");
+    return CR_Impossible;
+  }
 
   // VNI is clobbering live lanes in OtherVNI, but there is still the
   // possibility that no instructions actually read the clobbered lanes.
@@ -1626,8 +1643,8 @@ bool JoinVals::usesLanes(MachineInstr *MI, unsigned Reg, unsigned SubIdx,
       continue;
     if (!MO->readsReg())
       continue;
-    if (Lanes &
-        TRI->getSubRegIndexLaneMask(compose(*TRI, SubIdx, MO->getSubReg())))
+    if (Lanes & TRI->getSubRegIndexLaneMask(
+                  TRI->composeSubRegIndices(SubIdx, MO->getSubReg())))
       return true;
   }
   return false;
@@ -1724,22 +1741,34 @@ void JoinVals::pruneValues(JoinVals &Other,
     switch (Vals[i].Resolution) {
     case CR_Keep:
       break;
-    case CR_Replace:
+    case CR_Replace: {
       // This value takes precedence over the value in Other.LI.
       LIS->pruneValue(&Other.LI, Def, &EndPoints);
-      // Remove <def,read-undef> flags. This def is now a partial redef.
+      // Check if we're replacing an IMPLICIT_DEF value. The IMPLICIT_DEF
+      // instructions are only inserted to provide a live-out value for PHI
+      // predecessors, so the instruction should simply go away once its value
+      // has been replaced.
+      Val &OtherV = Other.Vals[Vals[i].OtherVNI->id];
+      bool EraseImpDef = OtherV.IsImplicitDef && OtherV.Resolution == CR_Keep;
       if (!Def.isBlock()) {
+        // Remove <def,read-undef> flags. This def is now a partial redef.
+        // Also remove <def,dead> flags since the joined live range will
+        // continue past this instruction.
         for (MIOperands MO(Indexes->getInstructionFromIndex(Def));
              MO.isValid(); ++MO)
-          if (MO->isReg() && MO->isDef() && MO->getReg() == LI.reg)
-            MO->setIsUndef(false);
-	// This value will reach instructions below, but we need to make sure
-	// the live range also reaches the instruction at Def.
-	EndPoints.push_back(Def);
+          if (MO->isReg() && MO->isDef() && MO->getReg() == LI.reg) {
+            MO->setIsUndef(EraseImpDef);
+            MO->setIsDead(false);
+          }
+        // This value will reach instructions below, but we need to make sure
+        // the live range also reaches the instruction at Def.
+        if (!EraseImpDef)
+          EndPoints.push_back(Def);
       }
       DEBUG(dbgs() << "\t\tpruned " << PrintReg(Other.LI.reg) << " at " << Def
                    << ": " << Other.LI << '\n');
       break;
+    }
     case CR_Erase:
     case CR_Merge:
       if (isPrunedValue(i, Other)) {
@@ -1762,21 +1791,41 @@ void JoinVals::pruneValues(JoinVals &Other,
 void JoinVals::eraseInstrs(SmallPtrSet<MachineInstr*, 8> &ErasedInstrs,
                            SmallVectorImpl<unsigned> &ShrinkRegs) {
   for (unsigned i = 0, e = LI.getNumValNums(); i != e; ++i) {
-    if (Vals[i].Resolution != CR_Erase)
-      continue;
+    // Get the def location before markUnused() below invalidates it.
     SlotIndex Def = LI.getValNumInfo(i)->def;
-    MachineInstr *MI = Indexes->getInstructionFromIndex(Def);
-    assert(MI && "No instruction to erase");
-    if (MI->isCopy()) {
-      unsigned Reg = MI->getOperand(1).getReg();
-      if (TargetRegisterInfo::isVirtualRegister(Reg) &&
-          Reg != CP.getSrcReg() && Reg != CP.getDstReg())
-        ShrinkRegs.push_back(Reg);
+    switch (Vals[i].Resolution) {
+    case CR_Keep:
+      // If an IMPLICIT_DEF value is pruned, it doesn't serve a purpose any
+      // longer. The IMPLICIT_DEF instructions are only inserted by
+      // PHIElimination to guarantee that all PHI predecessors have a value.
+      if (!Vals[i].IsImplicitDef || !Vals[i].Pruned)
+        break;
+      // Remove value number i from LI. Note that this VNInfo is still present
+      // in NewVNInfo, so it will appear as an unused value number in the final
+      // joined interval.
+      LI.getValNumInfo(i)->markUnused();
+      LI.removeValNo(LI.getValNumInfo(i));
+      DEBUG(dbgs() << "\t\tremoved " << i << '@' << Def << ": " << LI << '\n');
+      // FALL THROUGH.
+
+    case CR_Erase: {
+      MachineInstr *MI = Indexes->getInstructionFromIndex(Def);
+      assert(MI && "No instruction to erase");
+      if (MI->isCopy()) {
+        unsigned Reg = MI->getOperand(1).getReg();
+        if (TargetRegisterInfo::isVirtualRegister(Reg) &&
+            Reg != CP.getSrcReg() && Reg != CP.getDstReg())
+          ShrinkRegs.push_back(Reg);
+      }
+      ErasedInstrs.insert(MI);
+      DEBUG(dbgs() << "\t\terased:\t" << Def << '\t' << *MI);
+      LIS->RemoveMachineInstrFromMaps(MI);
+      MI->eraseFromParent();
+      break;
     }
-    ErasedInstrs.insert(MI);
-    DEBUG(dbgs() << "\t\terased:\t" << Def << '\t' << *MI);
-    LIS->RemoveMachineInstrFromMaps(MI);
-    MI->eraseFromParent();
+    default:
+      break;
+    }
   }
 }
 

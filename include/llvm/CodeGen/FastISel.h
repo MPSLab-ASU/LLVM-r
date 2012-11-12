@@ -32,7 +32,7 @@ class MachineFunction;
 class MachineInstr;
 class MachineFrameInfo;
 class MachineRegisterInfo;
-class TargetData;
+class DataLayout;
 class TargetInstrInfo;
 class TargetLibraryInfo;
 class TargetLowering;
@@ -54,7 +54,7 @@ protected:
   MachineConstantPool &MCP;
   DebugLoc DL;
   const TargetMachine &TM;
-  const TargetData &TD;
+  const DataLayout &TD;
   const TargetInstrInfo &TII;
   const TargetLowering &TLI;
   const TargetRegisterInfo &TRI;
@@ -131,12 +131,17 @@ public:
   /// into the current block.
   void recomputeInsertPt();
 
+  struct SavePoint {
+    MachineBasicBlock::iterator InsertPt;
+    DebugLoc DL;
+  };
+
   /// enterLocalValueArea - Prepare InsertPt to begin inserting instructions
   /// into the local value area and return the old insert position.
-  MachineBasicBlock::iterator enterLocalValueArea();
+  SavePoint enterLocalValueArea();
 
   /// leaveLocalValueArea - Reset InsertPt to the given old insert position.
-  void leaveLocalValueArea(MachineBasicBlock::iterator Old);
+  void leaveLocalValueArea(SavePoint Old);
 
   virtual ~FastISel();
 

@@ -304,8 +304,8 @@ AC_CACHE_CHECK([target architecture],[llvm_cv_target_arch],
   sparc*-*)               llvm_cv_target_arch="Sparc" ;;
   powerpc*-*)             llvm_cv_target_arch="PowerPC" ;;
   arm*-*)                 llvm_cv_target_arch="ARM" ;;
-  mips-*)                 llvm_cv_target_arch="Mips" ;;
-  mipsel-*)               llvm_cv_target_arch="Mips" ;;
+  mips-* | mips64-*)      llvm_cv_target_arch="Mips" ;;
+  mipsel-* | mips64el-*)  llvm_cv_target_arch="Mips" ;;
   xcore-*)                llvm_cv_target_arch="XCore" ;;
   msp430-*)               llvm_cv_target_arch="MSP430" ;;
   hexagon-*)              llvm_cv_target_arch="Hexagon" ;;
@@ -381,6 +381,18 @@ case "$enableval" in
   *) AC_MSG_ERROR([Invalid setting for --enable-libcpp. Use "yes" or "no"]) ;;
 esac
 
+dnl --enable-cxx11 : check whether or not to use -std=c++11 on the command line
+AC_ARG_ENABLE(cxx11,
+              AS_HELP_STRING([--enable-cxx11],
+                             [Use c++11 if available (default is NO)]),,
+                             enableval=default)
+case "$enableval" in
+  yes) AC_SUBST(ENABLE_CXX11,[1]) ;;
+  no)  AC_SUBST(ENABLE_CXX11,[0]) ;;
+  default) AC_SUBST(ENABLE_CXX11,[0]);;
+  *) AC_MSG_ERROR([Invalid setting for --enable-cxx11. Use "yes" or "no"]) ;;
+esac
+
 dnl --enable-optimized : check whether they want to do an optimized build:
 AC_ARG_ENABLE(optimized, AS_HELP_STRING(
  --enable-optimized,[Compile with optimizations enabled (default is NO)]),,enableval=$optimize)
@@ -407,6 +419,16 @@ if test ${enableval} = "yes" ; then
 else
   AC_SUBST(DISABLE_ASSERTIONS,[[DISABLE_ASSERTIONS=1]])
 fi
+
+dnl --enable-werror : check whether we want Werror on by default
+AC_ARG_ENABLE(werror,AS_HELP_STRING(
+  --enable-werror,[Compile with -Werror enabled (default is NO)]),, enableval="no")
+case "$enableval" in
+  yes) AC_SUBST(ENABLE_WERROR,[1]) ;;
+  no)  AC_SUBST(ENABLE_WERROR,[0]) ;;
+  default) AC_SUBST(ENABLE_WERROR,[0]);;
+  *) AC_MSG_ERROR([Invalid setting for --enable-werror. Use "yes" or "no"]) ;;
+esac
 
 dnl --enable-expensive-checks : check whether they want to turn on expensive debug checks:
 AC_ARG_ENABLE(expensive-checks,AS_HELP_STRING(

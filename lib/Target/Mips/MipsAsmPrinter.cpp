@@ -37,7 +37,7 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/TargetRegistry.h"
 #include "llvm/Target/Mangler.h"
-#include "llvm/Target/TargetData.h"
+#include "llvm/DataLayout.h"
 #include "llvm/Target/TargetLoweringObjectFile.h"
 #include "llvm/Target/TargetOptions.h"
 
@@ -239,8 +239,7 @@ void MipsAsmPrinter::EmitFunctionBodyStart() {
 
     OutStreamer.EmitRawText(StringRef("\t.set\tnoreorder"));
     OutStreamer.EmitRawText(StringRef("\t.set\tnomacro"));
-    if (MipsFI->getEmitNOAT())
-      OutStreamer.EmitRawText(StringRef("\t.set\tnoat"));
+    OutStreamer.EmitRawText(StringRef("\t.set\tnoat"));
   }
 }
 
@@ -251,9 +250,7 @@ void MipsAsmPrinter::EmitFunctionBodyEnd() {
   // always be at the function end, and we can't emit and
   // break with BB logic.
   if (OutStreamer.hasRawTextSupport()) {
-    if (MipsFI->getEmitNOAT())
-      OutStreamer.EmitRawText(StringRef("\t.set\tat"));
-
+    OutStreamer.EmitRawText(StringRef("\t.set\tat"));
     OutStreamer.EmitRawText(StringRef("\t.set\tmacro"));
     OutStreamer.EmitRawText(StringRef("\t.set\treorder"));
     OutStreamer.EmitRawText("\t.end\t" + Twine(CurrentFnSym->getName()));

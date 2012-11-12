@@ -25,7 +25,7 @@
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCSymbol.h"
-#include "llvm/Target/TargetData.h"
+#include "llvm/DataLayout.h"
 #include "llvm/Target/TargetOptions.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/ADT/SmallSet.h"
@@ -146,8 +146,7 @@ static
 void emitSPUpdate(MachineBasicBlock &MBB, MachineBasicBlock::iterator &MBBI,
                   unsigned StackPtr, int64_t NumBytes,
                   bool Is64Bit, bool UseLEA,
-                  const TargetInstrInfo &TII, const TargetRegisterInfo &TRI,
-		  DebugLoc DL) {
+                  const TargetInstrInfo &TII, const TargetRegisterInfo &TRI) {
   bool isSub = NumBytes < 0;
   uint64_t Offset = isSub ? -NumBytes : NumBytes;
   unsigned Opc;
@@ -159,6 +158,7 @@ void emitSPUpdate(MachineBasicBlock &MBB, MachineBasicBlock::iterator &MBBI,
       : getADDriOpcode(Is64Bit, Offset);
 
   uint64_t Chunk = (1LL << 31) - 1;
+  DebugLoc DL = MBB.findDebugLoc(MBBI);
 
   while (Offset) {
     uint64_t ThisVal = (Offset > Chunk) ? Chunk : Offset;
@@ -313,11 +313,11 @@ void X86FrameLowering::emitCalleeSavedFrameMoves(MachineFunction &MF,
   if (CSI.empty()) return;
 
   std::vector<MachineMove> &Moves = MMI.getFrameMoves();
-  const TargetData *TD = TM.getTargetData();
+  const X86RegisterInfo *RegInfo = TM.getRegisterInfo();
   bool HasFP = hasFP(MF);
 
   // Calculate amount of bytes used for return address storing.
-  int stackGrowth = -TD->getPointerSize();
+  int stackGrowth = -RegInfo->getSlotSize();
 
   // FIXME: This is dirty hack. The code itself is pretty mess right now.
   // It should be rewritten from scratch and generalized sometimes.
@@ -674,7 +674,7 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF) const {
   // function, and use up to 128 bytes of stack space, don't have a frame
   // pointer, calls, or dynamic alloca then we do not need to adjust the
   // stack pointer (we fit in the Red Zone).
-  if (Is64Bit && !Fn->getFnAttributes().hasNoRedZoneAttr() &&
+  if (Is64Bit && !Fn->getFnAttributes().hasAttribute(Attributes::NoRedZone) &&
       !RegInfo->needsStackRealignment(MF) &&
       !MFI->hasVarSizedObjects() &&                     // No dynamic alloca.
       !MFI->adjustsStack() &&                           // No calls.
@@ -715,9 +715,8 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF) const {
   //        ELSE                        => DW_CFA_offset_extended
 
   std::vector<MachineMove> &Moves = MMI.getFrameMoves();
-  const TargetData *TD = MF.getTarget().getTargetData();
   uint64_t NumBytes = 0;
-  int stackGrowth = -TD->getPointerSize();
+  int stackGrowth = -SlotSize;
 
   if (HasFP) {
     // Calculate required stack adjustment.
@@ -836,8 +835,6 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF) const {
     MI->getOperand(3).setIsDead();
   }
 
-  DL = MBB.findDebugLoc(MBBI);
-
   // If there is an SUB32ri of ESP immediately before this instruction, merge
   // the two. This can be the case when tail call elimination is enabled and
   // the callee has more arguments then the caller.
@@ -912,7 +909,7 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF) const {
     // FIXME: %rax preserves the offset and should be available.
     if (isSPUpdateNeeded)
       emitSPUpdate(MBB, MBBI, StackPtr, -(int64_t)NumBytes, Is64Bit,
-                   UseLEA, TII, *RegInfo, MBB.findDebugLoc(MBBI));
+                   UseLEA, TII, *RegInfo);
 
     if (isEAXAlive) {
         // Restore EAX
@@ -924,7 +921,7 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF) const {
     }
   } else if (NumBytes)
     emitSPUpdate(MBB, MBBI, StackPtr, -(int64_t)NumBytes, Is64Bit,
-                 UseLEA, TII, *RegInfo, DL);
+                 UseLEA, TII, *RegInfo);
 
   // If we need a base pointer, set it up here. It's whatever the value
   // of the stack pointer is at this point. Any variable size objects
@@ -1075,8 +1072,7 @@ void X86FrameLowering::emitEpilogue(MachineFunction &MF,
     }
   } else if (NumBytes) {
     // Adjust stack pointer back: ESP += numbytes.
-    emitSPUpdate(MBB, MBBI, StackPtr, NumBytes, Is64Bit, UseLEA, TII,
-		 *RegInfo, MBB.findDebugLoc(MBBI));
+    emitSPUpdate(MBB, MBBI, StackPtr, NumBytes, Is64Bit, UseLEA, TII, *RegInfo);
   }
 
   // We're returning from function via eh_return.
@@ -1111,8 +1107,7 @@ void X86FrameLowering::emitEpilogue(MachineFunction &MF,
     if (Offset) {
       // Check for possible merge with preceding ADD instruction.
       Offset += mergeSPUpdates(MBB, MBBI, StackPtr, true);
-      emitSPUpdate(MBB, MBBI, StackPtr, Offset, Is64Bit, UseLEA, TII,
-		   *RegInfo, MBB.findDebugLoc(MBBI));
+      emitSPUpdate(MBB, MBBI, StackPtr, Offset, Is64Bit, UseLEA, TII, *RegInfo);
     }
 
     // Jump to label or value in register.
@@ -1155,8 +1150,7 @@ void X86FrameLowering::emitEpilogue(MachineFunction &MF,
 
     // Check for possible merge with preceding ADD instruction.
     delta += mergeSPUpdates(MBB, MBBI, StackPtr, true);
-    emitSPUpdate(MBB, MBBI, StackPtr, delta, Is64Bit, UseLEA, TII,
-		 *RegInfo, MBB.findDebugLoc(MBBI));
+    emitSPUpdate(MBB, MBBI, StackPtr, delta, Is64Bit, UseLEA, TII, *RegInfo);
   }
 }
 

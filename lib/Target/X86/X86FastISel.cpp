@@ -45,9 +45,9 @@ class X86FastISel : public FastISel {
   /// make the right decision when generating code for different targets.
   const X86Subtarget *Subtarget;
 
-  /// StackPtr - Register used as the stack pointer.
+  /// RegInfo - X86 register info.
   ///
-  unsigned StackPtr;
+  const X86RegisterInfo *RegInfo;
 
   /// X86ScalarSSEf32, X86ScalarSSEf64 - Select between SSE or x87
   /// floating point ops.
@@ -61,9 +61,9 @@ public:
                        const TargetLibraryInfo *libInfo)
     : FastISel(funcInfo, libInfo) {
     Subtarget = &TM.getSubtarget<X86Subtarget>();
-    StackPtr = Subtarget->is64Bit() ? X86::RSP : X86::ESP;
     X86ScalarSSEf64 = Subtarget->hasSSE2();
     X86ScalarSSEf32 = Subtarget->hasSSE1();
+    RegInfo = static_cast<const X86RegisterInfo*>(TM.getRegisterInfo());
   }
 
   virtual bool TargetSelectInstruction(const Instruction *I);
@@ -545,7 +545,7 @@ bool X86FastISel::X86SelectAddress(const Value *V, X86AddressMode &AM) {
         StubAM.GVOpFlags = GVFlags;
 
         // Prepare for inserting code in the local-value area.
-	MachineBasicBlock::iterator SaveIter = enterLocalValueArea();
+        SavePoint SaveInsertPt = enterLocalValueArea();
 
         if (TLI.getPointerTy() == MVT::i64) {
           Opc = X86::MOV64rm;
@@ -564,7 +564,7 @@ bool X86FastISel::X86SelectAddress(const Value *V, X86AddressMode &AM) {
         addFullAddress(LoadMI, StubAM);
 
         // Ok, back to normal mode.
-        leaveLocalValueArea(SaveIter);
+        leaveLocalValueArea(SaveInsertPt);
 
         // Prevent loading GV stub multiple times in same MBB.
         LocalValueMap[V] = LoadReg;
@@ -1541,9 +1541,9 @@ static unsigned computeBytesPoppedByCallee(const X86Subtarget &Subtarget,
   CallingConv::ID CC = CS.getCallingConv();
   if (CC == CallingConv::Fast || CC == CallingConv::GHC)
     return 0;
-  if (!CS.paramHasAttr(1, Attribute::StructRet))
+  if (!CS.paramHasAttr(1, Attributes::StructRet))
     return 0;
-  if (CS.paramHasAttr(1, Attribute::InReg))
+  if (CS.paramHasAttr(1, Attributes::InReg))
     return 0;
   return 4;
 }
@@ -1622,12 +1622,12 @@ bool X86FastISel::DoSelectCall(const Instruction *I, const char *MemIntName) {
     Value *ArgVal = *i;
     ISD::ArgFlagsTy Flags;
     unsigned AttrInd = i - CS.arg_begin() + 1;
-    if (CS.paramHasAttr(AttrInd, Attribute::SExt))
+    if (CS.paramHasAttr(AttrInd, Attributes::SExt))
       Flags.setSExt();
-    if (CS.paramHasAttr(AttrInd, Attribute::ZExt))
+    if (CS.paramHasAttr(AttrInd, Attributes::ZExt))
       Flags.setZExt();
 
-    if (CS.paramHasAttr(AttrInd, Attribute::ByVal)) {
+    if (CS.paramHasAttr(AttrInd, Attributes::ByVal)) {
       PointerType *Ty = cast<PointerType>(ArgVal->getType());
       Type *ElementTy = Ty->getElementType();
       unsigned FrameSize = TD.getTypeAllocSize(ElementTy);
@@ -1641,9 +1641,9 @@ bool X86FastISel::DoSelectCall(const Instruction *I, const char *MemIntName) {
         return false;
     }
 
-    if (CS.paramHasAttr(AttrInd, Attribute::InReg))
+    if (CS.paramHasAttr(AttrInd, Attributes::InReg))
       Flags.setInReg();
-    if (CS.paramHasAttr(AttrInd, Attribute::Nest))
+    if (CS.paramHasAttr(AttrInd, Attributes::Nest))
       Flags.setNest();
 
     // If this is an i1/i8/i16 argument, promote to i32 to avoid an extra
@@ -1785,7 +1785,7 @@ bool X86FastISel::DoSelectCall(const Instruction *I, const char *MemIntName) {
     } else {
       unsigned LocMemOffset = VA.getLocMemOffset();
       X86AddressMode AM;
-      AM.Base.Reg = StackPtr;
+      AM.Base.Reg = RegInfo->getStackRegister();
       AM.Disp = LocMemOffset;
       const Value *ArgVal = ArgVals[VA.getValNo()];
       ISD::ArgFlagsTy Flags = ArgFlags[VA.getValNo()];
@@ -1911,11 +1911,11 @@ bool X86FastISel::DoSelectCall(const Instruction *I, const char *MemIntName) {
       ISD::InputArg MyFlags;
       MyFlags.VT = RegisterVT.getSimpleVT();
       MyFlags.Used = !CS.getInstruction()->use_empty();
-      if (CS.paramHasAttr(0, Attribute::SExt))
+      if (CS.paramHasAttr(0, Attributes::SExt))
         MyFlags.Flags.setSExt();
-      if (CS.paramHasAttr(0, Attribute::ZExt))
+      if (CS.paramHasAttr(0, Attributes::ZExt))
         MyFlags.Flags.setZExt();
-      if (CS.paramHasAttr(0, Attribute::InReg))
+      if (CS.paramHasAttr(0, Attributes::InReg))
         MyFlags.Flags.setInReg();
       Ins.push_back(MyFlags);
     }
