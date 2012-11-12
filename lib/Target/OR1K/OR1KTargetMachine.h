@@ -21,7 +21,7 @@
 //#include "OR1KIntrinsicInfo.h"
 #include "OR1KFrameLowering.h"
 #include "llvm/Target/TargetMachine.h"
-#include "llvm/Target/TargetData.h"
+#include "llvm/DataLayout.h"
 #include "llvm/Target/TargetFrameLowering.h"
 
 namespace llvm {
@@ -29,7 +29,7 @@ namespace llvm {
 
   class OR1KTargetMachine : public LLVMTargetMachine {
     OR1KSubtarget       Subtarget;
-    const TargetData    DataLayout; // Calculates type size & alignment
+    const DataLayout    DL; // Calculates type size & alignment
     OR1KInstrInfo       InstrInfo;
     OR1KTargetLowering  TLInfo;
     OR1KSelectionDAGInfo TSInfo;
@@ -51,8 +51,8 @@ namespace llvm {
     virtual const OR1KSubtarget *getSubtargetImpl() const
     { return &Subtarget; }
 
-    virtual const TargetData *getTargetData() const
-    { return &DataLayout;}
+    virtual const DataLayout *getDataLayout() const
+    { return &DL;}
 
     virtual const OR1KRegisterInfo *getRegisterInfo() const
     { return &InstrInfo.getRegisterInfo(); }

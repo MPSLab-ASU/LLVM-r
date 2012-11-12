@@ -25,7 +25,7 @@ extern "C" void LLVMInitializeOR1KTarget() {
   RegisterTargetMachine<OR1KTargetMachine> X(TheOR1KTarget);
 }
 
-// DataLayout --> Big-endian, 32-bit pointer/ABI/alignment
+// DL --> Big-endian, 32-bit pointer/ABI/alignment
 // The stack is always 4 byte aligned
 // On function prologue, the stack is created by decrementing
 // its pointer. Once decremented, all references are done with positive
@@ -37,7 +37,7 @@ OR1KTargetMachine(const Target &T, StringRef TT,
                     CodeGenOpt::Level OL)
   : LLVMTargetMachine(T, TT, CPU, FS, Options, RM, CM, OL),
   Subtarget(TT, CPU, FS),
-  DataLayout("E-p:32:32-i8:8:8-i16:16:16-i64:32:32-"
+  DL("E-p:32:32-i8:8:8-i16:16:16-i64:32:32-"
              "f64:32:32-v64:32:32-v128:32:32-a0:0:32-n32"),
   InstrInfo(), TLInfo(*this), TSInfo(*this),
   FrameLowering(Subtarget) {

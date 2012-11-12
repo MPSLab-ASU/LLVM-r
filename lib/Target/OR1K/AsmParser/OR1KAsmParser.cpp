@@ -27,9 +27,10 @@ class OR1KAsmParser : public MCTargetAsmParser {
   MCAsmLexer &getLexer() const { return Parser.getLexer(); }
   MCSubtargetInfo &STI;
 
-  bool MatchAndEmitInstruction(SMLoc IDLoc,
+  bool MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
                                SmallVectorImpl<MCParsedAsmOperand*> &Operands,
-                               MCStreamer &Out);
+                               MCStreamer &Out, unsigned &ErrorInfo,
+                               bool matchingInlineAsm);
 
   bool ParseRegister(unsigned &RegNo, SMLoc &StartLoc, SMLoc &EndLoc);
 
@@ -37,8 +38,9 @@ class OR1KAsmParser : public MCTargetAsmParser {
 
   OR1KOperand *ParseImmediate();
 
-  bool ParseInstruction(StringRef Name, SMLoc NameLoc,
-                                SmallVectorImpl<MCParsedAsmOperand*> &Operands);
+  bool ParseInstruction(ParseInstructionInfo &Info, StringRef Name,
+                        SMLoc NameLoc,
+                        SmallVectorImpl<MCParsedAsmOperand*> &Operands);
 
   bool ParseDirective(AsmToken DirectiveID);
 
@@ -191,17 +193,14 @@ public:
 static unsigned MatchRegisterName(StringRef Name);
 
 bool OR1KAsmParser::
-MatchAndEmitInstruction(SMLoc IDLoc,
+MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
                         SmallVectorImpl<MCParsedAsmOperand*> &Operands,
-                        MCStreamer &Out) {
+                        MCStreamer &Out, unsigned &ErrorInfo,
+                        bool matchingInlineAsm) {
   MCInst Inst;
   SMLoc ErrorLoc;
-  unsigned Kind;
-  unsigned ErrorInfo;
-  SmallVector<std::pair< unsigned, std::string >, 4> MapAndConstraints;
 
-  switch (MatchInstructionImpl(Operands, Kind, Inst, MapAndConstraints,
-                               ErrorInfo, /* matchingInlineAsm = */ false)) {
+  switch (MatchInstructionImpl(Operands, Inst, ErrorInfo, matchingInlineAsm)) {
     default: break;
     case Match_Success:
       Out.EmitInstruction(Inst);
@@ -316,7 +315,7 @@ ParseOperand(SmallVectorImpl<MCParsedAsmOperand*> &Operands) {
 }
 
 bool OR1KAsmParser::
-ParseInstruction(StringRef Name, SMLoc NameLoc,
+ParseInstruction(ParseInstructionInfo &Info, StringRef Name, SMLoc NameLoc,
                  SmallVectorImpl<MCParsedAsmOperand*> &Operands) {
   // First operand is token for instruction
   // FIXME: Can we have a more efficient implementation of this?

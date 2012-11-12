@@ -101,7 +101,7 @@ namespace llvm {
   private:
     const OR1KSubtarget &Subtarget;
     const OR1KTargetMachine &TM;
-    const TargetData *TD;
+    const DataLayout *TD;
 
     SDValue LowerCCCCallTo(SDValue Chain, SDValue Callee,
                            CallingConv::ID CallConv, bool isVarArg,

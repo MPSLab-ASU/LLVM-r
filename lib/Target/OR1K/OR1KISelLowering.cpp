@@ -42,7 +42,7 @@ OR1KTargetLowering::OR1KTargetLowering(OR1KTargetMachine &tm) :
   TargetLowering(tm, new TargetLoweringObjectFileELF()),
   Subtarget(*tm.getSubtargetImpl()), TM(tm) {
 
-  TD = getTargetData();
+  TD = getDataLayout();
 
   // Set up the register classes.
   addRegisterClass(MVT::i32, &OR1K::GPRRegClass);
