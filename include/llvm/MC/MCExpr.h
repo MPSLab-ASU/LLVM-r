@@ -216,7 +216,7 @@ public:
     VK_Mips_GOT_HI16,
     VK_Mips_GOT_LO16,
     VK_Mips_CALL_HI16,
-    VK_Mips_CALL_LO16
+    VK_Mips_CALL_LO16,
 
     VK_OR1K_ABS_HI,
     VK_OR1K_ABS_LO,
