@@ -15,20 +15,20 @@
 #include "llvm/ADT/OwningPtr.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/Config/config.h"
-#include "llvm/Support/MathExtras.h"
 #include "llvm/Support/Errno.h"
 #include "llvm/Support/FileSystem.h"
+#include "llvm/Support/MathExtras.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/Process.h"
 #include "llvm/Support/Program.h"
 #include "llvm/Support/system_error.h"
 #include <cassert>
+#include <cerrno>
 #include <cstdio>
 #include <cstring>
-#include <cerrno>
 #include <new>
-#include <sys/types.h>
 #include <sys/stat.h>
+#include <sys/types.h>
 #if !defined(_MSC_VER) && !defined(__MINGW32__)
 #include <unistd.h>
 #else
@@ -187,7 +187,7 @@ public:
     : MemoryBufferMem(Buffer, RequiresNullTerminator) { }
 
   ~MemoryBufferMMapFile() {
-    static int PageSize = sys::Process::GetPageSize();
+    static int PageSize = sys::process::get_self()->page_size();
 
     uintptr_t Start = reinterpret_cast<uintptr_t>(getBufferStart());
     size_t Size = getBufferSize();
@@ -309,7 +309,7 @@ error_code MemoryBuffer::getOpenFile(int FD, const char *Filename,
                                      uint64_t FileSize, uint64_t MapSize,
                                      int64_t Offset,
                                      bool RequiresNullTerminator) {
-  static int PageSize = sys::Process::GetPageSize();
+  static int PageSize = sys::process::get_self()->page_size();
 
   // Default is to map the full file.
   if (MapSize == uint64_t(-1)) {

@@ -15,14 +15,14 @@
 
 #include "CodeGenTarget.h"
 #include "CodeGenSchedule.h"
-#include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/MC/MCInstrItineraries.h"
+#include "llvm/Support/Debug.h"
+#include "llvm/Support/Format.h"
 #include "llvm/TableGen/Error.h"
 #include "llvm/TableGen/Record.h"
 #include "llvm/TableGen/TableGenBackend.h"
-#include "llvm/Support/Debug.h"
-#include "llvm/Support/Format.h"
 #include <algorithm>
 #include <map>
 #include <string>
@@ -1108,6 +1108,7 @@ void SubtargetEmitter::EmitProcessorModels(raw_ostream &OS) {
     EmitProcessorProp(OS, PI->ModelDef, "MinLatency", ',');
     EmitProcessorProp(OS, PI->ModelDef, "LoadLatency", ',');
     EmitProcessorProp(OS, PI->ModelDef, "HighLatency", ',');
+    EmitProcessorProp(OS, PI->ModelDef, "ILPWindow", ',');
     EmitProcessorProp(OS, PI->ModelDef, "MispredictPenalty", ',');
     OS << "  " << PI->Index << ", // Processor ID\n";
     if (PI->hasInstrSchedModel())

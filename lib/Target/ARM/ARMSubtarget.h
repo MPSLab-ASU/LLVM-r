@@ -15,9 +15,9 @@
 #define ARMSUBTARGET_H
 
 #include "MCTargetDesc/ARMMCTargetDesc.h"
-#include "llvm/Target/TargetSubtargetInfo.h"
-#include "llvm/MC/MCInstrItineraries.h"
 #include "llvm/ADT/Triple.h"
+#include "llvm/MC/MCInstrItineraries.h"
+#include "llvm/Target/TargetSubtargetInfo.h"
 #include <string>
 
 #define GET_SUBTARGETINFO_HEADER
@@ -30,7 +30,7 @@ class StringRef;
 class ARMSubtarget : public ARMGenSubtargetInfo {
 protected:
   enum ARMProcFamilyEnum {
-    Others, CortexA8, CortexA9, CortexA15, Swift
+    Others, CortexA5, CortexA8, CortexA9, CortexA15, CortexR5, Swift
   };
 
   /// ARMProcFamily - ARM processor family: Cortex-A8, Cortex-A9, and others.
@@ -131,6 +131,10 @@ protected:
   /// CPSR setting instruction.
   bool AvoidCPSRPartialUpdate;
 
+  /// AvoidMOVsShifterOperand - If true, codegen should avoid using flag setting
+  /// movs with shifter operand (i.e. asr, lsl, lsr).
+  bool AvoidMOVsShifterOperand;
+
   /// HasRAS - Some processors perform return stack prediction. CodeGen should
   /// avoid issue "normal" call instructions to callees which do not return.
   bool HasRAS;
@@ -151,6 +155,9 @@ protected:
   /// Thumb2DSP - If true, the subtarget supports the v7 DSP (saturating arith
   /// and such) instructions in Thumb2 code.
   bool Thumb2DSP;
+
+  /// NaCl TRAP instruction is generated instead of the regular TRAP.
+  bool UseNaClTrap;
 
   /// stackAlignment - The minimum alignment known to hold of the stack frame on
   /// entry to the function and which must be maintained by every function.
@@ -204,12 +211,14 @@ protected:
   bool hasV6T2Ops() const { return HasV6T2Ops; }
   bool hasV7Ops()   const { return HasV7Ops;  }
 
+  bool isCortexA5() const { return ARMProcFamily == CortexA5; }
   bool isCortexA8() const { return ARMProcFamily == CortexA8; }
   bool isCortexA9() const { return ARMProcFamily == CortexA9; }
   bool isCortexA15() const { return ARMProcFamily == CortexA15; }
   bool isSwift()    const { return ARMProcFamily == Swift; }
   bool isCortexM3() const { return CPUString == "cortex-m3"; }
   bool isLikeA9() const { return isCortexA9() || isCortexA15(); }
+  bool isCortexR5() const { return ARMProcFamily == CortexR5; }
 
   bool hasARMOps() const { return !NoARM; }
 
@@ -231,9 +240,11 @@ protected:
   bool isFPOnlySP() const { return FPOnlySP; }
   bool prefers32BitThumb() const { return Pref32BitThumb; }
   bool avoidCPSRPartialUpdate() const { return AvoidCPSRPartialUpdate; }
+  bool avoidMOVsShifterOperand() const { return AvoidMOVsShifterOperand; }
   bool hasRAS() const { return HasRAS; }
   bool hasMPExtension() const { return HasMPExtension; }
   bool hasThumb2DSP() const { return Thumb2DSP; }
+  bool useNaClTrap() const { return UseNaClTrap; }
 
   bool hasFP16() const { return HasFP16; }
   bool hasD16() const { return HasD16; }
@@ -243,7 +254,7 @@ protected:
   bool isTargetIOS() const { return TargetTriple.getOS() == Triple::IOS; }
   bool isTargetDarwin() const { return TargetTriple.isOSDarwin(); }
   bool isTargetNaCl() const {
-    return TargetTriple.getOS() == Triple::NativeClient;
+    return TargetTriple.getOS() == Triple::NaCl;
   }
   bool isTargetELF() const { return !isTargetDarwin(); }
 

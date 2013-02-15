@@ -14,12 +14,10 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "X86DisassemblerShared.h"
 #include "X86RecognizableInstr.h"
+#include "X86DisassemblerShared.h"
 #include "X86ModRMFilters.h"
-
 #include "llvm/Support/ErrorHandling.h"
-
 #include <string>
 
 using namespace llvm;
@@ -121,6 +119,7 @@ namespace X86Local {
 #define TWO_BYTE_EXTENSION_TABLES \
   EXTENSION_TABLE(00)             \
   EXTENSION_TABLE(01)             \
+  EXTENSION_TABLE(0d)             \
   EXTENSION_TABLE(18)             \
   EXTENSION_TABLE(71)             \
   EXTENSION_TABLE(72)             \

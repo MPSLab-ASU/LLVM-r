@@ -14,23 +14,29 @@
 
 #define DEBUG_TYPE "ppc-codegen"
 #include "PPC.h"
-#include "PPCTargetMachine.h"
 #include "MCTargetDesc/PPCPredicates.h"
-#include "llvm/CodeGen/MachineInstrBuilder.h"
+#include "PPCTargetMachine.h"
 #include "llvm/CodeGen/MachineFunction.h"
+#include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/SelectionDAG.h"
 #include "llvm/CodeGen/SelectionDAGISel.h"
-#include "llvm/Target/TargetOptions.h"
-#include "llvm/Constants.h"
-#include "llvm/Function.h"
-#include "llvm/GlobalValue.h"
-#include "llvm/Intrinsics.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/GlobalAlias.h"
+#include "llvm/IR/GlobalValue.h"
+#include "llvm/IR/GlobalVariable.h"
+#include "llvm/IR/Intrinsics.h"
 #include "llvm/Support/Debug.h"
-#include "llvm/Support/MathExtras.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Target/TargetOptions.h"
 using namespace llvm;
+
+namespace llvm {
+  void initializePPCDAGToDAGISelPass(PassRegistry&);
+}
 
 namespace {
   //===--------------------------------------------------------------------===//
@@ -46,7 +52,9 @@ namespace {
     explicit PPCDAGToDAGISel(PPCTargetMachine &tm)
       : SelectionDAGISel(tm), TM(tm),
         PPCLowering(*TM.getTargetLowering()),
-        PPCSubTarget(*TM.getSubtargetImpl()) {}
+        PPCSubTarget(*TM.getSubtargetImpl()) {
+      initializePPCDAGToDAGISelPass(*PassRegistry::getPassRegistry());
+    }
 
     virtual bool runOnMachineFunction(MachineFunction &MF) {
       // Make sure we re-emit a set of the global base reg if necessary
@@ -1268,6 +1276,52 @@ SDNode *PPCDAGToDAGISel::Select(SDNode *N) {
                                            Chain), 0);
     return CurDAG->SelectNodeTo(N, Reg, MVT::Other, Chain);
   }
+  case PPCISD::TOC_ENTRY: {
+    assert (PPCSubTarget.isPPC64() && "Only supported for 64-bit ABI");
+
+    // For medium code model, we generate two instructions as described
+    // below.  Otherwise we allow SelectCodeCommon to handle this, selecting
+    // one of LDtoc, LDtocJTI, and LDtocCPT.
+    if (TM.getCodeModel() != CodeModel::Medium)
+      break;
+
+    // The first source operand is a TargetGlobalAddress or a
+    // TargetJumpTable.  If it is an externally defined symbol, a symbol
+    // with common linkage, a function address, or a jump table address,
+    // we generate:
+    //   LDtocL(<ga:@sym>, ADDIStocHA(%X2, <ga:@sym>))
+    // Otherwise we generate:
+    //   ADDItocL(ADDIStocHA(%X2, <ga:@sym>), <ga:@sym>)
+    SDValue GA = N->getOperand(0);
+    SDValue TOCbase = N->getOperand(1);
+    SDNode *Tmp = CurDAG->getMachineNode(PPC::ADDIStocHA, dl, MVT::i64,
+                                        TOCbase, GA);
+
+    if (isa<JumpTableSDNode>(GA))
+      return CurDAG->getMachineNode(PPC::LDtocL, dl, MVT::i64, GA,
+                                    SDValue(Tmp, 0));
+
+    if (GlobalAddressSDNode *G = dyn_cast<GlobalAddressSDNode>(GA)) {
+      const GlobalValue *GValue = G->getGlobal();
+      const GlobalAlias *GAlias = dyn_cast<GlobalAlias>(GValue);
+      const GlobalValue *RealGValue = GAlias ?
+        GAlias->resolveAliasedGlobal(false) : GValue;
+      const GlobalVariable *GVar = dyn_cast<GlobalVariable>(RealGValue);
+      assert((GVar || isa<Function>(RealGValue)) &&
+             "Unexpected global value subclass!");
+
+      // An external variable is one without an initializer.  For these,
+      // for variables with common linkage, and for Functions, generate
+      // the LDtocL form.
+      if (!GVar || !GVar->hasInitializer() || RealGValue->hasCommonLinkage() ||
+          RealGValue->hasAvailableExternallyLinkage())
+        return CurDAG->getMachineNode(PPC::LDtocL, dl, MVT::i64, GA,
+                                      SDValue(Tmp, 0));
+    }
+
+    return CurDAG->getMachineNode(PPC::ADDItocL, dl, MVT::i64,
+                                  SDValue(Tmp, 0), GA);
+  }
   }
 
   return SelectCode(N);
@@ -1280,5 +1334,16 @@ SDNode *PPCDAGToDAGISel::Select(SDNode *N) {
 ///
 FunctionPass *llvm::createPPCISelDag(PPCTargetMachine &TM) {
   return new PPCDAGToDAGISel(TM);
+}
+
+static void initializePassOnce(PassRegistry &Registry) {
+  const char *Name = "PowerPC DAG->DAG Pattern Instruction Selection";
+  PassInfo *PI = new PassInfo(Name, "ppc-codegen", &SelectionDAGISel::ID, 0,
+                              false, false);
+  Registry.registerPass(*PI, true);
+}
+
+void llvm::initializePPCDAGToDAGISelPass(PassRegistry &Registry) {
+  CALL_ONCE_INITIALIZATION(initializePassOnce);
 }
 

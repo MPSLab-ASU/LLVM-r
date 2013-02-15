@@ -16,16 +16,16 @@
 #include "XCore.h"
 #include "XCoreInstrInfo.h"
 #include "XCoreMachineFunctionInfo.h"
-#include "llvm/Function.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineModuleInfo.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/RegisterScavenging.h"
-#include "llvm/DataLayout.h"
-#include "llvm/Target/TargetOptions.h"
+#include "llvm/IR/DataLayout.h"
+#include "llvm/IR/Function.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Target/TargetOptions.h"
 
 using namespace llvm;
 
@@ -98,13 +98,10 @@ void XCoreFrameLowering::emitPrologue(MachineFunction &MF) const {
   DebugLoc dl = MBBI != MBB.end() ? MBBI->getDebugLoc() : DebugLoc();
 
   bool FP = hasFP(MF);
-  const AttrListPtr &PAL = MF.getFunction()->getAttributes();
+  const AttributeSet &PAL = MF.getFunction()->getAttributes();
 
-  for (unsigned I = 0, E = PAL.getNumAttrs(); I != E; ++I)
-    if (PAL.getAttributesAtIndex(I).hasAttribute(Attributes::Nest)) {
-      loadFromStack(MBB, MBBI, XCore::R11, 0, dl, TII);
-      break;
-    }
+  if (PAL.hasAttrSomewhere(Attribute::Nest))
+    loadFromStack(MBB, MBBI, XCore::R11, 0, dl, TII);
 
   // Work out frame sizes.
   int FrameSize = MFI->getStackSize();

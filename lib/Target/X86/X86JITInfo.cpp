@@ -16,7 +16,7 @@
 #include "X86Relocations.h"
 #include "X86Subtarget.h"
 #include "X86TargetMachine.h"
-#include "llvm/Function.h"
+#include "llvm/IR/Function.h"
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/Valgrind.h"
@@ -351,6 +351,9 @@ static
 void LLVM_ATTRIBUTE_USED
 X86CompilationCallback2(intptr_t *StackPtr, intptr_t RetAddr) {
   intptr_t *RetAddrLoc = &StackPtr[1];
+  // We are reading raw stack data here. Tell MemorySanitizer that it is
+  // sufficiently initialized.
+  __msan_unpoison(RetAddrLoc, sizeof(*RetAddrLoc));
   assert(*RetAddrLoc == RetAddr &&
          "Could not find return address on the stack!");
 

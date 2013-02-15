@@ -44,6 +44,13 @@ enum Fixups {
   /// fixup_ppc_toc16_ds - A 14-bit signed fixup relative to the TOC base with
   /// implied 2 zero bits
   fixup_ppc_toc16_ds,
+
+  /// fixup_ppc_tlsreg - Insert thread-pointer register number.
+  fixup_ppc_tlsreg,
+
+  /// fixup_ppc_nofixup - Not a true fixup, but ties a symbol to a call
+  /// to __tls_get_addr for the TLS general and local dynamic models.
+  fixup_ppc_nofixup,
   
   // Marker
   LastTargetFixupKind,

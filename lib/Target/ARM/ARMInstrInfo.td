@@ -117,7 +117,7 @@ def ARMcall_nolink   : SDNode<"ARMISD::CALL_NOLINK", SDT_ARMcall,
                                SDNPVariadic]>;
 
 def ARMretflag       : SDNode<"ARMISD::RET_FLAG", SDTNone,
-                              [SDNPHasChain, SDNPOptInGlue]>;
+                              [SDNPHasChain, SDNPOptInGlue, SDNPVariadic]>;
 
 def ARMcmov          : SDNode<"ARMISD::CMOV", SDT_ARMCMov,
                               [SDNPInGlue]>;
@@ -239,6 +239,9 @@ def IsARM            : Predicate<"!Subtarget->isThumb()">,
 def IsIOS            : Predicate<"Subtarget->isTargetIOS()">;
 def IsNotIOS         : Predicate<"!Subtarget->isTargetIOS()">;
 def IsNaCl           : Predicate<"Subtarget->isTargetNaCl()">;
+def UseNaClTrap      : Predicate<"Subtarget->useNaClTrap()">,
+                                 AssemblerPredicate<"FeatureNaClTrap", "NaCl">;
+def DontUseNaClTrap  : Predicate<"!Subtarget->useNaClTrap()">;
 
 // FIXME: Eventually this will be just "hasV6T2Ops".
 def UseMovt          : Predicate<"Subtarget->useMovt()">;
@@ -416,6 +419,8 @@ def reglist : Operand<i32> {
   let PrintMethod = "printRegisterList";
   let DecoderMethod = "DecodeRegListOperand";
 }
+
+def GPRPairOp : RegisterOperand<GPRPair, "printGPRPairOperand">;
 
 def DPRRegListAsmOperand : AsmOperandClass { let Name = "DPRRegList"; }
 def dpr_reglist : Operand<i32> {
@@ -1622,6 +1627,18 @@ def ATOMCMPXCHG6432 : PseudoInst<(outs GPR:$dst1, GPR:$dst2),
                                  (ins GPR:$addr, GPR:$cmp1, GPR:$cmp2,
                                       GPR:$set1, GPR:$set2),
                                  NoItinerary, []>;
+def ATOMMIN6432  : PseudoInst<(outs GPR:$dst1, GPR:$dst2),
+                              (ins GPR:$addr, GPR:$src1, GPR:$src2),
+                              NoItinerary, []>;
+def ATOMUMIN6432  : PseudoInst<(outs GPR:$dst1, GPR:$dst2),
+                              (ins GPR:$addr, GPR:$src1, GPR:$src2),
+                              NoItinerary, []>;
+def ATOMMAX6432  : PseudoInst<(outs GPR:$dst1, GPR:$dst2),
+                              (ins GPR:$addr, GPR:$src1, GPR:$src2),
+                              NoItinerary, []>;
+def ATOMUMAX6432  : PseudoInst<(outs GPR:$dst1, GPR:$dst2),
+                              (ins GPR:$addr, GPR:$src1, GPR:$src2),
+                              NoItinerary, []>;
 }
 
 def HINT : AI<(outs), (ins imm0_255:$imm), MiscFrm, NoItinerary,
@@ -1748,11 +1765,32 @@ def DBG : AI<(outs), (ins imm0_15:$opt), MiscFrm, NoItinerary, "dbg", "\t$opt",
   let Inst{3-0} = opt;
 }
 
-// A5.4 Permanently UNDEFINED instructions.
+/*
+ * A5.4 Permanently UNDEFINED instructions.
+ *
+ * For most targets use UDF #65006, for which the OS will generate SIGTRAP.
+ * Other UDF encodings generate SIGILL.
+ *
+ * NaCl's OS instead chooses an ARM UDF encoding that's also a UDF in Thumb.
+ * Encoding A1:
+ *  1110 0111 1111 iiii iiii iiii 1111 iiii
+ * Encoding T1:
+ *  1101 1110 iiii iiii
+ * It uses the following encoding:
+ *  1110 0111 1111 1110 1101 1110 1111 0000
+ *  - In ARM: UDF #60896;
+ *  - In Thumb: UDF #254 followed by a branch-to-self.
+ */
+let isBarrier = 1, isTerminator = 1 in
+def TRAPNaCl : AXI<(outs), (ins), MiscFrm, NoItinerary,
+               "trap", [(trap)]>,
+           Requires<[IsARM,UseNaClTrap]> {
+  let Inst = 0xe7fedef0;
+}
 let isBarrier = 1, isTerminator = 1 in
 def TRAP : AXI<(outs), (ins), MiscFrm, NoItinerary,
                "trap", [(trap)]>,
-           Requires<[IsARM]> {
+           Requires<[IsARM,DontUseNaClTrap]> {
   let Inst = 0xe7ffdefe;
 }
 
@@ -4229,8 +4267,8 @@ def LDREXH : AIldrex<0b11, (outs GPR:$Rt), (ins addr_offset_none:$addr),
 def LDREX  : AIldrex<0b00, (outs GPR:$Rt), (ins addr_offset_none:$addr),
                      NoItinerary, "ldrex", "\t$Rt, $addr", []>;
 let hasExtraDefRegAllocReq = 1 in
-def LDREXD: AIldrex<0b01, (outs GPR:$Rt, GPR:$Rt2),(ins addr_offset_none:$addr),
-                      NoItinerary, "ldrexd", "\t$Rt, $Rt2, $addr", []> {
+def LDREXD: AIldrex<0b01, (outs GPRPairOp:$Rt),(ins addr_offset_none:$addr),
+                      NoItinerary, "ldrexd", "\t$Rt, $addr", []> {
   let DecoderMethod = "DecodeDoubleRegLoad";
 }
 }
@@ -4244,8 +4282,8 @@ def STREX : AIstrex<0b00, (outs GPR:$Rd), (ins GPR:$Rt, addr_offset_none:$addr),
                     NoItinerary, "strex", "\t$Rd, $Rt, $addr", []>;
 let hasExtraSrcRegAllocReq = 1 in
 def STREXD : AIstrex<0b01, (outs GPR:$Rd),
-                    (ins GPR:$Rt, GPR:$Rt2, addr_offset_none:$addr),
-                    NoItinerary, "strexd", "\t$Rd, $Rt, $Rt2, $addr", []> {
+                    (ins GPRPairOp:$Rt, addr_offset_none:$addr),
+                    NoItinerary, "strexd", "\t$Rd, $Rt, $addr", []> {
   let DecoderMethod = "DecodeDoubleRegStore";
 }
 }

@@ -421,12 +421,14 @@ retry_random_path:
 rety_open_create:
   int RandomFD = ::open(RandomPath.c_str(), O_RDWR | O_CREAT | O_EXCL, mode);
   if (RandomFD == -1) {
+    int SavedErrno = errno;
     // If the file existed, try again, otherwise, error.
-    if (errno == errc::file_exists)
+    if (SavedErrno == errc::file_exists)
       goto retry_random_path;
-    // The path prefix doesn't exist.
-    if (errno == errc::no_such_file_or_directory) {
-      StringRef p(RandomPath.begin(), RandomPath.size());
+    // If path prefix doesn't exist, try to create it.
+    if (SavedErrno == errc::no_such_file_or_directory &&
+        !exists(path::parent_path(RandomPath))) {
+      StringRef p(RandomPath);
       SmallString<64> dir_to_create;
       for (path::const_iterator i = path::begin(p),
                                 e = --path::end(p); i != e; ++i) {
@@ -439,13 +441,15 @@ rety_open_create:
                                (*i)[1] == '/' &&
                                (*i)[2] != '/')
             return make_error_code(errc::no_such_file_or_directory);
-          if (::mkdir(dir_to_create.c_str(), 0700) == -1)
+          if (::mkdir(dir_to_create.c_str(), 0700) == -1 &&
+              errno != errc::file_exists)
             return error_code(errno, system_category());
         }
       }
       goto rety_open_create;
     }
-    return error_code(errno, system_category());
+
+    return error_code(SavedErrno, system_category());
   }
 
    // Make the path absolute.
@@ -545,7 +549,7 @@ mapped_file_region::~mapped_file_region() {
     ::munmap(Mapping, Size);
 }
 
-#if LLVM_USE_RVALUE_REFERENCES
+#if LLVM_HAS_RVALUE_REFERENCES
 mapped_file_region::mapped_file_region(mapped_file_region &&other)
   : Mode(other.Mode), Size(other.Size), Mapping(other.Mapping) {
   other.Mapping = 0;
@@ -574,7 +578,7 @@ const char *mapped_file_region::const_data() const {
 }
 
 int mapped_file_region::alignment() {
-  return Process::GetPageSize();
+  return process::get_self()->page_size();
 }
 
 error_code detail::directory_iterator_construct(detail::DirIterState &it,

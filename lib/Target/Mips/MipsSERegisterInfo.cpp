@@ -15,28 +15,28 @@
 #include "MipsSERegisterInfo.h"
 #include "Mips.h"
 #include "MipsAnalyzeImmediate.h"
+#include "MipsMachineFunction.h"
 #include "MipsSEInstrInfo.h"
 #include "MipsSubtarget.h"
-#include "MipsMachineFunction.h"
-#include "llvm/Constants.h"
-#include "llvm/DebugInfo.h"
-#include "llvm/Type.h"
-#include "llvm/Function.h"
-#include "llvm/CodeGen/ValueTypes.h"
-#include "llvm/CodeGen/MachineInstrBuilder.h"
-#include "llvm/CodeGen/MachineFunction.h"
+#include "llvm/ADT/BitVector.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
+#include "llvm/CodeGen/MachineFunction.h"
+#include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
-#include "llvm/Target/TargetFrameLowering.h"
-#include "llvm/Target/TargetMachine.h"
-#include "llvm/Target/TargetOptions.h"
-#include "llvm/Target/TargetInstrInfo.h"
+#include "llvm/CodeGen/ValueTypes.h"
+#include "llvm/DebugInfo.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/Type.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/ADT/BitVector.h"
-#include "llvm/ADT/STLExtras.h"
+#include "llvm/Target/TargetFrameLowering.h"
+#include "llvm/Target/TargetInstrInfo.h"
+#include "llvm/Target/TargetMachine.h"
+#include "llvm/Target/TargetOptions.h"
 
 using namespace llvm;
 
@@ -83,6 +83,7 @@ void MipsSERegisterInfo::eliminateFI(MachineBasicBlock::iterator II,
   MachineInstr &MI = *II;
   MachineFunction &MF = *MI.getParent()->getParent();
   MachineFrameInfo *MFI = MF.getFrameInfo();
+  MipsFunctionInfo *MipsFI = MF.getInfo<MipsFunctionInfo>();
 
   const std::vector<CalleeSavedInfo> &CSI = MFI->getCalleeSavedInfo();
   int MinCSFI = 0;
@@ -93,15 +94,18 @@ void MipsSERegisterInfo::eliminateFI(MachineBasicBlock::iterator II,
     MaxCSFI = CSI[CSI.size() - 1].getFrameIdx();
   }
 
+  bool EhDataRegFI = MipsFI->isEhDataRegFI(FrameIndex);
+
   // The following stack frame objects are always referenced relative to $sp:
   //  1. Outgoing arguments.
   //  2. Pointer to dynamically allocated stack space.
   //  3. Locations for callee-saved registers.
+  //  4. Locations for eh data registers.
   // Everything else is referenced relative to whatever register
   // getFrameRegister() returns.
   unsigned FrameReg;
 
-  if (FrameIndex >= MinCSFI && FrameIndex <= MaxCSFI)
+  if ((FrameIndex >= MinCSFI && FrameIndex <= MaxCSFI) || EhDataRegFI)
     FrameReg = Subtarget.isABI_N64() ? Mips::SP_64 : Mips::SP;
   else
     FrameReg = getFrameRegister(MF);

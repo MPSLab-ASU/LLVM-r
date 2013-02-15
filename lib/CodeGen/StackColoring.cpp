@@ -22,39 +22,37 @@
 //===----------------------------------------------------------------------===//
 
 #define DEBUG_TYPE "stackcoloring"
-#include "MachineTraceMetrics.h"
-#include "llvm/Function.h"
-#include "llvm/Module.h"
+#include "llvm/CodeGen/Passes.h"
 #include "llvm/ADT/BitVector.h"
-#include "llvm/Analysis/Dominators.h"
-#include "llvm/Analysis/ValueTracking.h"
 #include "llvm/ADT/DepthFirstIterator.h"
 #include "llvm/ADT/PostOrderIterator.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SparseSet.h"
 #include "llvm/ADT/Statistic.h"
+#include "llvm/Analysis/Dominators.h"
+#include "llvm/Analysis/ValueTracking.h"
 #include "llvm/CodeGen/LiveInterval.h"
-#include "llvm/CodeGen/MachineLoopInfo.h"
+#include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/MachineBranchProbabilityInfo.h"
 #include "llvm/CodeGen/MachineDominators.h"
-#include "llvm/CodeGen/MachineBasicBlock.h"
+#include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineLoopInfo.h"
+#include "llvm/CodeGen/MachineMemOperand.h"
 #include "llvm/CodeGen/MachineModuleInfo.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
-#include "llvm/CodeGen/MachineFrameInfo.h"
-#include "llvm/CodeGen/MachineMemOperand.h"
-#include "llvm/CodeGen/Passes.h"
 #include "llvm/CodeGen/SlotIndexes.h"
 #include "llvm/DebugInfo.h"
-#include "llvm/Instructions.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/Instructions.h"
+#include "llvm/IR/Module.h"
 #include "llvm/MC/MCInstrItineraries.h"
-#include "llvm/Target/TargetInstrInfo.h"
-#include "llvm/Target/TargetRegisterInfo.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Target/TargetInstrInfo.h"
+#include "llvm/Target/TargetRegisterInfo.h"
 
 using namespace llvm;
 
@@ -204,9 +202,8 @@ void StackColoring::getAnalysisUsage(AnalysisUsage &AU) const {
 void StackColoring::dump() {
   for (df_iterator<MachineFunction*> FI = df_begin(MF), FE = df_end(MF);
        FI != FE; ++FI) {
-    unsigned Num = BasicBlocks[*FI];
-    DEBUG(dbgs()<<"Inspecting block #"<<Num<<" ["<<FI->getName()<<"]\n");
-    Num = 0;
+    DEBUG(dbgs()<<"Inspecting block #"<<BasicBlocks[*FI]<<
+          " ["<<FI->getName()<<"]\n");
     DEBUG(dbgs()<<"BEGIN  : {");
     for (unsigned i=0; i < BlockLiveness[*FI].Begin.size(); ++i)
       DEBUG(dbgs()<<BlockLiveness[*FI].Begin.test(i)<<" ");
@@ -720,7 +717,9 @@ bool StackColoring::runOnMachineFunction(MachineFunction &Func) {
   // and continue.
 
   // Sort the slots according to their size. Place unused slots at the end.
-  std::sort(SortedSlots.begin(), SortedSlots.end(), SlotSizeSorter(MFI));
+  // Use stable sort to guarantee deterministic code generation.
+  std::stable_sort(SortedSlots.begin(), SortedSlots.end(),
+                   SlotSizeSorter(MFI));
 
   bool Chanded = true;
   while (Chanded) {

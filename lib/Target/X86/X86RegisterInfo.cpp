@@ -19,25 +19,25 @@
 #include "X86MachineFunctionInfo.h"
 #include "X86Subtarget.h"
 #include "X86TargetMachine.h"
-#include "llvm/Constants.h"
-#include "llvm/Function.h"
-#include "llvm/Type.h"
-#include "llvm/CodeGen/ValueTypes.h"
-#include "llvm/CodeGen/MachineInstrBuilder.h"
+#include "llvm/ADT/BitVector.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
-#include "llvm/CodeGen/MachineFrameInfo.h"
+#include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineModuleInfo.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
+#include "llvm/CodeGen/ValueTypes.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/Type.h"
 #include "llvm/MC/MCAsmInfo.h"
+#include "llvm/Support/CommandLine.h"
+#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Target/TargetFrameLowering.h"
 #include "llvm/Target/TargetInstrInfo.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetOptions.h"
-#include "llvm/ADT/BitVector.h"
-#include "llvm/ADT/STLExtras.h"
-#include "llvm/Support/ErrorHandling.h"
-#include "llvm/Support/CommandLine.h"
 
 #define GET_REGINFO_TARGET_DESC
 #include "X86GenRegisterInfo.inc"
@@ -56,10 +56,12 @@ EnableBasePointer("x86-use-base-pointer", cl::Hidden, cl::init(true),
 
 X86RegisterInfo::X86RegisterInfo(X86TargetMachine &tm,
                                  const TargetInstrInfo &tii)
-  : X86GenRegisterInfo(tm.getSubtarget<X86Subtarget>().is64Bit()
-                         ? X86::RIP : X86::EIP,
+  : X86GenRegisterInfo((tm.getSubtarget<X86Subtarget>().is64Bit()
+                         ? X86::RIP : X86::EIP),
                        X86_MC::getDwarfRegFlavour(tm.getTargetTriple(), false),
-                       X86_MC::getDwarfRegFlavour(tm.getTargetTriple(), true)),
+                       X86_MC::getDwarfRegFlavour(tm.getTargetTriple(), true),
+                       (tm.getSubtarget<X86Subtarget>().is64Bit()
+                         ? X86::RIP : X86::EIP)),
                        TM(tm), TII(tii) {
   X86_MC::InitLLVM2SEHRegisterMapping(this);
 
@@ -175,21 +177,27 @@ X86RegisterInfo::getLargestLegalSuperClass(const TargetRegisterClass *RC) const{
 const TargetRegisterClass *
 X86RegisterInfo::getPointerRegClass(const MachineFunction &MF, unsigned Kind)
                                                                          const {
+  const X86Subtarget &Subtarget = TM.getSubtarget<X86Subtarget>();
   switch (Kind) {
   default: llvm_unreachable("Unexpected Kind in getPointerRegClass!");
   case 0: // Normal GPRs.
-    if (TM.getSubtarget<X86Subtarget>().is64Bit())
+    if (Subtarget.isTarget64BitLP64())
       return &X86::GR64RegClass;
     return &X86::GR32RegClass;
   case 1: // Normal GPRs except the stack pointer (for encoding reasons).
-    if (TM.getSubtarget<X86Subtarget>().is64Bit())
+    if (Subtarget.isTarget64BitLP64())
       return &X86::GR64_NOSPRegClass;
     return &X86::GR32_NOSPRegClass;
   case 2: // Available for tailcall (not callee-saved GPRs).
-    if (TM.getSubtarget<X86Subtarget>().isTargetWin64())
+    if (Subtarget.isTargetWin64())
       return &X86::GR64_TCW64RegClass;
-    if (TM.getSubtarget<X86Subtarget>().is64Bit())
+    else if (Subtarget.is64Bit())
       return &X86::GR64_TCRegClass;
+
+    const Function *F = MF.getFunction();
+    bool hasHipeCC = (F ? F->getCallingConv() == CallingConv::HiPE : false);
+    if (hasHipeCC)
+      return &X86::GR32RegClass;
     return &X86::GR32_TCRegClass;
   }
 }
@@ -230,6 +238,7 @@ X86RegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
   bool callsEHReturn = false;
   bool ghcCall = false;
   bool oclBiCall = false;
+  bool hipeCall = false;
   bool HasAVX = TM.getSubtarget<X86Subtarget>().hasAVX();
 
   if (MF) {
@@ -237,9 +246,10 @@ X86RegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
     const Function *F = MF->getFunction();
     ghcCall = (F ? F->getCallingConv() == CallingConv::GHC : false);
     oclBiCall = (F ? F->getCallingConv() == CallingConv::Intel_OCL_BI : false);
+    hipeCall = (F ? F->getCallingConv() == CallingConv::HiPE : false);
   }
 
-  if (ghcCall)
+  if (ghcCall || hipeCall)
     return CSR_NoRegs_SaveList;
   if (oclBiCall) {
     if (HasAVX && IsWin64)
@@ -273,7 +283,7 @@ X86RegisterInfo::getCallPreservedMask(CallingConv::ID CC) const {
     if (!HasAVX && !IsWin64 && Is64Bit)
       return CSR_64_Intel_OCL_BI_RegMask;
   }
-  if (CC == CallingConv::GHC)
+  if (CC == CallingConv::GHC || CC == CallingConv::HiPE)
     return CSR_NoRegs_RegMask;
   if (!Is64Bit)
     return CSR_32_RegMask;
@@ -410,7 +420,8 @@ bool X86RegisterInfo::needsStackRealignment(const MachineFunction &MF) const {
   unsigned StackAlign = TM.getFrameLowering()->getStackAlignment();
   bool requiresRealignment =
     ((MFI->getMaxAlignment() > StackAlign) ||
-     F->getFnAttributes().hasAttribute(Attributes::StackAlignment));
+     F->getAttributes().hasAttribute(AttributeSet::FunctionIndex,
+                                     Attribute::StackAlignment));
 
   // If we've requested that we force align the stack do so now.
   if (ForceStackAlign)
@@ -533,20 +544,14 @@ eliminateCallFramePseudoInstr(MachineFunction &MF, MachineBasicBlock &MBB,
 
 void
 X86RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
-                                     int SPAdj, RegScavenger *RS) const {
+                                     int SPAdj, unsigned FIOperandNum,
+                                     RegScavenger *RS) const {
   assert(SPAdj == 0 && "Unexpected");
 
-  unsigned i = 0;
   MachineInstr &MI = *II;
   MachineFunction &MF = *MI.getParent()->getParent();
   const TargetFrameLowering *TFI = MF.getTarget().getFrameLowering();
-
-  while (!MI.getOperand(i).isFI()) {
-    ++i;
-    assert(i < MI.getNumOperands() && "Instr doesn't have FrameIndex operand!");
-  }
-
-  int FrameIndex = MI.getOperand(i).getIndex();
+  int FrameIndex = MI.getOperand(FIOperandNum).getIndex();
   unsigned BasePtr;
 
   unsigned Opc = MI.getOpcode();
@@ -562,7 +567,7 @@ X86RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
 
   // This must be part of a four operand memory reference.  Replace the
   // FrameIndex with base register with EBP.  Add an offset to the offset.
-  MI.getOperand(i).ChangeToRegister(BasePtr, false);
+  MI.getOperand(FIOperandNum).ChangeToRegister(BasePtr, false);
 
   // Now add the frame object offset to the offset from EBP.
   int FIOffset;
@@ -573,17 +578,18 @@ X86RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
   } else
     FIOffset = TFI->getFrameIndexOffset(MF, FrameIndex);
 
-  if (MI.getOperand(i+3).isImm()) {
+  if (MI.getOperand(FIOperandNum+3).isImm()) {
     // Offset is a 32-bit integer.
-    int Imm = (int)(MI.getOperand(i + 3).getImm());
+    int Imm = (int)(MI.getOperand(FIOperandNum + 3).getImm());
     int Offset = FIOffset + Imm;
     assert((!Is64Bit || isInt<32>((long long)FIOffset + Imm)) &&
            "Requesting 64-bit offset in 32-bit immediate!");
-    MI.getOperand(i + 3).ChangeToImmediate(Offset);
+    MI.getOperand(FIOperandNum + 3).ChangeToImmediate(Offset);
   } else {
     // Offset is symbolic. This is extremely rare.
-    uint64_t Offset = FIOffset + (uint64_t)MI.getOperand(i+3).getOffset();
-    MI.getOperand(i+3).setOffset(Offset);
+    uint64_t Offset = FIOffset +
+      (uint64_t)MI.getOperand(FIOperandNum+3).getOffset();
+    MI.getOperand(FIOperandNum + 3).setOffset(Offset);
   }
 }
 
@@ -782,46 +788,3 @@ unsigned getX86SubSuperRegister(unsigned Reg, MVT::SimpleValueType VT,
   }
 }
 }
-
-namespace {
-  struct MSAH : public MachineFunctionPass {
-    static char ID;
-    MSAH() : MachineFunctionPass(ID) {}
-
-    virtual bool runOnMachineFunction(MachineFunction &MF) {
-      const X86TargetMachine *TM =
-        static_cast<const X86TargetMachine *>(&MF.getTarget());
-      const TargetFrameLowering *TFI = TM->getFrameLowering();
-      MachineRegisterInfo &RI = MF.getRegInfo();
-      X86MachineFunctionInfo *FuncInfo = MF.getInfo<X86MachineFunctionInfo>();
-      unsigned StackAlignment = TFI->getStackAlignment();
-
-      // Be over-conservative: scan over all vreg defs and find whether vector
-      // registers are used. If yes, there is a possibility that vector register
-      // will be spilled and thus require dynamic stack realignment.
-      for (unsigned i = 0, e = RI.getNumVirtRegs(); i != e; ++i) {
-        unsigned Reg = TargetRegisterInfo::index2VirtReg(i);
-        if (RI.getRegClass(Reg)->getAlignment() > StackAlignment) {
-          FuncInfo->setForceFramePointer(true);
-          return true;
-        }
-      }
-      // Nothing to do
-      return false;
-    }
-
-    virtual const char *getPassName() const {
-      return "X86 Maximal Stack Alignment Check";
-    }
-
-    virtual void getAnalysisUsage(AnalysisUsage &AU) const {
-      AU.setPreservesCFG();
-      MachineFunctionPass::getAnalysisUsage(AU);
-    }
-  };
-
-  char MSAH::ID = 0;
-}
-
-FunctionPass*
-llvm::createX86MaxStackAlignmentHeuristicPass() { return new MSAH(); }

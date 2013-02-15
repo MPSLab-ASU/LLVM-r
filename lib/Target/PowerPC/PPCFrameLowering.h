@@ -15,9 +15,9 @@
 
 #include "PPC.h"
 #include "PPCSubtarget.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/Target/TargetFrameLowering.h"
 #include "llvm/Target/TargetMachine.h"
-#include "llvm/ADT/STLExtras.h"
 
 namespace llvm {
   class PPCSubtarget;
@@ -27,7 +27,8 @@ class PPCFrameLowering: public TargetFrameLowering {
 
 public:
   PPCFrameLowering(const PPCSubtarget &sti)
-    : TargetFrameLowering(TargetFrameLowering::StackGrowsDown, 16, 0),
+    : TargetFrameLowering(TargetFrameLowering::StackGrowsDown,
+        (sti.hasQPX() || sti.isBGQ()) ? 32 : 16, 0),
       Subtarget(sti) {
   }
 

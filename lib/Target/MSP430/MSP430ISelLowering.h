@@ -92,6 +92,7 @@ namespace llvm {
     SDValue LowerSIGN_EXTEND(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerRETURNADDR(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerFRAMEADDR(SDValue Op, SelectionDAG &DAG) const;
+    SDValue LowerVASTART(SDValue Op, SelectionDAG &DAG) const;
     SDValue getReturnAddressFrameIndex(SelectionDAG &DAG) const;
 
     TargetLowering::ConstraintType
@@ -115,6 +116,7 @@ namespace llvm {
     /// out to 16 bits.
     virtual bool isZExtFree(Type *Ty1, Type *Ty2) const;
     virtual bool isZExtFree(EVT VT1, EVT VT2) const;
+    virtual bool isZExtFree(SDValue Val, EVT VT2) const;
 
     MachineBasicBlock* EmitInstrWithCustomInserter(MachineInstr *MI,
                                                    MachineBasicBlock *BB) const;

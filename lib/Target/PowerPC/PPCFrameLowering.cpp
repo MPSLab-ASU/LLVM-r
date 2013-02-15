@@ -12,16 +12,16 @@
 //===----------------------------------------------------------------------===//
 
 #include "PPCFrameLowering.h"
-#include "PPCInstrInfo.h"
 #include "PPCInstrBuilder.h"
+#include "PPCInstrInfo.h"
 #include "PPCMachineFunctionInfo.h"
-#include "llvm/Function.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineModuleInfo.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/RegisterScavenging.h"
+#include "llvm/IR/Function.h"
 #include "llvm/Target/TargetOptions.h"
 
 using namespace llvm;
@@ -119,12 +119,21 @@ static void HandleVRSaveUpdate(MachineInstr *MI, const TargetInstrInfo &TII) {
     if (VRRegNo[RegNo] == I->first)        // If this really is a vector reg.
       UsedRegMask &= ~(1 << (31-RegNo));   // Doesn't need to be marked.
   }
-  for (MachineRegisterInfo::liveout_iterator
-       I = MF->getRegInfo().liveout_begin(),
-       E = MF->getRegInfo().liveout_end(); I != E; ++I) {
-    unsigned RegNo = getPPCRegisterNumbering(*I);
-    if (VRRegNo[RegNo] == *I)              // If this really is a vector reg.
-      UsedRegMask &= ~(1 << (31-RegNo));   // Doesn't need to be marked.
+
+  // Live out registers appear as use operands on return instructions.
+  for (MachineFunction::const_iterator BI = MF->begin(), BE = MF->end();
+       UsedRegMask != 0 && BI != BE; ++BI) {
+    const MachineBasicBlock &MBB = *BI;
+    if (MBB.empty() || !MBB.back().isReturn())
+      continue;
+    const MachineInstr &Ret = MBB.back();
+    for (unsigned I = 0, E = Ret.getNumOperands(); I != E; ++I) {
+      const MachineOperand &MO = Ret.getOperand(I);
+      if (!MO.isReg() || !PPC::VRRCRegClass.contains(MO.getReg()))
+        continue;
+      unsigned RegNo = getPPCRegisterNumbering(MO.getReg());
+      UsedRegMask &= ~(1 << (31-RegNo));
+    }
   }
 
   // If no registers are used, turn this into a copy.
@@ -198,8 +207,8 @@ void PPCFrameLowering::determineFrameLayout(MachineFunction &MF) const {
   // to adjust the stack pointer (we fit in the Red Zone).  For 64-bit
   // SVR4, we also require a stack frame if we need to spill the CR,
   // since this spill area is addressed relative to the stack pointer.
-  bool DisableRedZone = MF.getFunction()->getFnAttributes().
-    hasAttribute(Attributes::NoRedZone);
+  bool DisableRedZone = MF.getFunction()->getAttributes().
+    hasAttribute(AttributeSet::FunctionIndex, Attribute::NoRedZone);
   // FIXME SVR4 The 32-bit SVR4 ABI has no red zone.  However, it can
   // still generate stackless code if all local vars are reg-allocated.
   // Try: (FrameSize <= 224
@@ -261,7 +270,8 @@ bool PPCFrameLowering::needsFP(const MachineFunction &MF) const {
 
   // Naked functions have no stack frame pushed, so we don't have a frame
   // pointer.
-  if (MF.getFunction()->getFnAttributes().hasAttribute(Attributes::Naked))
+  if (MF.getFunction()->getAttributes().hasAttribute(AttributeSet::FunctionIndex,
+                                                     Attribute::Naked))
     return false;
 
   return MF.getTarget().Options.DisableFramePointerElim(MF) ||

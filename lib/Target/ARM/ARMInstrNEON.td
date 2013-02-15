@@ -4264,6 +4264,7 @@ def  VCEQfd   : N3VD<0,0,0b00,0b1110,0, IIC_VBIND, "vceq", "f32", v2i32, v2f32,
 def  VCEQfq   : N3VQ<0,0,0b00,0b1110,0, IIC_VBINQ, "vceq", "f32", v4i32, v4f32,
                      NEONvceq, 1>;
 
+let TwoOperandAliasConstraint = "$Vm = $Vd" in
 defm VCEQz    : N2V_QHS_cmp<0b11, 0b11, 0b01, 0b00010, 0, "vceq", "i",
                             "$Vd, $Vm, #0", NEONvceqz>;
 
@@ -4277,10 +4278,12 @@ def  VCGEfd   : N3VD<1,0,0b00,0b1110,0, IIC_VBIND, "vcge", "f32", v2i32, v2f32,
 def  VCGEfq   : N3VQ<1,0,0b00,0b1110,0, IIC_VBINQ, "vcge", "f32", v4i32, v4f32,
                      NEONvcge, 0>;
 
+let TwoOperandAliasConstraint = "$Vm = $Vd" in {
 defm VCGEz    : N2V_QHS_cmp<0b11, 0b11, 0b01, 0b00001, 0, "vcge", "s",
                             "$Vd, $Vm, #0", NEONvcgez>;
 defm VCLEz    : N2V_QHS_cmp<0b11, 0b11, 0b01, 0b00011, 0, "vcle", "s",
                             "$Vd, $Vm, #0", NEONvclez>;
+}
 
 //   VCGT     : Vector Compare Greater Than
 defm VCGTs    : N3V_QHS<0, 0, 0b0011, 0, IIC_VSUBi4D, IIC_VSUBi4D, IIC_VSUBi4Q,
@@ -4292,10 +4295,12 @@ def  VCGTfd   : N3VD<1,0,0b10,0b1110,0, IIC_VBIND, "vcgt", "f32", v2i32, v2f32,
 def  VCGTfq   : N3VQ<1,0,0b10,0b1110,0, IIC_VBINQ, "vcgt", "f32", v4i32, v4f32,
                      NEONvcgt, 0>;
 
+let TwoOperandAliasConstraint = "$Vm = $Vd" in {
 defm VCGTz    : N2V_QHS_cmp<0b11, 0b11, 0b01, 0b00000, 0, "vcgt", "s",
                             "$Vd, $Vm, #0", NEONvcgtz>;
 defm VCLTz    : N2V_QHS_cmp<0b11, 0b11, 0b01, 0b00100, 0, "vclt", "s",
                             "$Vd, $Vm, #0", NEONvcltz>;
+}
 
 //   VACGE    : Vector Absolute Compare Greater Than or Equal (aka VCAGE)
 def  VACGEd   : N3VDInt<1, 0, 0b00, 0b1110, 1, N3RegFrm, IIC_VBIND, "vacge",
@@ -4877,12 +4882,15 @@ defm VSRI     : N2VShInsR_QHSD<1, 1, 0b0100, 1, "vsri">;
 defm VABS     : N2VInt_QHS<0b11, 0b11, 0b01, 0b00110, 0,
                            IIC_VUNAiD, IIC_VUNAiQ, "vabs", "s",
                            int_arm_neon_vabs>;
-def  VABSfd   : N2VDInt<0b11, 0b11, 0b10, 0b01, 0b01110, 0,
-                        IIC_VUNAD, "vabs", "f32",
-                        v2f32, v2f32, int_arm_neon_vabs>;
-def  VABSfq   : N2VQInt<0b11, 0b11, 0b10, 0b01, 0b01110, 0,
-                        IIC_VUNAQ, "vabs", "f32",
-                        v4f32, v4f32, int_arm_neon_vabs>;
+def  VABSfd   : N2VD<0b11, 0b11, 0b10, 0b01, 0b01110, 0,
+                     "vabs", "f32",
+                     v2f32, v2f32, fabs>;
+def  VABSfq   : N2VQ<0b11, 0b11, 0b10, 0b01, 0b01110, 0,
+                     "vabs", "f32",
+                      v4f32, v4f32, fabs>;
+
+def : Pat<(v2f32 (int_arm_neon_vabs (v2f32 DPR:$src))), (VABSfd DPR:$src)>;
+def : Pat<(v4f32 (int_arm_neon_vabs (v4f32 QPR:$src))), (VABSfq QPR:$src)>;
 
 //   VQABS    : Vector Saturating Absolute Value
 defm VQABS    : N2VInt_QHS<0b11, 0b11, 0b00, 0b01110, 0,

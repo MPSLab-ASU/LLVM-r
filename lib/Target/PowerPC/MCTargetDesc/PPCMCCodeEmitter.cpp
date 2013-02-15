@@ -12,15 +12,17 @@
 //===----------------------------------------------------------------------===//
 
 #define DEBUG_TYPE "mccodeemitter"
+#include "MCTargetDesc/PPCMCTargetDesc.h"
 #include "MCTargetDesc/PPCBaseInfo.h"
 #include "MCTargetDesc/PPCFixupKinds.h"
+#include "llvm/ADT/Statistic.h"
 #include "llvm/MC/MCCodeEmitter.h"
-#include "llvm/MC/MCSubtargetInfo.h"
+#include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCInst.h"
 #include "llvm/MC/MCInstrInfo.h"
-#include "llvm/ADT/Statistic.h"
-#include "llvm/Support/raw_ostream.h"
+#include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/raw_ostream.h"
 using namespace llvm;
 
 STATISTIC(MCNumEmitted, "Number of MC instructions emitted");
@@ -61,6 +63,8 @@ public:
                             SmallVectorImpl<MCFixup> &Fixups) const;
   unsigned getMemRIXEncoding(const MCInst &MI, unsigned OpNo,
                              SmallVectorImpl<MCFixup> &Fixups) const;
+  unsigned getTLSRegEncoding(const MCInst &MI, unsigned OpNo,
+                             SmallVectorImpl<MCFixup> &Fixups) const;
   unsigned get_crbitm_encoding(const MCInst &MI, unsigned OpNo,
                                SmallVectorImpl<MCFixup> &Fixups) const;
 
@@ -77,11 +81,12 @@ public:
                          SmallVectorImpl<MCFixup> &Fixups) const {
     uint64_t Bits = getBinaryCodeForInstr(MI, Fixups);
 
-    // BL8_NOPELF and BLA8_NOP_ELF is both size of 8 bacause of the
+    // BL8_NOP_ELF, BLA8_NOP_ELF, etc., all have a size of 8 because of the
     // following 'nop'.
     unsigned Size = 4; // FIXME: Have Desc.getSize() return the correct value!
     unsigned Opcode = MI.getOpcode();
-    if (Opcode == PPC::BL8_NOP_ELF || Opcode == PPC::BLA8_NOP_ELF)
+    if (Opcode == PPC::BL8_NOP_ELF || Opcode == PPC::BLA8_NOP_ELF ||
+        Opcode == PPC::BL8_NOP_ELF_TLSGD || Opcode == PPC::BL8_NOP_ELF_TLSLD)
       Size = 8;
     
     // Output the constant in big endian byte order.
@@ -114,6 +119,17 @@ getDirectBrEncoding(const MCInst &MI, unsigned OpNo,
   // Add a fixup for the branch target.
   Fixups.push_back(MCFixup::Create(0, MO.getExpr(),
                                    (MCFixupKind)PPC::fixup_ppc_br24));
+
+  // For special TLS calls, add another fixup for the symbol.  Apparently
+  // BL8_NOP_ELF, BL8_NOP_ELF_TLSGD, and BL8_NOP_ELF_TLSLD are sufficiently
+  // similar that TblGen will not generate a separate case for the latter
+  // two, so this is the only way to get the extra fixup generated.
+  unsigned Opcode = MI.getOpcode();
+  if (Opcode == PPC::BL8_NOP_ELF_TLSGD || Opcode == PPC::BL8_NOP_ELF_TLSLD) {
+    const MCOperand &MO2 = MI.getOperand(OpNo+1);
+    Fixups.push_back(MCFixup::Create(0, MO2.getExpr(),
+                                     (MCFixupKind)PPC::fixup_ppc_nofixup));
+  }
   return 0;
 }
 
@@ -193,6 +209,19 @@ unsigned PPCMCCodeEmitter::getMemRIXEncoding(const MCInst &MI, unsigned OpNo,
   return RegBits;
 }
 
+
+unsigned PPCMCCodeEmitter::getTLSRegEncoding(const MCInst &MI, unsigned OpNo,
+                                       SmallVectorImpl<MCFixup> &Fixups) const {
+  const MCOperand &MO = MI.getOperand(OpNo);
+  if (MO.isReg()) return getMachineOpValue(MI, MO, Fixups);
+  
+  // Add a fixup for the TLS register, which simply provides a relocation
+  // hint to the linker that this statement is part of a relocation sequence.
+  // Return the thread-pointer register's encoding.
+  Fixups.push_back(MCFixup::Create(0, MO.getExpr(),
+                                   (MCFixupKind)PPC::fixup_ppc_tlsreg));
+  return getPPCRegisterNumbering(PPC::X13);
+}
 
 unsigned PPCMCCodeEmitter::
 get_crbitm_encoding(const MCInst &MI, unsigned OpNo,

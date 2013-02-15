@@ -16,11 +16,11 @@
 //===----------------------------------------------------------------------===//
 
 #define DEBUG_TYPE "bypass-slow-division"
-#include "llvm/Instructions.h"
-#include "llvm/Function.h"
-#include "llvm/IRBuilder.h"
-#include "llvm/ADT/DenseMap.h"
 #include "llvm/Transforms/Utils/BypassSlowDivision.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/Instructions.h"
 
 using namespace llvm;
 

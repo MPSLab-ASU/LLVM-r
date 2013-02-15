@@ -13,19 +13,19 @@
 //===----------------------------------------------------------------------===//
 
 #define DEBUG_TYPE "memory-builtins"
-#include "llvm/ADT/Statistic.h"
-#include "llvm/ADT/STLExtras.h"
 #include "llvm/Analysis/MemoryBuiltins.h"
-#include "llvm/GlobalVariable.h"
-#include "llvm/Instructions.h"
-#include "llvm/Intrinsics.h"
-#include "llvm/Metadata.h"
-#include "llvm/Module.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/Statistic.h"
 #include "llvm/Analysis/ValueTracking.h"
+#include "llvm/IR/DataLayout.h"
+#include "llvm/IR/GlobalVariable.h"
+#include "llvm/IR/Instructions.h"
+#include "llvm/IR/Intrinsics.h"
+#include "llvm/IR/Metadata.h"
+#include "llvm/IR/Module.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/DataLayout.h"
 #include "llvm/Target/TargetLibraryInfo.h"
 #include "llvm/Transforms/Utils/Local.h"
 using namespace llvm;
@@ -132,7 +132,7 @@ static const AllocFnsTy *getAllocationData(const Value *V, AllocType AllocTy,
 
 static bool hasNoAliasAttr(const Value *V, bool LookThroughBitCast) {
   ImmutableCallSite CS(LookThroughBitCast ? V->stripPointerCasts() : V);
-  return CS && CS.hasFnAttr(Attributes::NoAlias);
+  return CS && CS.hasFnAttr(Attribute::NoAlias);
 }
 
 
@@ -399,6 +399,8 @@ SizeOffsetType ObjectSizeOffsetVisitor::compute(Value *V) {
     return visitArgument(*A);
   if (ConstantPointerNull *P = dyn_cast<ConstantPointerNull>(V))
     return visitConstantPointerNull(*P);
+  if (GlobalAlias *GA = dyn_cast<GlobalAlias>(V))
+    return visitGlobalAlias(*GA);
   if (GlobalVariable *GV = dyn_cast<GlobalVariable>(V))
     return visitGlobalVariable(*GV);
   if (UndefValue *UV = dyn_cast<UndefValue>(V))
@@ -510,12 +512,17 @@ ObjectSizeOffsetVisitor::visitExtractValueInst(ExtractValueInst&) {
 
 SizeOffsetType ObjectSizeOffsetVisitor::visitGEPOperator(GEPOperator &GEP) {
   SizeOffsetType PtrData = compute(GEP.getPointerOperand());
-  if (!bothKnown(PtrData) || !GEP.hasAllConstantIndices())
+  APInt Offset(IntTyBits, 0);
+  if (!bothKnown(PtrData) || !GEP.accumulateConstantOffset(*TD, Offset))
     return unknown();
 
-  SmallVector<Value*, 8> Ops(GEP.idx_begin(), GEP.idx_end());
-  APInt Offset(IntTyBits,TD->getIndexedOffset(GEP.getPointerOperandType(),Ops));
   return std::make_pair(PtrData.first, PtrData.second + Offset);
+}
+
+SizeOffsetType ObjectSizeOffsetVisitor::visitGlobalAlias(GlobalAlias &GA) {
+  if (GA.mayBeOverridden())
+    return unknown();
+  return compute(GA.getAliasee());
 }
 
 SizeOffsetType ObjectSizeOffsetVisitor::visitGlobalVariable(GlobalVariable &GV){
@@ -619,6 +626,7 @@ SizeOffsetEvalType ObjectSizeOffsetEvaluator::compute_(Value *V) {
   } else if (isa<Argument>(V) ||
              (isa<ConstantExpr>(V) &&
               cast<ConstantExpr>(V)->getOpcode() == Instruction::IntToPtr) ||
+             isa<GlobalAlias>(V) ||
              isa<GlobalVariable>(V)) {
     // ignore values where we cannot do more than what ObjectSizeVisitor can
     Result = unknown();

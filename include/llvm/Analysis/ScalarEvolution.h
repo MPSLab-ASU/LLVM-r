@@ -21,16 +21,16 @@
 #ifndef LLVM_ANALYSIS_SCALAREVOLUTION_H
 #define LLVM_ANALYSIS_SCALAREVOLUTION_H
 
+#include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/FoldingSet.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/Instructions.h"
+#include "llvm/IR/Operator.h"
 #include "llvm/Pass.h"
-#include "llvm/Instructions.h"
-#include "llvm/Function.h"
-#include "llvm/Operator.h"
-#include "llvm/Support/DataTypes.h"
-#include "llvm/Support/ValueHandle.h"
 #include "llvm/Support/Allocator.h"
 #include "llvm/Support/ConstantRange.h"
-#include "llvm/ADT/FoldingSet.h"
-#include "llvm/ADT/DenseSet.h"
+#include "llvm/Support/DataTypes.h"
+#include "llvm/Support/ValueHandle.h"
 #include <map>
 
 namespace llvm {

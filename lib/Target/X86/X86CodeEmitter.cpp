@@ -13,23 +13,23 @@
 //===----------------------------------------------------------------------===//
 
 #define DEBUG_TYPE "x86-emitter"
+#include "X86.h"
 #include "X86InstrInfo.h"
 #include "X86JITInfo.h"
+#include "X86Relocations.h"
 #include "X86Subtarget.h"
 #include "X86TargetMachine.h"
-#include "X86Relocations.h"
-#include "X86.h"
-#include "llvm/LLVMContext.h"
-#include "llvm/PassManager.h"
+#include "llvm/ADT/Statistic.h"
 #include "llvm/CodeGen/JITCodeEmitter.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstr.h"
 #include "llvm/CodeGen/MachineModuleInfo.h"
 #include "llvm/CodeGen/Passes.h"
-#include "llvm/ADT/Statistic.h"
+#include "llvm/IR/LLVMContext.h"
 #include "llvm/MC/MCCodeEmitter.h"
 #include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCInst.h"
+#include "llvm/PassManager.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
@@ -124,7 +124,7 @@ template<class CodeEmitter>
 } // end anonymous namespace.
 
 /// createX86CodeEmitterPass - Return a pass that emits the collected X86 code
-/// to the specified templated MachineCodeEmitter object.
+/// to the specified JITCodeEmitter object.
 FunctionPass *llvm::createX86JITCodeEmitterPass(X86TargetMachine &TM,
                                                 JITCodeEmitter &JCE) {
   return new Emitter<JITCodeEmitter>(TM, JCE);

@@ -1,5 +1,5 @@
 target datalayout = "e-p:64:64:64-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:64-f32:32:32-f64:64:64-v64:64:64-v128:128:128-a0:0:64-s0:64:64-f80:128:128"
-; RUN: opt < %s -bb-vectorize -bb-vectorize-req-chain-depth=3 -instcombine -gvn -S | FileCheck %s
+; RUN: opt < %s -bb-vectorize -bb-vectorize-req-chain-depth=3 -bb-vectorize-ignore-target-info -instcombine -gvn -S | FileCheck %s
 
 ; Basic depth-3 chain
 define double @test1(double %A1, double %A2, double %B1, double %B2) {
@@ -171,5 +171,29 @@ define double @test7(double %A1, double %A2, double %B1, double %B2) {
 ; CHECK: %R = fmul double %Z1.v.r1, %Z1.v.r2
 	ret double %R
 ; CHECK: ret double %R
+}
+
+; Basic depth-3 chain (subclass data)
+define i64 @test8(i64 %A1, i64 %A2, i64 %B1, i64 %B2) {
+; CHECK: @test8
+; CHECK: %X1.v.i1.1 = insertelement <2 x i64> undef, i64 %B1, i32 0
+; CHECK: %X1.v.i1.2 = insertelement <2 x i64> %X1.v.i1.1, i64 %B2, i32 1
+; CHECK: %X1.v.i0.1 = insertelement <2 x i64> undef, i64 %A1, i32 0
+; CHECK: %X1.v.i0.2 = insertelement <2 x i64> %X1.v.i0.1, i64 %A2, i32 1
+	%X1 = sub nsw i64 %A1, %B1
+	%X2 = sub i64 %A2, %B2
+; CHECK: %X1 = sub <2 x i64> %X1.v.i0.2, %X1.v.i1.2
+	%Y1 = mul i64 %X1, %A1
+	%Y2 = mul i64 %X2, %A2
+; CHECK: %Y1 = mul <2 x i64> %X1, %X1.v.i0.2
+	%Z1 = add i64 %Y1, %B1
+	%Z2 = add i64 %Y2, %B2
+; CHECK: %Z1 = add <2 x i64> %Y1, %X1.v.i1.2
+	%R  = mul i64 %Z1, %Z2
+; CHECK: %Z1.v.r1 = extractelement <2 x i64> %Z1, i32 0
+; CHECK: %Z1.v.r2 = extractelement <2 x i64> %Z1, i32 1
+; CHECK: %R = mul i64 %Z1.v.r1, %Z1.v.r2
+	ret i64 %R
+; CHECK: ret i64 %R
 }
 

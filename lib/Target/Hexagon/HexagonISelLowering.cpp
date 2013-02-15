@@ -13,17 +13,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "HexagonISelLowering.h"
-#include "HexagonTargetMachine.h"
 #include "HexagonMachineFunctionInfo.h"
-#include "HexagonTargetObjectFile.h"
 #include "HexagonSubtarget.h"
-#include "llvm/DerivedTypes.h"
-#include "llvm/Function.h"
-#include "llvm/InlineAsm.h"
-#include "llvm/GlobalVariable.h"
-#include "llvm/GlobalAlias.h"
-#include "llvm/Intrinsics.h"
-#include "llvm/CallingConv.h"
+#include "HexagonTargetMachine.h"
+#include "HexagonTargetObjectFile.h"
 #include "llvm/CodeGen/CallingConvLower.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
@@ -32,6 +25,13 @@
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/SelectionDAGISel.h"
 #include "llvm/CodeGen/ValueTypes.h"
+#include "llvm/IR/CallingConv.h"
+#include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/GlobalAlias.h"
+#include "llvm/IR/GlobalVariable.h"
+#include "llvm/IR/InlineAsm.h"
+#include "llvm/IR/Intrinsics.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -304,15 +304,9 @@ HexagonTargetLowering::LowerReturn(SDValue Chain,
   // Analyze return values of ISD::RET
   CCInfo.AnalyzeReturn(Outs, RetCC_Hexagon);
 
-  // If this is the first return lowered for this function, add the regs to the
-  // liveout set for the function.
-  if (DAG.getMachineFunction().getRegInfo().liveout_empty()) {
-    for (unsigned i = 0; i != RVLocs.size(); ++i)
-      if (RVLocs[i].isRegLoc())
-        DAG.getMachineFunction().getRegInfo().addLiveOut(RVLocs[i].getLocReg());
-  }
-
   SDValue Flag;
+  SmallVector<SDValue, 4> RetOps(1, Chain);
+
   // Copy the result values into the output registers.
   for (unsigned i = 0; i != RVLocs.size(); ++i) {
     CCValAssign &VA = RVLocs[i];
@@ -321,12 +315,17 @@ HexagonTargetLowering::LowerReturn(SDValue Chain,
 
     // Guarantee that all emitted copies are stuck together with flags.
     Flag = Chain.getValue(1);
+    RetOps.push_back(DAG.getRegister(VA.getLocReg(), VA.getLocVT()));
   }
 
-  if (Flag.getNode())
-    return DAG.getNode(HexagonISD::RET_FLAG, dl, MVT::Other, Chain, Flag);
+  RetOps[0] = Chain;  // Update chain.
 
-  return DAG.getNode(HexagonISD::RET_FLAG, dl, MVT::Other, Chain);
+  // Add the flag if we have it.
+  if (Flag.getNode())
+    RetOps.push_back(Flag);
+
+  return DAG.getNode(HexagonISD::RET_FLAG, dl, MVT::Other,
+                     &RetOps[0], RetOps.size());
 }
 
 
@@ -608,7 +607,7 @@ static bool getIndexedAddressParts(SDNode *Ptr, EVT VT,
 
 // TODO: Put this function along with the other isS* functions in
 // HexagonISelDAGToDAG.cpp into a common file. Or better still, use the
-// functions defined in HexagonImmediates.td.
+// functions defined in HexagonOperands.td.
 static bool Is_PostInc_S4_Offset(SDNode * S, int ShiftAmount) {
   ConstantSDNode *N = cast<ConstantSDNode>(S);
 
@@ -1016,8 +1015,8 @@ SDValue HexagonTargetLowering::LowerGLOBALADDRESS(SDValue Op,
   DebugLoc dl = Op.getDebugLoc();
   Result = DAG.getTargetGlobalAddress(GV, dl, getPointerTy(), Offset);
 
-  HexagonTargetObjectFile &TLOF =
-    (HexagonTargetObjectFile&)getObjFileLowering();
+  const HexagonTargetObjectFile &TLOF =
+      static_cast<const HexagonTargetObjectFile &>(getObjFileLowering());
   if (TLOF.IsGlobalInSmallSection(GV, getTargetMachine())) {
     return DAG.getNode(HexagonISD::CONST32_GP, dl, getPointerTy(), Result);
   }
@@ -1364,6 +1363,8 @@ HexagonTargetLowering::HexagonTargetLowering(HexagonTargetMachine
     setOperationAction(ISD::FSIN , MVT::f32, Expand);
     setOperationAction(ISD::FCOS , MVT::f32, Expand);
     setOperationAction(ISD::FREM , MVT::f32, Expand);
+    setOperationAction(ISD::FSINCOS, MVT::f64, Expand);
+    setOperationAction(ISD::FSINCOS, MVT::f32, Expand);
     setOperationAction(ISD::CTPOP, MVT::i32, Expand);
     setOperationAction(ISD::CTTZ , MVT::i32, Expand);
     setOperationAction(ISD::CTTZ_ZERO_UNDEF, MVT::i32, Expand);

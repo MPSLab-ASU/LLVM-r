@@ -15,13 +15,13 @@
 #include "Hexagon.h"
 #include "HexagonISelLowering.h"
 #include "HexagonMachineScheduler.h"
-#include "llvm/Module.h"
 #include "llvm/CodeGen/Passes.h"
+#include "llvm/IR/Module.h"
 #include "llvm/PassManager.h"
-#include "llvm/Transforms/IPO/PassManagerBuilder.h"
-#include "llvm/Transforms/Scalar.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/TargetRegistry.h"
+#include "llvm/Transforms/IPO/PassManagerBuilder.h"
+#include "llvm/Transforms/Scalar.h"
 
 using namespace llvm;
 
@@ -74,8 +74,7 @@ HexagonTargetMachine::HexagonTargetMachine(const Target &T, StringRef TT,
     Subtarget(TT, CPU, FS), InstrInfo(Subtarget), TLInfo(*this),
     TSInfo(*this),
     FrameLowering(Subtarget),
-    InstrItins(&Subtarget.getInstrItineraryData()),
-    STTI(&TLInfo), VTTI(&TLInfo) {
+    InstrItins(&Subtarget.getInstrItineraryData()) {
   setMCUseCFI(false);
 }
 
@@ -123,7 +122,7 @@ TargetPassConfig *HexagonTargetMachine::createPassConfig(PassManagerBase &PM) {
 
 bool HexagonPassConfig::addInstSelector() {
   addPass(createHexagonRemoveExtendOps(getHexagonTargetMachine()));
-  addPass(createHexagonISelDag(getHexagonTargetMachine()));
+  addPass(createHexagonISelDag(getHexagonTargetMachine(), getOptLevel()));
   addPass(createHexagonPeephole());
   return false;
 }

@@ -31,6 +31,10 @@ void initializeTransformUtils(PassRegistry&);
 /// ScalarOpts library.
 void initializeScalarOpts(PassRegistry&);
 
+/// initializeObjCARCOpts - Initialize all passes linked into the ObjCARCOpts
+/// library.
+void initializeObjCARCOpts(PassRegistry&);
+
 /// initializeVectorization - Initialize all passes linked into the
 /// Vectorize library.
 void initializeVectorization(PassRegistry&);
@@ -69,6 +73,7 @@ void initializeArgPromotionPass(PassRegistry&);
 void initializeBarrierNoopPass(PassRegistry&);
 void initializeBasicAliasAnalysisPass(PassRegistry&);
 void initializeBasicCallGraphPass(PassRegistry&);
+void initializeBasicTTIPass(PassRegistry&);
 void initializeBlockExtractorPassPass(PassRegistry&);
 void initializeBlockFrequencyInfoPass(PassRegistry&);
 void initializeBlockPlacementPass(PassRegistry&);
@@ -76,6 +81,8 @@ void initializeBoundsCheckingPass(PassRegistry&);
 void initializeBranchFolderPassPass(PassRegistry&);
 void initializeBranchProbabilityInfoPass(PassRegistry&);
 void initializeBreakCriticalEdgesPass(PassRegistry&);
+void initializeCallGraphPrinterPass(PassRegistry&);
+void initializeCallGraphViewerPass(PassRegistry&);
 void initializeCFGOnlyPrinterPass(PassRegistry&);
 void initializeCFGOnlyViewerPass(PassRegistry&);
 void initializeCFGPrinterPass(PassRegistry&);
@@ -110,6 +117,8 @@ void initializeExpandPostRAPass(PassRegistry&);
 void initializePathProfilerPass(PassRegistry&);
 void initializeGCOVProfilerPass(PassRegistry&);
 void initializeAddressSanitizerPass(PassRegistry&);
+void initializeAddressSanitizerModulePass(PassRegistry&);
+void initializeMemorySanitizerPass(PassRegistry&);
 void initializeThreadSanitizerPass(PassRegistry&);
 void initializeEarlyCSEPass(PassRegistry&);
 void initializeExpandISelPseudosPass(PassRegistry&);
@@ -127,6 +136,7 @@ void initializeIPSCCPPass(PassRegistry&);
 void initializeIVUsersPass(PassRegistry&);
 void initializeIfConverterPass(PassRegistry&);
 void initializeIndVarSimplifyPass(PassRegistry&);
+void initializeInlineCostAnalysisPass(PassRegistry&);
 void initializeInstCombinerPass(PassRegistry&);
 void initializeInstCountPass(PassRegistry&);
 void initializeInstNamerPass(PassRegistry&);
@@ -172,7 +182,6 @@ void initializeMachineDominatorTreePass(PassRegistry&);
 void initializeMachinePostDominatorTreePass(PassRegistry&);
 void initializeMachineLICMPass(PassRegistry&);
 void initializeMachineLoopInfoPass(PassRegistry&);
-void initializeMachineLoopRangesPass(PassRegistry&);
 void initializeMachineModuleInfoPass(PassRegistry&);
 void initializeMachineSchedulerPass(PassRegistry&);
 void initializeMachineSinkingPass(PassRegistry&);
@@ -208,6 +217,7 @@ void initializePreVerifierPass(PassRegistry&);
 void initializePrintDbgInfoPass(PassRegistry&);
 void initializePrintFunctionPassPass(PassRegistry&);
 void initializePrintModulePassPass(PassRegistry&);
+void initializePrintBasicBlockPassPass(PassRegistry&);
 void initializeProcessImplicitDefsPass(PassRegistry&);
 void initializeProfileEstimatorPassPass(PassRegistry&);
 void initializeProfileInfoAnalysisGroup(PassRegistry&);
@@ -249,7 +259,8 @@ void initializeTailCallElimPass(PassRegistry&);
 void initializeTailDuplicatePassPass(PassRegistry&);
 void initializeTargetPassConfigPass(PassRegistry&);
 void initializeDataLayoutPass(PassRegistry&);
-void initializeTargetTransformInfoPass(PassRegistry&);
+void initializeTargetTransformInfoAnalysisGroup(PassRegistry&);
+void initializeNoTTIPass(PassRegistry&);
 void initializeTargetLibraryInfoPass(PassRegistry&);
 void initializeTwoAddressInstructionPassPass(PassRegistry&);
 void initializeTypeBasedAliasAnalysisPass(PassRegistry&);
