@@ -39,7 +39,7 @@ def call            : SDNode<"OR1KISD::CALL", SDT_OR1KCall,
                              [SDNPHasChain, SDNPOptInGlue, SDNPOutGlue,
                               SDNPVariadic]>;
 def retflag         : SDNode<"OR1KISD::RET_FLAG", SDTNone,
-                             [SDNPHasChain, SDNPOptInGlue]>;
+                             [SDNPHasChain, SDNPOptInGlue, SDNPVariadic]>;
 def callseq_start   : SDNode<"ISD::CALLSEQ_START", SDT_OR1KCallSeqStart,
                              [SDNPHasChain, SDNPOutGlue]>;
 def callseq_end     : SDNode<"ISD::CALLSEQ_END",   SDT_OR1KCallSeqEnd,

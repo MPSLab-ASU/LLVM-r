@@ -40,8 +40,9 @@ struct OR1KRegisterInfo : public OR1KGenRegisterInfo {
                                      MachineBasicBlock &MBB,
                                      MachineBasicBlock::iterator I) const;
 
-  void eliminateFrameIndex(MachineBasicBlock::iterator II,
-                           int SPAdj, RegScavenger *RS = NULL) const;
+  void eliminateFrameIndex(MachineBasicBlock::iterator II, 
+                           int SPAdj, unsigned FIOperandNum,
+                           RegScavenger *RS = NULL) const;
 
   void processFunctionBeforeFrameFinalized(MachineFunction &MF) const;
 

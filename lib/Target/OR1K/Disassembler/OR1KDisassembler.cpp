@@ -15,7 +15,6 @@
 #include "OR1KDisassembler.h"
 #include "OR1KSubtarget.h"
 #include "OR1KRegisterInfo.h"
-#include "llvm/MC/EDInstInfo.h"
 #include "llvm/MC/MCDisassembler.h"
 #include "llvm/MC/MCFixedLenDisassembler.h"
 #include "llvm/Support/MemoryObject.h"
@@ -23,8 +22,6 @@
 #include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/MC/MCInst.h"
 #include "llvm/Support/MathExtras.h"
-
-#include "OR1KGenEDInfo.inc"
 
 using namespace llvm;
 
@@ -104,10 +101,6 @@ OR1KDisassembler::getInstruction(MCInst &instr,
   }
 
   return MCDisassembler::Fail;
-}
-
-const EDInstInfo *OR1KDisassembler::getEDInfo() const {
-  return instInfoOR1K;
 }
 
 DecodeStatus DecodeGPRRegisterClass(MCInst &Inst,

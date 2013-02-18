@@ -18,12 +18,6 @@
 #include "OR1KMachineFunctionInfo.h"
 #include "OR1KTargetMachine.h"
 #include "OR1KSubtarget.h"
-#include "llvm/DerivedTypes.h"
-#include "llvm/Function.h"
-#include "llvm/Intrinsics.h"
-#include "llvm/CallingConv.h"
-#include "llvm/GlobalVariable.h"
-#include "llvm/GlobalAlias.h"
 #include "llvm/CodeGen/CallingConvLower.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
@@ -32,6 +26,12 @@
 #include "llvm/CodeGen/SelectionDAGISel.h"
 #include "llvm/CodeGen/TargetLoweringObjectFileImpl.h"
 #include "llvm/CodeGen/ValueTypes.h"
+#include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/Intrinsics.h"
+#include "llvm/IR/CallingConv.h"
+#include "llvm/IR/GlobalVariable.h"
+#include "llvm/IR/GlobalAlias.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -497,15 +497,8 @@ OR1KTargetLowering::LowerReturn(SDValue Chain,
   // Analize return values.
   CCInfo.AnalyzeReturn(Outs, RetCC_OR1K32);
 
-  // If this is the first return lowered for this function, add the regs to the
-  // liveout set for the function.
-  if (DAG.getMachineFunction().getRegInfo().liveout_empty()) {
-    for (unsigned i = 0; i != RVLocs.size(); ++i)
-      if (RVLocs[i].isRegLoc())
-        DAG.getMachineFunction().getRegInfo().addLiveOut(RVLocs[i].getLocReg());
-  }
-
   SDValue Flag;
+  SmallVector<SDValue, 4> RetOps(1, Chain);
 
   // Copy the result values into the output registers.
   for (unsigned i = 0; i != RVLocs.size(); ++i) {
@@ -515,9 +508,9 @@ OR1KTargetLowering::LowerReturn(SDValue Chain,
     Chain = DAG.getCopyToReg(Chain, dl, VA.getLocReg(),
                              OutVals[i], Flag);
 
-    // Guarantee that all emitted copies are stuck together,
-    // avoiding something bad.
+    // Guarantee that all emitted copies are stuck together with flags.
     Flag = Chain.getValue(1);
+    RetOps.push_back(DAG.getRegister(VA.getLocReg(), VA.getLocVT()));
   }
 
   // The OR1K ABI for returning structs by value requires that we copy
@@ -534,17 +527,17 @@ OR1KTargetLowering::LowerReturn(SDValue Chain,
 
     Chain = DAG.getCopyToReg(Chain, dl, OR1K::R11, Val, Flag);
     Flag = Chain.getValue(1);
-
-    // r11 now acts like a return value.
-    DAG.getMachineFunction().getRegInfo().addLiveOut(OR1K::R11);
+    RetOps.push_back(DAG.getRegister(OR1K::R11, getPointerTy()));
   }
+
+  RetOps[0] = Chain; // Update chain
 
   unsigned Opc = OR1KISD::RET_FLAG;
   if (Flag.getNode())
-    return DAG.getNode(Opc, dl, MVT::Other, Chain, Flag);
+    RetOps.push_back(Flag);
 
   // Return Void
-  return DAG.getNode(Opc, dl, MVT::Other, Chain);
+  return DAG.getNode(Opc, dl, MVT::Other, &RetOps[0], RetOps.size());
 }
 
 /// LowerCCCCallTo - functions arguments are copied from virtual regs to

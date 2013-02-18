@@ -62,7 +62,7 @@ public:
 
   // No instruction requires relaxation
   bool fixupNeedsRelaxation(const MCFixup &Fixup, uint64_t Value, 
-                            const MCInstFragment *DF,
+                            const MCRelaxableFragment *DF,
                             const MCAsmLayout &Layout) const { return false; }
   
   const MCFixupKindInfo &getFixupKindInfo(MCFixupKind Kind) const;

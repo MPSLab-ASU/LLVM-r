@@ -104,6 +104,7 @@ bool Filler::runOnMachineBasicBlock(MachineBasicBlock &MBB) {
   for (MachineBasicBlock::instr_iterator I = MBB.instr_begin();
        I != MBB.instr_end(); ++I)
     if (I->getDesc().hasDelaySlot()) {
+      MachineBasicBlock::instr_iterator InstrWithSlot = I;
       MachineBasicBlock::instr_iterator J = I;
 
       if (!CompatDelaySlotFiller && findDelayInstr(MBB, I, J))
@@ -117,9 +118,9 @@ bool Filler::runOnMachineBasicBlock(MachineBasicBlock &MBB) {
       // The instruction after it will be visited in the next iteration.
       LastFiller = ++I;
 
-      // Set InsideBundle bit so that the machine verifier doesn't expect this
-      // instruction to be a terminator.
-      LastFiller->setIsInsideBundle();
+      // Bundle the delay slot filler to InstrWithSlot so that the machine
+      // verifier doesn't expect this instruction to be a terminator.
+      MIBundleBuilder(MBB, InstrWithSlot, llvm::next(LastFiller));
     }
   return Changed;
 }
