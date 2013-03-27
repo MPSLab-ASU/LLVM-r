@@ -895,7 +895,7 @@ void Cost::RatePrimaryRegister(const SCEV *Reg,
   }
   if (Regs.insert(Reg)) {
     RateRegister(Reg, Regs, L, SE, DT);
-    if (isLoser())
+    if (LoserRegs && isLoser())
       LoserRegs->insert(Reg);
   }
 }
@@ -1895,15 +1895,13 @@ ICmpInst *LSRInstance::OptimizeMax(ICmpInst *Cond, IVStrideUse* &CondUse) {
   if (ICmpInst::isTrueWhenEqual(Pred)) {
     // Look for n+1, and grab n.
     if (AddOperator *BO = dyn_cast<AddOperator>(Sel->getOperand(1)))
-      if (isa<ConstantInt>(BO->getOperand(1)) &&
-          cast<ConstantInt>(BO->getOperand(1))->isOne() &&
-          SE.getSCEV(BO->getOperand(0)) == MaxRHS)
-        NewRHS = BO->getOperand(0);
+      if (ConstantInt *BO1 = dyn_cast<ConstantInt>(BO->getOperand(1)))
+         if (BO1->isOne() && SE.getSCEV(BO->getOperand(0)) == MaxRHS)
+           NewRHS = BO->getOperand(0);
     if (AddOperator *BO = dyn_cast<AddOperator>(Sel->getOperand(2)))
-      if (isa<ConstantInt>(BO->getOperand(1)) &&
-          cast<ConstantInt>(BO->getOperand(1))->isOne() &&
-          SE.getSCEV(BO->getOperand(0)) == MaxRHS)
-        NewRHS = BO->getOperand(0);
+      if (ConstantInt *BO1 = dyn_cast<ConstantInt>(BO->getOperand(1)))
+        if (BO1->isOne() && SE.getSCEV(BO->getOperand(0)) == MaxRHS)
+          NewRHS = BO->getOperand(0);
     if (!NewRHS)
       return Cond;
   } else if (SE.getSCEV(Sel->getOperand(1)) == MaxRHS)
@@ -2716,6 +2714,7 @@ void LSRInstance::GenerateIVChain(const IVChain &Chain, SCEVExpander &Rewriter,
   // by LSR.
   const IVInc &Head = Chain.Incs[0];
   User::op_iterator IVOpEnd = Head.UserInst->op_end();
+  // findIVOperand returns IVOpEnd if it can no longer find a valid IV user.
   User::op_iterator IVOpIter = findIVOperand(Head.UserInst->op_begin(),
                                              IVOpEnd, L, SE);
   Value *IVSrc = 0;
@@ -3850,83 +3849,83 @@ void LSRInstance::NarrowSearchSpaceByDetectingSupersets() {
 /// for expressions like A, A+1, A+2, etc., allocate a single register for
 /// them.
 void LSRInstance::NarrowSearchSpaceByCollapsingUnrolledCode() {
-  if (EstimateSearchSpaceComplexity() >= ComplexityLimit) {
-    DEBUG(dbgs() << "The search space is too complex.\n");
+  if (EstimateSearchSpaceComplexity() < ComplexityLimit)
+    return;
 
-    DEBUG(dbgs() << "Narrowing the search space by assuming that uses "
-                    "separated by a constant offset will use the same "
-                    "registers.\n");
+  DEBUG(dbgs() << "The search space is too complex.\n"
+                  "Narrowing the search space by assuming that uses separated "
+                  "by a constant offset will use the same registers.\n");
 
-    // This is especially useful for unrolled loops.
+  // This is especially useful for unrolled loops.
 
-    for (size_t LUIdx = 0, NumUses = Uses.size(); LUIdx != NumUses; ++LUIdx) {
-      LSRUse &LU = Uses[LUIdx];
-      for (SmallVectorImpl<Formula>::const_iterator I = LU.Formulae.begin(),
-           E = LU.Formulae.end(); I != E; ++I) {
-        const Formula &F = *I;
-        if (F.BaseOffset != 0 && F.Scale == 0) {
-          if (LSRUse *LUThatHas = FindUseWithSimilarFormula(F, LU)) {
-            if (reconcileNewOffset(*LUThatHas, F.BaseOffset,
-                                   /*HasBaseReg=*/false,
-                                   LU.Kind, LU.AccessTy)) {
-              DEBUG(dbgs() << "  Deleting use "; LU.print(dbgs());
-                    dbgs() << '\n');
+  for (size_t LUIdx = 0, NumUses = Uses.size(); LUIdx != NumUses; ++LUIdx) {
+    LSRUse &LU = Uses[LUIdx];
+    for (SmallVectorImpl<Formula>::const_iterator I = LU.Formulae.begin(),
+         E = LU.Formulae.end(); I != E; ++I) {
+      const Formula &F = *I;
+      if (F.BaseOffset == 0 || F.Scale != 0)
+        continue;
 
-              LUThatHas->AllFixupsOutsideLoop &= LU.AllFixupsOutsideLoop;
+      LSRUse *LUThatHas = FindUseWithSimilarFormula(F, LU);
+      if (!LUThatHas)
+        continue;
 
-              // Update the relocs to reference the new use.
-              for (SmallVectorImpl<LSRFixup>::iterator I = Fixups.begin(),
-                   E = Fixups.end(); I != E; ++I) {
-                LSRFixup &Fixup = *I;
-                if (Fixup.LUIdx == LUIdx) {
-                  Fixup.LUIdx = LUThatHas - &Uses.front();
-                  Fixup.Offset += F.BaseOffset;
-                  // Add the new offset to LUThatHas' offset list.
-                  if (LUThatHas->Offsets.back() != Fixup.Offset) {
-                    LUThatHas->Offsets.push_back(Fixup.Offset);
-                    if (Fixup.Offset > LUThatHas->MaxOffset)
-                      LUThatHas->MaxOffset = Fixup.Offset;
-                    if (Fixup.Offset < LUThatHas->MinOffset)
-                      LUThatHas->MinOffset = Fixup.Offset;
-                  }
-                  DEBUG(dbgs() << "New fixup has offset "
-                               << Fixup.Offset << '\n');
-                }
-                if (Fixup.LUIdx == NumUses-1)
-                  Fixup.LUIdx = LUIdx;
-              }
+      if (!reconcileNewOffset(*LUThatHas, F.BaseOffset, /*HasBaseReg=*/ false,
+                              LU.Kind, LU.AccessTy))
+        continue;
 
-              // Delete formulae from the new use which are no longer legal.
-              bool Any = false;
-              for (size_t i = 0, e = LUThatHas->Formulae.size(); i != e; ++i) {
-                Formula &F = LUThatHas->Formulae[i];
-                if (!isLegalUse(TTI, LUThatHas->MinOffset, LUThatHas->MaxOffset,
-                                LUThatHas->Kind, LUThatHas->AccessTy, F)) {
-                  DEBUG(dbgs() << "  Deleting "; F.print(dbgs());
-                        dbgs() << '\n');
-                  LUThatHas->DeleteFormula(F);
-                  --i;
-                  --e;
-                  Any = true;
-                }
-              }
-              if (Any)
-                LUThatHas->RecomputeRegs(LUThatHas - &Uses.front(), RegUses);
+      DEBUG(dbgs() << "  Deleting use "; LU.print(dbgs()); dbgs() << '\n');
 
-              // Delete the old use.
-              DeleteUse(LU, LUIdx);
-              --LUIdx;
-              --NumUses;
-              break;
-            }
+      LUThatHas->AllFixupsOutsideLoop &= LU.AllFixupsOutsideLoop;
+
+      // Update the relocs to reference the new use.
+      for (SmallVectorImpl<LSRFixup>::iterator I = Fixups.begin(),
+           E = Fixups.end(); I != E; ++I) {
+        LSRFixup &Fixup = *I;
+        if (Fixup.LUIdx == LUIdx) {
+          Fixup.LUIdx = LUThatHas - &Uses.front();
+          Fixup.Offset += F.BaseOffset;
+          // Add the new offset to LUThatHas' offset list.
+          if (LUThatHas->Offsets.back() != Fixup.Offset) {
+            LUThatHas->Offsets.push_back(Fixup.Offset);
+            if (Fixup.Offset > LUThatHas->MaxOffset)
+              LUThatHas->MaxOffset = Fixup.Offset;
+            if (Fixup.Offset < LUThatHas->MinOffset)
+              LUThatHas->MinOffset = Fixup.Offset;
           }
+          DEBUG(dbgs() << "New fixup has offset " << Fixup.Offset << '\n');
+        }
+        if (Fixup.LUIdx == NumUses-1)
+          Fixup.LUIdx = LUIdx;
+      }
+
+      // Delete formulae from the new use which are no longer legal.
+      bool Any = false;
+      for (size_t i = 0, e = LUThatHas->Formulae.size(); i != e; ++i) {
+        Formula &F = LUThatHas->Formulae[i];
+        if (!isLegalUse(TTI, LUThatHas->MinOffset, LUThatHas->MaxOffset,
+                        LUThatHas->Kind, LUThatHas->AccessTy, F)) {
+          DEBUG(dbgs() << "  Deleting "; F.print(dbgs());
+                dbgs() << '\n');
+          LUThatHas->DeleteFormula(F);
+          --i;
+          --e;
+          Any = true;
         }
       }
-    }
 
-    DEBUG(dbgs() << "After pre-selection:\n";
-          print_uses(dbgs()));
+      if (Any)
+        LUThatHas->RecomputeRegs(LUThatHas - &Uses.front(), RegUses);
+
+      // Delete the old use.
+      DeleteUse(LU, LUIdx);
+      --LUIdx;
+      --NumUses;
+      break;
+    }
   }
+
+  DEBUG(dbgs() << "After pre-selection:\n"; print_uses(dbgs()));
 }
 
 /// NarrowSearchSpaceByRefilteringUndesirableDedicatedRegisters - Call

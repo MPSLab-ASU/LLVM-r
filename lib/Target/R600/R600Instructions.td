@@ -512,8 +512,8 @@ def INTERP_PAIR_ZW :  AMDGPUShaderInst <
   []>;
 
 def CONST_ADDRESS: SDNode<"AMDGPUISD::CONST_ADDRESS",
-  SDTypeProfile<1, 1, [SDTCisInt<0>, SDTCisPtrTy<1>]>,
-  [SDNPMayLoad]
+  SDTypeProfile<1, -1, [SDTCisInt<0>, SDTCisPtrTy<1>]>,
+  [SDNPVariadic]
 >;
 
 //===----------------------------------------------------------------------===//
@@ -949,8 +949,13 @@ class MUL_LIT_Common <bits<5> inst> : R600_3OP <
 
 class MULADD_Common <bits<5> inst> : R600_3OP <
   inst, "MULADD",
+  []
+>;
+
+class MULADD_IEEE_Common <bits<5> inst> : R600_3OP <
+  inst, "MULADD_IEEE",
   [(set (f32 R600_Reg32:$dst),
-   (IL_mad R600_Reg32:$src0, R600_Reg32:$src1, R600_Reg32:$src2))]
+   (fadd (fmul R600_Reg32:$src0, R600_Reg32:$src1), R600_Reg32:$src2))]
 >;
 
 class CNDE_Common <bits<5> inst> : R600_3OP <
@@ -1085,12 +1090,12 @@ class COS_Common <bits<11> inst> : R600_1OP <
 multiclass DIV_Common <InstR600 recip_ieee> {
 def : Pat<
   (int_AMDGPU_div R600_Reg32:$src0, R600_Reg32:$src1),
-  (MUL R600_Reg32:$src0, (recip_ieee R600_Reg32:$src1))
+  (MUL_IEEE R600_Reg32:$src0, (recip_ieee R600_Reg32:$src1))
 >;
 
 def : Pat<
   (fdiv R600_Reg32:$src0, R600_Reg32:$src1),
-  (MUL R600_Reg32:$src0, (recip_ieee R600_Reg32:$src1))
+  (MUL_IEEE R600_Reg32:$src0, (recip_ieee R600_Reg32:$src1))
 >;
 }
 
@@ -1107,6 +1112,7 @@ let Predicates = [isR600] in {
 
   def MUL_LIT_r600 : MUL_LIT_Common<0x0C>;
   def MULADD_r600 : MULADD_Common<0x10>;
+  def MULADD_IEEE_r600 : MULADD_IEEE_Common<0x14>;
   def CNDE_r600 : CNDE_Common<0x18>;
   def CNDGT_r600 : CNDGT_Common<0x19>;
   def CNDGE_r600 : CNDGE_Common<0x1A>;
@@ -1135,6 +1141,7 @@ let Predicates = [isR600] in {
   def RECIP_UINT_r600 : RECIP_UINT_Common <0x78>;
 
   defm DIV_r600 : DIV_Common<RECIP_IEEE_r600>;
+  def : POW_Common <LOG_IEEE_r600, EXP_IEEE_r600, MUL, R600_Reg32>;
   def TGSI_LIT_Z_r600 : TGSI_LIT_Z_Common<MUL_LIT_r600, LOG_CLAMPED_r600, EXP_IEEE_r600>;
 
   def : Pat<(fsqrt R600_Reg32:$src),
@@ -1163,12 +1170,12 @@ let Predicates = [isR600] in {
 // cards.
 class COS_PAT <InstR600 trig> : Pat<
   (fcos R600_Reg32:$src),
-  (trig (MUL (MOV_IMM_I32 CONST.TWO_PI_INV), R600_Reg32:$src))
+  (trig (MUL_IEEE (MOV_IMM_I32 CONST.TWO_PI_INV), R600_Reg32:$src))
 >;
 
 class SIN_PAT <InstR600 trig> : Pat<
   (fsin R600_Reg32:$src),
-  (trig (MUL (MOV_IMM_I32 CONST.TWO_PI_INV), R600_Reg32:$src))
+  (trig (MUL_IEEE (MOV_IMM_I32 CONST.TWO_PI_INV), R600_Reg32:$src))
 >;
 
 //===----------------------------------------------------------------------===//
@@ -1206,6 +1213,7 @@ def RECIPSQRT_IEEE_eg : RECIPSQRT_IEEE_Common<0x89>;
 def SIN_eg : SIN_Common<0x8D>;
 def COS_eg : COS_Common<0x8E>;
 
+def : POW_Common <LOG_IEEE_eg, EXP_IEEE_eg, MUL, R600_Reg32>;
 def : SIN_PAT <SIN_eg>;
 def : COS_PAT <COS_eg>;
 def : Pat<(fsqrt R600_Reg32:$src),
@@ -1246,6 +1254,7 @@ let Predicates = [isEGorCayman] in {
   >;
 
   def MULADD_eg : MULADD_Common<0x14>;
+  def MULADD_IEEE_eg : MULADD_IEEE_Common<0x18>;
   def ASHR_eg : ASHR_Common<0x15>;
   def LSHR_eg : LSHR_Common<0x16>;
   def LSHL_eg : LSHL_Common<0x17>;
@@ -1533,13 +1542,14 @@ def MULLO_UINT_cm : MULLO_UINT_Common<0x91>;
 def MULHI_UINT_cm : MULHI_UINT_Common<0x92>;
 def RECIPSQRT_CLAMPED_cm : RECIPSQRT_CLAMPED_Common<0x87>;
 def EXP_IEEE_cm : EXP_IEEE_Common<0x81>;
-def LOG_IEEE_ : LOG_IEEE_Common<0x83>;
+def LOG_IEEE_cm : LOG_IEEE_Common<0x83>;
 def RECIP_CLAMPED_cm : RECIP_CLAMPED_Common<0x84>;
 def RECIPSQRT_IEEE_cm : RECIPSQRT_IEEE_Common<0x89>;
 def SIN_cm : SIN_Common<0x8D>;
 def COS_cm : COS_Common<0x8E>;
 } // End isVector = 1
 
+def : POW_Common <LOG_IEEE_cm, EXP_IEEE_cm, MUL, R600_Reg32>;
 def : SIN_PAT <SIN_cm>;
 def : COS_PAT <COS_cm>;
 
@@ -1582,16 +1592,26 @@ def PRED_X : InstR600 <
   let FlagOperandIdx = 3;
 }
 
-let isTerminator = 1, isBranch = 1, isBarrier = 1 in {
-
-def JUMP : InstR600 <0x10,
+let isTerminator = 1, isBranch = 1 in {
+def JUMP_COND : InstR600 <0x10,
           (outs),
-          (ins brtarget:$target, R600_Pred:$p),
+          (ins brtarget:$target, R600_Predicate_Bit:$p),
           "JUMP $target ($p)",
           [], AnyALU
   >;
 
-}  // End isTerminator = 1, isBranch = 1, isBarrier = 1
+def JUMP : InstR600 <0x10,
+          (outs),
+          (ins brtarget:$target),
+          "JUMP $target",
+          [], AnyALU
+  >
+{
+  let isPredicable = 1;
+  let isBarrier = 1;
+}
+
+}  // End isTerminator = 1, isBranch = 1
 
 let usesCustomInserter = 1 in {
 
@@ -1631,7 +1651,7 @@ def FNEG_R600 : FNEG<R600_Reg32>;
 //===---------------------------------------------------------------------===//
 // Return instruction
 //===---------------------------------------------------------------------===//
-let isTerminator = 1, isReturn = 1, isBarrier = 1, hasCtrlDep = 1,
+let isTerminator = 1, isReturn = 1, hasCtrlDep = 1,
     usesCustomInserter = 1 in {
   def RETURN          : ILFormat<(outs), (ins variable_ops),
       "RETURN", [(IL_retflag)]>;
@@ -1642,27 +1662,27 @@ let isTerminator = 1, isReturn = 1, isBarrier = 1, hasCtrlDep = 1,
 // Constant Buffer Addressing Support
 //===----------------------------------------------------------------------===//
 
-let isCodeGenOnly = 1, isPseudo = 1, Namespace = "AMDGPU"  in {
+let usesCustomInserter = 1, isCodeGenOnly = 1, isPseudo = 1, Namespace = "AMDGPU"  in {
 def CONST_COPY : Instruction {
   let OutOperandList = (outs R600_Reg32:$dst);
   let InOperandList = (ins i32imm:$src);
-  let Pattern = [(set R600_Reg32:$dst, (CONST_ADDRESS ADDRGA_CONST_OFFSET:$src))];
+  let Pattern =
+      [(set R600_Reg32:$dst, (CONST_ADDRESS ADDRGA_CONST_OFFSET:$src))];
   let AsmString = "CONST_COPY";
   let neverHasSideEffects = 1;
   let isAsCheapAsAMove = 1;
   let Itinerary = NullALU;
 }
-} // end isCodeGenOnly = 1, isPseudo = 1, Namespace = "AMDGPU"
+} // end usesCustomInserter = 1, isCodeGenOnly = 1, isPseudo = 1, Namespace = "AMDGPU"
 
 def TEX_VTX_CONSTBUF :
-  InstR600ISA <(outs R600_Reg128:$dst), (ins MEMxi:$ptr), "VTX_READ_eg $dst, $ptr",
-      [(set R600_Reg128:$dst, (CONST_ADDRESS ADDRGA_VAR_OFFSET:$ptr))]>,
+  InstR600ISA <(outs R600_Reg128:$dst), (ins MEMxi:$ptr, i32imm:$BUFFER_ID), "VTX_READ_eg $dst, $ptr",
+      [(set R600_Reg128:$dst, (CONST_ADDRESS ADDRGA_VAR_OFFSET:$ptr, (i32 imm:$BUFFER_ID)))]>,
   VTX_WORD1_GPR, VTX_WORD0 {
 
   let VC_INST = 0;
   let FETCH_TYPE = 2;
   let FETCH_WHOLE_QUAD = 0;
-  let BUFFER_ID = 0;
   let SRC_REL = 0;
   let SRC_SEL_X = 0;
   let DST_REL = 0;
@@ -1707,6 +1727,60 @@ def TEX_VTX_CONSTBUF :
 //
 // Inst{127-96} = 0;
 }
+
+def TEX_VTX_TEXBUF:
+  InstR600ISA <(outs R600_Reg128:$dst), (ins MEMxi:$ptr, i32imm:$BUFFER_ID), "TEX_VTX_EXPLICIT_READ $dst, $ptr",
+      [(set R600_Reg128:$dst, (int_R600_load_texbuf ADDRGA_VAR_OFFSET:$ptr, imm:$BUFFER_ID))]>,
+VTX_WORD1_GPR, VTX_WORD0 {
+
+let VC_INST = 0;
+let FETCH_TYPE = 2;
+let FETCH_WHOLE_QUAD = 0;
+let SRC_REL = 0;
+let SRC_SEL_X = 0;
+let DST_REL = 0;
+let USE_CONST_FIELDS = 1;
+let NUM_FORMAT_ALL = 0;
+let FORMAT_COMP_ALL = 0;
+let SRF_MODE_ALL = 1;
+let MEGA_FETCH_COUNT = 16;
+let DST_SEL_X        = 0;
+let DST_SEL_Y        = 1;
+let DST_SEL_Z        = 2;
+let DST_SEL_W        = 3;
+let DATA_FORMAT      = 0;
+
+let Inst{31-0} = Word0;
+let Inst{63-32} = Word1;
+
+// LLVM can only encode 64-bit instructions, so these fields are manually
+// encoded in R600CodeEmitter
+//
+// bits<16> OFFSET;
+// bits<2>  ENDIAN_SWAP = 0;
+// bits<1>  CONST_BUF_NO_STRIDE = 0;
+// bits<1>  MEGA_FETCH = 0;
+// bits<1>  ALT_CONST = 0;
+// bits<2>  BUFFER_INDEX_MODE = 0;
+
+
+
+// VTX_WORD2 (LLVM can only encode 64-bit instructions, so WORD2 encoding
+// is done in R600CodeEmitter
+//
+// Inst{79-64} = OFFSET;
+// Inst{81-80} = ENDIAN_SWAP;
+// Inst{82}    = CONST_BUF_NO_STRIDE;
+// Inst{83}    = MEGA_FETCH;
+// Inst{84}    = ALT_CONST;
+// Inst{86-85} = BUFFER_INDEX_MODE;
+// Inst{95-86} = 0; Reserved
+
+// VTX_WORD3 (Padding)
+//
+// Inst{127-96} = 0;
+}
+
 
 
 //===--------------------------------------------------------------------===//
@@ -1777,6 +1851,18 @@ let isTerminator=1 in {
 //===----------------------------------------------------------------------===//
 // ISel Patterns
 //===----------------------------------------------------------------------===//
+
+// CND*_INT Pattterns for f32 True / False values
+
+class CND_INT_f32 <InstR600 cnd, CondCode cc> : Pat <
+  (selectcc (i32 R600_Reg32:$src0), 0, (f32 R600_Reg32:$src1),
+                                            R600_Reg32:$src2, cc),
+  (cnd R600_Reg32:$src0, R600_Reg32:$src1, R600_Reg32:$src2)
+>;
+
+def : CND_INT_f32 <CNDE_INT,  SETEQ>;
+def : CND_INT_f32 <CNDGT_INT, SETGT>;
+def : CND_INT_f32 <CNDGE_INT, SETGE>;
 
 //CNDGE_INT extra pattern
 def : Pat <
@@ -1896,8 +1982,8 @@ def : Insert_Element <i32, v4i32, R600_Reg32, R600_Reg128, 1, sub1>;
 def : Insert_Element <i32, v4i32, R600_Reg32, R600_Reg128, 2, sub2>;
 def : Insert_Element <i32, v4i32, R600_Reg32, R600_Reg128, 3, sub3>;
 
-def : Vector_Build <v4f32, R600_Reg128, f32, R600_Reg32>;
-def : Vector_Build <v4i32, R600_Reg128, i32, R600_Reg32>;
+def : Vector4_Build <v4f32, R600_Reg128, f32, R600_Reg32>;
+def : Vector4_Build <v4i32, R600_Reg128, i32, R600_Reg32>;
 
 // bitconvert patterns
 

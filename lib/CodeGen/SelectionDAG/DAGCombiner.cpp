@@ -4496,8 +4496,8 @@ SDValue DAGCombiner::visitSIGN_EXTEND(SDNode *N) {
                        NegOne, DAG.getConstant(0, VT),
                        cast<CondCodeSDNode>(N0.getOperand(2))->get(), true);
     if (SCC.getNode()) return SCC;
-    if (!LegalOperations ||
-        TLI.isOperationLegal(ISD::SETCC, TLI.getSetCCResultType(VT)))
+    if (!VT.isVector() && (!LegalOperations ||
+        TLI.isOperationLegal(ISD::SETCC, TLI.getSetCCResultType(VT))))
       return DAG.getNode(ISD::SELECT, N->getDebugLoc(), VT,
                          DAG.getSetCC(N->getDebugLoc(),
                                       TLI.getSetCCResultType(VT),
@@ -5361,6 +5361,38 @@ SDValue DAGCombiner::visitTRUNCATE(SDNode *N) {
     }
   }
 
+  // Fold a series of buildvector, bitcast, and truncate if possible.
+  // For example fold
+  //   (2xi32 trunc (bitcast ((4xi32)buildvector x, x, y, y) 2xi64)) to
+  //   (2xi32 (buildvector x, y)).
+  if (Level == AfterLegalizeVectorOps && VT.isVector() &&
+      N0.getOpcode() == ISD::BITCAST && N0.hasOneUse() &&
+      N0.getOperand(0).getOpcode() == ISD::BUILD_VECTOR &&
+      N0.getOperand(0).hasOneUse()) {
+
+    SDValue BuildVect = N0.getOperand(0);
+    EVT BuildVectEltTy = BuildVect.getValueType().getVectorElementType();
+    EVT TruncVecEltTy = VT.getVectorElementType();
+
+    // Check that the element types match.
+    if (BuildVectEltTy == TruncVecEltTy) {
+      // Now we only need to compute the offset of the truncated elements.
+      unsigned BuildVecNumElts =  BuildVect.getNumOperands();
+      unsigned TruncVecNumElts = VT.getVectorNumElements();
+      unsigned TruncEltOffset = BuildVecNumElts / TruncVecNumElts;
+
+      assert((BuildVecNumElts % TruncVecNumElts) == 0 &&
+             "Invalid number of elements");
+
+      SmallVector<SDValue, 8> Opnds;
+      for (unsigned i = 0, e = BuildVecNumElts; i != e; i += TruncEltOffset)
+        Opnds.push_back(BuildVect.getOperand(i));
+
+      return DAG.getNode(ISD::BUILD_VECTOR, N->getDebugLoc(), VT, &Opnds[0],
+                         Opnds.size());
+    }
+  }
+
   // See if we can simplify the input to this truncate through knowledge that
   // only the low bits are being used.
   // For example "trunc (or (shl x, 8), y)" // -> trunc y
@@ -5803,14 +5835,25 @@ SDValue DAGCombiner::visitFADD(SDNode *N) {
                        DAG.getNode(ISD::FADD, N->getDebugLoc(), VT,
                                    N0.getOperand(1), N1));
 
+  // No FP constant should be created after legalization as Instruction
+  // Selection pass has hard time in dealing with FP constant.
+  //
+  // We don't need test this condition for transformation like following, as
+  // the DAG being transformed implies it is legal to take FP constant as
+  // operand.
+  // 
+  //  (fadd (fmul c, x), x) -> (fmul c+1, x)
+  // 
+  bool AllowNewFpConst = (Level < AfterLegalizeDAG);
+
   // If allow, fold (fadd (fneg x), x) -> 0.0
-  if (DAG.getTarget().Options.UnsafeFPMath &&
+  if (AllowNewFpConst && DAG.getTarget().Options.UnsafeFPMath &&
       N0.getOpcode() == ISD::FNEG && N0.getOperand(0) == N1) {
     return DAG.getConstantFP(0.0, VT);
   }
 
     // If allow, fold (fadd x, (fneg x)) -> 0.0
-  if (DAG.getTarget().Options.UnsafeFPMath &&
+  if (AllowNewFpConst && DAG.getTarget().Options.UnsafeFPMath &&
       N1.getOpcode() == ISD::FNEG && N1.getOperand(0) == N0) {
     return DAG.getConstantFP(0.0, VT);
   }
@@ -5912,7 +5955,7 @@ SDValue DAGCombiner::visitFADD(SDNode *N) {
       }
     }
 
-    if (N0.getOpcode() == ISD::FADD) {
+    if (N0.getOpcode() == ISD::FADD && AllowNewFpConst) {
       ConstantFPSDNode *CFP = dyn_cast<ConstantFPSDNode>(N0.getOperand(0));
       // (fadd (fadd x, x), x) -> (fmul 3.0, x)
       if (!CFP && N0.getOperand(0) == N0.getOperand(1) &&
@@ -5922,7 +5965,7 @@ SDValue DAGCombiner::visitFADD(SDNode *N) {
       }
     }
 
-    if (N1.getOpcode() == ISD::FADD) {
+    if (N1.getOpcode() == ISD::FADD && AllowNewFpConst) {
       ConstantFPSDNode *CFP10 = dyn_cast<ConstantFPSDNode>(N1.getOperand(0));
       // (fadd x, (fadd x, x)) -> (fmul 3.0, x)
       if (!CFP10 && N1.getOperand(0) == N1.getOperand(1) &&
@@ -5933,7 +5976,8 @@ SDValue DAGCombiner::visitFADD(SDNode *N) {
     }
 
     // (fadd (fadd x, x), (fadd x, x)) -> (fmul 4.0, x)
-    if (N0.getOpcode() == ISD::FADD && N1.getOpcode() == ISD::FADD &&
+    if (AllowNewFpConst &&
+        N0.getOpcode() == ISD::FADD && N1.getOpcode() == ISD::FADD &&
         N0.getOperand(0) == N0.getOperand(1) &&
         N1.getOperand(0) == N1.getOperand(1) &&
         N0.getOperand(0) == N1.getOperand(0)) {
@@ -6677,7 +6721,8 @@ SDValue DAGCombiner::visitBRCOND(SDNode *N) {
   // fold a brcond with a setcc condition into a BR_CC node if BR_CC is legal
   // on the target.
   if (N1.getOpcode() == ISD::SETCC &&
-      TLI.isOperationLegalOrCustom(ISD::BR_CC, MVT::Other)) {
+      TLI.isOperationLegalOrCustom(ISD::BR_CC,
+                                   N1.getOperand(0).getValueType())) {
     return DAG.getNode(ISD::BR_CC, N->getDebugLoc(), MVT::Other,
                        Chain, N1.getOperand(2),
                        N1.getOperand(0), N1.getOperand(1), N2);
@@ -8945,33 +8990,6 @@ SDValue DAGCombiner::visitEXTRACT_SUBVECTOR(SDNode* N) {
   EVT NVT = N->getValueType(0);
   SDValue V = N->getOperand(0);
 
-  if (V->getOpcode() == ISD::INSERT_SUBVECTOR) {
-    // Handle only simple case where vector being inserted and vector
-    // being extracted are of same type, and are half size of larger vectors.
-    EVT BigVT = V->getOperand(0).getValueType();
-    EVT SmallVT = V->getOperand(1).getValueType();
-    if (NVT != SmallVT || NVT.getSizeInBits()*2 != BigVT.getSizeInBits())
-      return SDValue();
-
-    // Only handle cases where both indexes are constants with the same type.
-    ConstantSDNode *ExtIdx = dyn_cast<ConstantSDNode>(N->getOperand(1));
-    ConstantSDNode *InsIdx = dyn_cast<ConstantSDNode>(V->getOperand(2));
-
-    if (InsIdx && ExtIdx &&
-        InsIdx->getValueType(0).getSizeInBits() <= 64 &&
-        ExtIdx->getValueType(0).getSizeInBits() <= 64) {
-      // Combine:
-      //    (extract_subvec (insert_subvec V1, V2, InsIdx), ExtIdx)
-      // Into:
-      //    indices are equal => V1
-      //    otherwise => (extract_subvec V1, ExtIdx)
-      if (InsIdx->getZExtValue() == ExtIdx->getZExtValue())
-        return V->getOperand(1);
-      return DAG.getNode(ISD::EXTRACT_SUBVECTOR, N->getDebugLoc(), NVT,
-                         V->getOperand(0), N->getOperand(1));
-    }
-  }
-
   if (V->getOpcode() == ISD::CONCAT_VECTORS) {
     // Combine:
     //    (extract_subvec (concat V1, V2, ...), i)
@@ -8985,6 +9003,41 @@ SDValue DAGCombiner::visitEXTRACT_SUBVECTOR(SDNode* N) {
     assert((Idx % NumElems) == 0 &&
            "IDX in concat is not a multiple of the result vector length.");
     return V->getOperand(Idx / NumElems);
+  }
+
+  // Skip bitcasting
+  if (V->getOpcode() == ISD::BITCAST)
+    V = V.getOperand(0);
+
+  if (V->getOpcode() == ISD::INSERT_SUBVECTOR) {
+    DebugLoc dl = N->getDebugLoc();
+    // Handle only simple case where vector being inserted and vector
+    // being extracted are of same type, and are half size of larger vectors.
+    EVT BigVT = V->getOperand(0).getValueType();
+    EVT SmallVT = V->getOperand(1).getValueType();
+    if (!NVT.bitsEq(SmallVT) || NVT.getSizeInBits()*2 != BigVT.getSizeInBits())
+      return SDValue();
+
+    // Only handle cases where both indexes are constants with the same type.
+    ConstantSDNode *ExtIdx = dyn_cast<ConstantSDNode>(N->getOperand(1));
+    ConstantSDNode *InsIdx = dyn_cast<ConstantSDNode>(V->getOperand(2));
+
+    if (InsIdx && ExtIdx &&
+        InsIdx->getValueType(0).getSizeInBits() <= 64 &&
+        ExtIdx->getValueType(0).getSizeInBits() <= 64) {
+      // Combine:
+      //    (extract_subvec (insert_subvec V1, V2, InsIdx), ExtIdx)
+      // Into:
+      //    indices are equal or bit offsets are equal => V1
+      //    otherwise => (extract_subvec V1, ExtIdx)
+      if (InsIdx->getZExtValue() * SmallVT.getScalarType().getSizeInBits() ==
+          ExtIdx->getZExtValue() * NVT.getScalarType().getSizeInBits())
+        return DAG.getNode(ISD::BITCAST, dl, NVT, V->getOperand(1));
+      return DAG.getNode(ISD::EXTRACT_SUBVECTOR, dl, NVT,
+                         DAG.getNode(ISD::BITCAST, dl,
+                                     N->getOperand(0).getValueType(),
+                                     V->getOperand(0)), N->getOperand(1));
+    }
   }
 
   return SDValue();
@@ -9230,11 +9283,6 @@ SDValue DAGCombiner::XformToShuffleWithZero(SDNode *N) {
 
 /// SimplifyVBinOp - Visit a binary vector operation, like ADD.
 SDValue DAGCombiner::SimplifyVBinOp(SDNode *N) {
-  // After legalize, the target may be depending on adds and other
-  // binary ops to provide legal ways to construct constants or other
-  // things. Simplifying them may result in a loss of legality.
-  if (LegalOperations) return SDValue();
-
   assert(N->getValueType(0).isVector() &&
          "SimplifyVBinOp only works on vectors!");
 
@@ -9304,11 +9352,6 @@ SDValue DAGCombiner::SimplifyVBinOp(SDNode *N) {
 
 /// SimplifyVUnaryOp - Visit a binary vector operation, like FABS/FNEG.
 SDValue DAGCombiner::SimplifyVUnaryOp(SDNode *N) {
-  // After legalize, the target may be depending on adds and other
-  // binary ops to provide legal ways to construct constants or other
-  // things. Simplifying them may result in a loss of legality.
-  if (LegalOperations) return SDValue();
-
   assert(N->getValueType(0).isVector() &&
          "SimplifyVUnaryOp only works on vectors!");
 

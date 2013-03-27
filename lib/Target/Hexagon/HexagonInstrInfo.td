@@ -251,28 +251,55 @@ multiclass TFR_base<string CextOp> {
   }
 }
 
+class T_TFR64_Pred<bit PredNot, bit isPredNew>
+            : ALU32_rr<(outs DoubleRegs:$dst),
+                       (ins PredRegs:$src1, DoubleRegs:$src2),
+            !if(PredNot, "if (!$src1", "if ($src1")#
+            !if(isPredNew, ".new) ", ") ")#"$dst = $src2", []>
+{
+    bits<5> dst;
+    bits<2> src1;
+    bits<5> src2;
+
+    let IClass = 0b1111;
+    let Inst{27-24} = 0b1101;
+    let Inst{13} = isPredNew;
+    let Inst{7} = PredNot;
+    let Inst{4-0} = dst;
+    let Inst{6-5} = src1;
+    let Inst{20-17} = src2{4-1};
+    let Inst{16} = 0b1;
+    let Inst{12-9} = src2{4-1};
+    let Inst{8} = 0b0;
+}
+
 multiclass TFR64_Pred<bit PredNot> {
   let PredSense = !if(PredNot, "false", "true") in {
-    def _c#NAME : ALU32_rr<(outs DoubleRegs:$dst),
-                           (ins PredRegs:$src1, DoubleRegs:$src2),
-            !if(PredNot, "if (!$src1", "if ($src1")#") $dst = $src2",
-            []>;
-    // Predicate new
+    def _c#NAME : T_TFR64_Pred<PredNot, 0>;
+
     let PNewValue = "new" in
-    def _cdn#NAME : ALU32_rr<(outs DoubleRegs:$dst),
-                             (ins PredRegs:$src1, DoubleRegs:$src2),
-            !if(PredNot, "if (!$src1", "if ($src1")#".new) $dst = $src2",
-            []>;
+    def _cdn#NAME : T_TFR64_Pred<PredNot, 1>; // Predicate new
   }
 }
 
-let InputType = "reg", neverHasSideEffects = 1 in
-multiclass TFR64_base<string CextOp> {
-  let CextOpcode = CextOp, BaseOpcode = CextOp in {
+let neverHasSideEffects = 1 in
+multiclass TFR64_base<string BaseName> {
+  let BaseOpcode = BaseName in {
     let isPredicable = 1 in
-    def NAME : ALU32_rr<(outs DoubleRegs:$dst), (ins DoubleRegs:$src1),
-            "$dst = $src1",
-            []>;
+    def NAME : ALU32Inst <(outs DoubleRegs:$dst),
+                          (ins DoubleRegs:$src1),
+                          "$dst = $src1" > {
+        bits<5> dst;
+        bits<5> src1;
+
+        let IClass = 0b1111;
+        let Inst{27-23} = 0b01010;
+        let Inst{4-0} = dst;
+        let Inst{20-17} = src1{4-1};
+        let Inst{16} = 0b1;
+        let Inst{12-9} = src1{4-1};
+        let Inst{8} = 0b0;
+    }
 
     let  isPredicated = 1 in {
       defm Pt : TFR64_Pred<0>;
@@ -281,9 +308,8 @@ multiclass TFR64_base<string CextOp> {
   }
 }
 
-
 multiclass TFRI_Pred<bit PredNot> {
-  let PredSense = !if(PredNot, "false", "true") in {
+  let isMoveImm = 1, PredSense = !if(PredNot, "false", "true") in {
     def _c#NAME : ALU32_ri<(outs IntRegs:$dst),
                            (ins PredRegs:$src1, s12Ext:$src2),
             !if(PredNot, "if (!$src1", "if ($src1")#") $dst = #$src2",
@@ -301,8 +327,8 @@ multiclass TFRI_Pred<bit PredNot> {
 let InputType = "imm", isExtendable = 1, isExtentSigned = 1 in
 multiclass TFRI_base<string CextOp> {
   let CextOpcode = CextOp, BaseOpcode = CextOp#I in {
-    let opExtendable = 1, opExtentBits = 16, isMoveImm = 1, isPredicable = 1,
-    isReMaterializable = 1 in
+    let isAsCheapAsAMove = 1 , opExtendable = 1, opExtentBits = 16,
+    isMoveImm = 1, isPredicable = 1, isReMaterializable = 1 in
     def NAME : ALU32_ri<(outs IntRegs:$dst), (ins s16Ext:$src1),
             "$dst = #$src1",
             [(set (i32 IntRegs:$dst), s16ExtPred:$src1)]>;
@@ -317,7 +343,7 @@ multiclass TFRI_base<string CextOp> {
 
 defm TFRI : TFRI_base<"TFR">, ImmRegRel, PredNewRel;
 defm TFR : TFR_base<"TFR">, ImmRegRel, PredNewRel;
-defm TFR64 : TFR64_base<"TFR64">, ImmRegRel, PredNewRel;
+defm TFR64 : TFR64_base<"TFR64">, PredNewRel;
 
 // Transfer control register.
 let neverHasSideEffects = 1 in
@@ -420,38 +446,58 @@ def MUX_ii : ALU32_ii<(outs IntRegs:$dst), (ins PredRegs:$src1, s8Ext:$src2,
                                                     s8ExtPred:$src2,
                                                     s8ImmPred:$src3)))]>;
 
-// Shift halfword.
-let isPredicable = 1 in
-def ASLH : ALU32_rr<(outs IntRegs:$dst), (ins IntRegs:$src1),
-           "$dst = aslh($src1)",
-           [(set (i32 IntRegs:$dst), (shl 16, (i32 IntRegs:$src1)))]>;
+// ALU32 - aslh, asrh, sxtb, sxth, zxtb, zxth
+multiclass ALU32_2op_Pbase<string mnemonic, bit isNot, bit isPredNew> {
+  let isPredicatedNew = isPredNew in
+  def NAME : ALU32Inst<(outs IntRegs:$dst),
+                       (ins PredRegs:$src1, IntRegs:$src2),
+            !if(isNot, "if (!$src1", "if ($src1")#!if(isPredNew,".new) $dst = ",
+            ") $dst = ")#mnemonic#"($src2)">,
+            Requires<[HasV4T]>;
+}
 
-let isPredicable = 1 in
-def ASRH : ALU32_rr<(outs IntRegs:$dst), (ins IntRegs:$src1),
-           "$dst = asrh($src1)",
-           [(set (i32 IntRegs:$dst), (sra 16, (i32 IntRegs:$src1)))]>;
+multiclass ALU32_2op_Pred<string mnemonic, bit PredNot> {
+  let isPredicatedFalse = PredNot in {
+    defm _c#NAME : ALU32_2op_Pbase<mnemonic, PredNot, 0>;
+    // Predicate new
+    defm _cdn#NAME : ALU32_2op_Pbase<mnemonic, PredNot, 1>;
+  }
+}
 
-// Sign extend.
-let isPredicable = 1 in
-def SXTB : ALU32_rr<(outs IntRegs:$dst), (ins IntRegs:$src1),
-           "$dst = sxtb($src1)",
-           [(set (i32 IntRegs:$dst), (sext_inreg (i32 IntRegs:$src1), i8))]>;
+multiclass ALU32_2op_base<string mnemonic> {
+  let BaseOpcode = mnemonic in {
+    let isPredicable = 1, neverHasSideEffects = 1 in
+    def NAME : ALU32Inst<(outs IntRegs:$dst),
+                         (ins IntRegs:$src1),
+            "$dst = "#mnemonic#"($src1)">;
 
-let isPredicable = 1 in
-def SXTH : ALU32_rr<(outs IntRegs:$dst), (ins IntRegs:$src1),
-           "$dst = sxth($src1)",
-           [(set (i32 IntRegs:$dst), (sext_inreg (i32 IntRegs:$src1), i16))]>;
+    let Predicates = [HasV4T], validSubTargets = HasV4SubT, isPredicated = 1,
+    neverHasSideEffects = 1 in {
+      defm Pt_V4    : ALU32_2op_Pred<mnemonic, 0>;
+      defm NotPt_V4 : ALU32_2op_Pred<mnemonic, 1>;
+    }
+  }
+}
 
-// Zero extend.
-let isPredicable = 1, neverHasSideEffects = 1 in
-def ZXTB : ALU32_rr<(outs IntRegs:$dst), (ins IntRegs:$src1),
-           "$dst = zxtb($src1)",
-           []>;
+defm ASLH : ALU32_2op_base<"aslh">, PredNewRel;
+defm ASRH : ALU32_2op_base<"asrh">, PredNewRel;
+defm SXTB : ALU32_2op_base<"sxtb">, PredNewRel;
+defm SXTH : ALU32_2op_base<"sxth">,  PredNewRel;
+defm ZXTB : ALU32_2op_base<"zxtb">, PredNewRel;
+defm ZXTH : ALU32_2op_base<"zxth">,  PredNewRel;
 
-let isPredicable = 1, neverHasSideEffects = 1 in
-def ZXTH : ALU32_rr<(outs IntRegs:$dst), (ins IntRegs:$src1),
-                    "$dst = zxth($src1)",
-                    []>;
+def : Pat <(shl (i32 IntRegs:$src1), (i32 16)),
+           (ASLH IntRegs:$src1)>;
+
+def : Pat <(sra (i32 IntRegs:$src1), (i32 16)),
+           (ASRH IntRegs:$src1)>;
+
+def : Pat <(sext_inreg (i32 IntRegs:$src1), i8),
+           (SXTB IntRegs:$src1)>;
+
+def : Pat <(sext_inreg (i32 IntRegs:$src1), i16),
+           (SXTH IntRegs:$src1)>;
+
 //===----------------------------------------------------------------------===//
 // ALU32/PERM -
 //===----------------------------------------------------------------------===//
@@ -2050,6 +2096,10 @@ def CONST32_Int_Real : LDInst2<(outs IntRegs:$dst), (ins i32imm:$global),
                        "$dst = CONST32(#$global)",
                        [(set (i32 IntRegs:$dst), imm:$global) ]>;
 
+// Map BlockAddress lowering to CONST32_Int_Real
+def : Pat<(HexagonCONST32_GP tblockaddress:$addr),
+          (CONST32_Int_Real tblockaddress:$addr)>;
+
 let isReMaterializable = 1, isMoveImm = 1 in
 def CONST32_Label : LDInst2<(outs IntRegs:$dst), (ins bblabel:$label),
                     "$dst = CONST32($label)",
@@ -2845,6 +2895,18 @@ def:  Pat <(i64 (zextloadi8 (add (i32 IntRegs:$src1),
                                   s11_0ExtPred:$offset)))>,
       Requires<[NoV4T]>;
 
+// i1 -> i64
+def:  Pat <(i64 (zextloadi1 ADDRriS11_0:$src1)),
+      (i64 (COMBINE_rr (TFRI 0), (LDriub ADDRriS11_0:$src1)))>,
+      Requires<[NoV4T]>;
+
+let AddedComplexity = 20 in
+def:  Pat <(i64 (zextloadi1 (add (i32 IntRegs:$src1),
+                                s11_0ExtPred:$offset))),
+      (i64 (COMBINE_rr (TFRI 0), (LDriub_indexed IntRegs:$src1,
+                                  s11_0ExtPred:$offset)))>,
+      Requires<[NoV4T]>;
+
 // i16 -> i64
 def:  Pat <(i64 (zextloadi16 ADDRriS11_1:$src1)),
       (i64 (COMBINE_rr (TFRI 0), (LDriuh ADDRriS11_1:$src1)))>,
@@ -3019,6 +3081,11 @@ let isBranch=1, isIndirectBranch=1, isTerminator=1, isBarrier = 1 in
 def BR_JT : JRInst<(outs), (ins IntRegs:$src),
                    "jumpr $src",
                    [(HexagonBR_JT (i32 IntRegs:$src))]>;
+
+let isBranch=1, isIndirectBranch=1, isTerminator=1 in
+def BRIND : JRInst<(outs), (ins IntRegs:$src),
+                   "jumpr $src",
+                   [(brind (i32 IntRegs:$src))]>;
 
 def HexagonWrapperJT: SDNode<"HexagonISD::WrapperJT", SDTIntUnaryOp>;
 

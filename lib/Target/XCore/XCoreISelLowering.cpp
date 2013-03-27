@@ -84,7 +84,7 @@ XCoreTargetLowering::XCoreTargetLowering(XCoreTargetMachine &XTM)
   setBooleanVectorContents(ZeroOrOneBooleanContent); // FIXME: Is this correct?
 
   // XCore does not have the NodeTypes below.
-  setOperationAction(ISD::BR_CC,     MVT::Other, Expand);
+  setOperationAction(ISD::BR_CC,     MVT::i32,   Expand);
   setOperationAction(ISD::SELECT_CC, MVT::i32,   Custom);
   setOperationAction(ISD::ADDC, MVT::i32, Expand);
   setOperationAction(ISD::ADDE, MVT::i32, Expand);
@@ -156,9 +156,9 @@ XCoreTargetLowering::XCoreTargetLowering(XCoreTargetMachine &XTM)
   // We want to custom lower some of our intrinsics.
   setOperationAction(ISD::INTRINSIC_WO_CHAIN, MVT::Other, Custom);
 
-  maxStoresPerMemset = maxStoresPerMemsetOptSize = 4;
-  maxStoresPerMemmove = maxStoresPerMemmoveOptSize
-    = maxStoresPerMemcpy = maxStoresPerMemcpyOptSize = 2;
+  MaxStoresPerMemset = MaxStoresPerMemsetOptSize = 4;
+  MaxStoresPerMemmove = MaxStoresPerMemmoveOptSize
+    = MaxStoresPerMemcpy = MaxStoresPerMemcpyOptSize = 2;
 
   // We have target-specific dag combine patterns for the following nodes:
   setTargetDAGCombine(ISD::STORE);

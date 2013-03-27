@@ -865,7 +865,7 @@ bool ARMLoadStoreOpt::MergeBaseUpdateLoadStore(MachineBasicBlock &MBB,
   bool isLd = isi32Load(Opcode) || Opcode == ARM::VLDRS || Opcode == ARM::VLDRD;
   // Can't do the merge if the destination register is the same as the would-be
   // writeback register.
-  if (isLd && MI->getOperand(0).getReg() == Base)
+  if (MI->getOperand(0).getReg() == Base)
     return false;
 
   unsigned PredReg = 0;
@@ -1188,7 +1188,6 @@ bool ARMLoadStoreOpt::FixInvalidRegPairOp(MachineBasicBlock &MBB,
           OddDeadKill = true;
         }
         // Never kill the base register in the first instruction.
-        // <rdar://problem/11101911>
         if (EvenReg == BaseReg)
           EvenDeadKill = false;
         InsertLDR_STR(MBB, MBBI, OffImm, isLd, dl, NewOpc,

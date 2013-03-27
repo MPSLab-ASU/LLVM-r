@@ -112,7 +112,7 @@ namespace llvm {
       return lie.getPointer();
     }
 
-    int getIndex() const {
+    unsigned getIndex() const {
       return listEntry()->getIndex() | getSlot();
     }
 
@@ -360,6 +360,11 @@ namespace llvm {
     /// Renumber the index list, providing space for new instructions.
     void renumberIndexes();
 
+    /// Repair indexes after adding and removing instructions.
+    void repairIndexesInRange(MachineBasicBlock *MBB,
+                              MachineBasicBlock::iterator Begin,
+                              MachineBasicBlock::iterator End);
+
     /// Returns the zero index for this analysis.
     SlotIndex getZeroIndex() {
       assert(indexList.front().getIndex() == 0 && "First index is not 0?");
@@ -391,12 +396,16 @@ namespace llvm {
       return index.isValid() ? index.listEntry()->getInstr() : 0;
     }
 
-    /// Returns the next non-null index.
-    SlotIndex getNextNonNullIndex(SlotIndex index) {
-      IndexList::iterator itr(index.listEntry());
-      ++itr;
-      while (itr != indexList.end() && itr->getInstr() == 0) { ++itr; }
-      return SlotIndex(itr, index.getSlot());
+    /// Returns the next non-null index, if one exists.
+    /// Otherwise returns getLastIndex().
+    SlotIndex getNextNonNullIndex(SlotIndex Index) {
+      IndexList::iterator I = Index.listEntry();
+      IndexList::iterator E = indexList.end();
+      while (++I != E)
+        if (I->getInstr())
+          return SlotIndex(I, Index.getSlot());
+      // We reached the end of the function.
+      return getLastIndex();
     }
 
     /// getIndexBefore - Returns the index of the last indexed instruction

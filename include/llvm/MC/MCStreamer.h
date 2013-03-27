@@ -16,6 +16,7 @@
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/MC/MCAssembler.h"
 #include "llvm/MC/MCDirectives.h"
 #include "llvm/MC/MCDwarf.h"
 #include "llvm/MC/MCWin64EH.h"
@@ -286,6 +287,9 @@ namespace llvm {
     /// a Thumb mode function (ARM target only).
     virtual void EmitThumbFunc(MCSymbol *Func) = 0;
 
+    /// getOrCreateSymbolData - Get symbol data for given symbol.
+    virtual MCSymbolData &getOrCreateSymbolData(MCSymbol *Symbol);
+
     /// EmitAssignment - Emit an assignment of @p Value to @p Symbol.
     ///
     /// This corresponds to an assembler statement such as:
@@ -521,7 +525,7 @@ namespace llvm {
     /// file number.  This implements the DWARF2 '.file 4 "foo.c"' assembler
     /// directive.
     virtual bool EmitDwarfFileDirective(unsigned FileNo, StringRef Directory,
-                                        StringRef Filename);
+                                        StringRef Filename, unsigned CUID = 0);
 
     /// EmitDwarfLocDirective - This implements the DWARF2
     // '.loc fileno lineno ...' assembler directive.

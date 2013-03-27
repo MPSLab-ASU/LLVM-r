@@ -1,4 +1,4 @@
-//===- lib/MC/ELFObjectWriter.cpp - ELF File Writer -------------------===//
+//===- lib/MC/ELFObjectWriter.cpp - ELF File Writer -----------------------===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -155,7 +155,7 @@ class ELFObjectWriter : public MCObjectWriter {
                     raw_ostream &_OS, bool IsLittleEndian)
       : MCObjectWriter(_OS, IsLittleEndian),
         TargetObjectWriter(MOTW),
-        NeedsGOT(false), NeedsSymtabShndx(false){
+        NeedsGOT(false), NeedsSymtabShndx(false) {
     }
 
     virtual ~ELFObjectWriter();
@@ -546,12 +546,17 @@ void ELFObjectWriter::WriteSymbol(MCDataFragment *SymtabF,
   bool IsReserved = Data.isCommon() || Data.getSymbol().isAbsolute() ||
     Data.getSymbol().isVariable();
 
+  // Binding and Type share the same byte as upper and lower nibbles
   uint8_t Binding = MCELF::GetBinding(OrigData);
-  uint8_t Visibility = MCELF::GetVisibility(OrigData);
   uint8_t Type = MCELF::GetType(Data);
-
   uint8_t Info = (Binding << ELF_STB_Shift) | (Type << ELF_STT_Shift);
-  uint8_t Other = Visibility;
+
+  // Other and Visibility share the same byte with Visability using the lower
+  // 2 bits
+  uint8_t Visibility = MCELF::GetVisibility(OrigData);
+  uint8_t Other = MCELF::getOther(OrigData) <<
+    (ELF_Other_Shift - ELF_STV_Shift);
+  Other |= Visibility;
 
   uint64_t Value = SymbolValue(Data, Layout);
   uint64_t Size = 0;
@@ -973,7 +978,7 @@ void ELFObjectWriter::ComputeSymbolTable(MCAssembler &Asm,
   for (unsigned i = 0, e = UndefinedSymbolData.size(); i != e; ++i)
     UndefinedSymbolData[i].SymbolData->setIndex(Index++);
 
-  if (NumRegularSections > ELF::SHN_LORESERVE)
+  if (Index >= ELF::SHN_LORESERVE)
     NeedsSymtabShndx = true;
 }
 

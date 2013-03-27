@@ -121,8 +121,14 @@ protected:
   /// HasRTM - Processor has RTM instructions.
   bool HasRTM;
 
+  /// HasHLE - Processor has HLE.
+  bool HasHLE;
+
   /// HasADX - Processor has ADX instructions.
   bool HasADX;
+
+  /// HasPRFCHW - Processor has PRFCHW instructions.
+  bool HasPRFCHW;
 
   /// IsBTMemSlow - True if BT (bit test) of memory instructions are slow.
   bool IsBTMemSlow;
@@ -153,6 +159,10 @@ protected:
   /// a stall when returning too early.
   bool PadShortFunctions;
 
+  /// CallRegIndirect - True if the Calls with memory reference should be converted
+  /// to a register-based indirect call.
+  bool CallRegIndirect;
+
   /// stackAlignment - The minimum alignment known to hold of the stack frame on
   /// entry to the function and which must be maintained by every function.
   unsigned stackAlignment;
@@ -168,11 +178,13 @@ protected:
   InstrItineraryData InstrItins;
 
 private:
+  /// StackAlignOverride - Override the stack alignment.
+  unsigned StackAlignOverride;
+
   /// In64BitMode - True if compiling for 64-bit, false for 32-bit.
   bool In64BitMode;
 
 public:
-
   /// This constructor initializes the data members to match that
   /// of the specified triple.
   ///
@@ -197,6 +209,12 @@ public:
   /// instruction.
   void AutoDetectSubtargetFeatures();
 
+  /// \brief Reset the features for the X86 target.
+  virtual void resetSubtargetFeatures(const MachineFunction *MF);
+private:
+  void initializeEnvironment();
+  void resetSubtargetFeatures(StringRef CPU, StringRef FS);
+public:
   /// Is this x86_64? (disregarding specific ABI / programming model)
   bool is64Bit() const {
     return In64BitMode;
@@ -245,7 +263,9 @@ public:
   bool hasBMI() const { return HasBMI; }
   bool hasBMI2() const { return HasBMI2; }
   bool hasRTM() const { return HasRTM; }
+  bool hasHLE() const { return HasHLE; }
   bool hasADX() const { return HasADX; }
+  bool hasPRFCHW() const { return HasPRFCHW; }
   bool isBTMemSlow() const { return IsBTMemSlow; }
   bool isUnalignedMemAccessFast() const { return IsUAMemFast; }
   bool hasVectorUAMem() const { return HasVectorUAMem; }
@@ -253,6 +273,7 @@ public:
   bool useLeaForSP() const { return UseLeaForSP; }
   bool hasSlowDivide() const { return HasSlowDivide; }
   bool padShortFunctions() const { return PadShortFunctions; }
+  bool callRegIndirect() const { return CallRegIndirect; }
 
   bool isAtom() const { return X86ProcFamily == IntelAtom; }
 

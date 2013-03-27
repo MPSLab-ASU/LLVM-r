@@ -32,7 +32,9 @@ public:
       Subtarget(sti) {
   }
 
-  void determineFrameLayout(MachineFunction &MF) const;
+  unsigned determineFrameLayout(MachineFunction &MF,
+                                bool UpdateMF = true,
+                                bool UseEstimate = false) const;
 
   /// emitProlog/emitEpilog - These methods insert prolog and epilog code into
   /// the function.
@@ -41,15 +43,22 @@ public:
 
   bool hasFP(const MachineFunction &MF) const;
   bool needsFP(const MachineFunction &MF) const;
+  void replaceFPWithRealFP(MachineFunction &MF) const;
 
   void processFunctionBeforeCalleeSavedScan(MachineFunction &MF,
                                             RegScavenger *RS = NULL) const;
-  void processFunctionBeforeFrameFinalized(MachineFunction &MF) const;
+  void processFunctionBeforeFrameFinalized(MachineFunction &MF,
+                                       RegScavenger *RS = NULL) const;
+  void addScavengingSpillSlot(MachineFunction &MF, RegScavenger *RS) const;
 
   bool spillCalleeSavedRegisters(MachineBasicBlock &MBB,
                                  MachineBasicBlock::iterator MI,
                                  const std::vector<CalleeSavedInfo> &CSI,
                                  const TargetRegisterInfo *TRI) const;
+
+  void eliminateCallFramePseudoInstr(MachineFunction &MF,
+                                     MachineBasicBlock &MBB,
+                                     MachineBasicBlock::iterator I) const;
 
   bool restoreCalleeSavedRegisters(MachineBasicBlock &MBB,
                                    MachineBasicBlock::iterator MI,
@@ -139,6 +148,9 @@ public:
       NumEntries = 0;
       return 0;
     }
+
+    // Note that the offsets here overlap, but this is fixed up in
+    // processFunctionBeforeFrameFinalized.
 
     static const SpillSlot Offsets[] = {
       // Floating-point register save area offsets.

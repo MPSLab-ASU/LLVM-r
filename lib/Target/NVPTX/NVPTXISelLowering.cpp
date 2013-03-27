@@ -75,9 +75,9 @@ NVPTXTargetLowering::NVPTXTargetLowering(NVPTXTargetMachine &TM)
   // always lower memset, memcpy, and memmove intrinsics to load/store
   // instructions, rather
   // then generating calls to memset, mempcy or memmove.
-  maxStoresPerMemset = (unsigned)0xFFFFFFFF;
-  maxStoresPerMemcpy = (unsigned)0xFFFFFFFF;
-  maxStoresPerMemmove = (unsigned)0xFFFFFFFF;
+  MaxStoresPerMemset = (unsigned)0xFFFFFFFF;
+  MaxStoresPerMemcpy = (unsigned)0xFFFFFFFF;
+  MaxStoresPerMemmove = (unsigned)0xFFFFFFFF;
 
   setBooleanContents(ZeroOrNegativeOneBooleanContent);
 
@@ -101,7 +101,13 @@ NVPTXTargetLowering::NVPTXTargetLowering(NVPTXTargetMachine &TM)
 
   // Operations not directly supported by NVPTX.
   setOperationAction(ISD::SELECT_CC,         MVT::Other, Expand);
-  setOperationAction(ISD::BR_CC,             MVT::Other, Expand);
+  setOperationAction(ISD::BR_CC,             MVT::f32, Expand);
+  setOperationAction(ISD::BR_CC,             MVT::f64, Expand);
+  setOperationAction(ISD::BR_CC,             MVT::i1,  Expand);
+  setOperationAction(ISD::BR_CC,             MVT::i8,  Expand);
+  setOperationAction(ISD::BR_CC,             MVT::i16, Expand);
+  setOperationAction(ISD::BR_CC,             MVT::i32, Expand);
+  setOperationAction(ISD::BR_CC,             MVT::i64, Expand);
   setOperationAction(ISD::SIGN_EXTEND_INREG, MVT::i64, Expand);
   setOperationAction(ISD::SIGN_EXTEND_INREG, MVT::i32, Expand);
   setOperationAction(ISD::SIGN_EXTEND_INREG, MVT::i16, Expand);
@@ -716,16 +722,15 @@ NVPTXTargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
       for (unsigned i=0,e=Ins.size(); i!=e; ++i) {
         unsigned sz = Ins[i].VT.getSizeInBits();
         if (Ins[i].VT.isInteger() && (sz < 8)) sz = 8;
-        std::vector<EVT> LoadRetVTs;
-        LoadRetVTs.push_back(Ins[i].VT);
-        LoadRetVTs.push_back(MVT::Other); LoadRetVTs.push_back(MVT::Glue);
-        std::vector<SDValue> LoadRetOps;
-        LoadRetOps.push_back(Chain);
-        LoadRetOps.push_back(DAG.getConstant(1, MVT::i32));
-        LoadRetOps.push_back(DAG.getConstant(resoffset, MVT::i32));
-        LoadRetOps.push_back(InFlag);
+        EVT LoadRetVTs[] = { Ins[i].VT, MVT::Other, MVT::Glue };
+        SDValue LoadRetOps[] = {
+          Chain,
+          DAG.getConstant(1, MVT::i32),
+          DAG.getConstant(resoffset, MVT::i32),
+          InFlag
+        };
         SDValue retval = DAG.getNode(NVPTXISD::LoadParam, dl, LoadRetVTs,
-                                     &LoadRetOps[0], LoadRetOps.size());
+                                     LoadRetOps, array_lengthof(LoadRetOps));
         Chain = retval.getValue(1);
         InFlag = retval.getValue(2);
         InVals.push_back(retval);
@@ -750,16 +755,15 @@ NVPTXTargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
         }
         std::vector<SDValue> tempRetVals;
         for (unsigned j=0; j<numelems; ++j) {
-          std::vector<EVT> MoveRetVTs;
-          MoveRetVTs.push_back(elemtype);
-          MoveRetVTs.push_back(MVT::Other); MoveRetVTs.push_back(MVT::Glue);
-          std::vector<SDValue> MoveRetOps;
-          MoveRetOps.push_back(Chain);
-          MoveRetOps.push_back(DAG.getConstant(0, MVT::i32));
-          MoveRetOps.push_back(DAG.getConstant(paramNum, MVT::i32));
-          MoveRetOps.push_back(InFlag);
+          EVT MoveRetVTs[] = { elemtype, MVT::Other, MVT::Glue };
+          SDValue MoveRetOps[] = {
+            Chain,
+            DAG.getConstant(0, MVT::i32),
+            DAG.getConstant(paramNum, MVT::i32),
+            InFlag
+          };
           SDValue retval = DAG.getNode(NVPTXISD::LoadParam, dl, MoveRetVTs,
-                                       &MoveRetOps[0], MoveRetOps.size());
+                                       MoveRetOps, array_lengthof(MoveRetOps));
           Chain = retval.getValue(1);
           InFlag = retval.getValue(2);
           tempRetVals.push_back(retval);
@@ -1054,15 +1058,15 @@ NVPTXTargetLowering::LowerFormalArguments(SDValue Chain,
     theArgs.push_back(I);
     argTypes.push_back(I->getType());
   }
-  assert(argTypes.size() == Ins.size() &&
-         "Ins types and function types did not match");
+  //assert(argTypes.size() == Ins.size() &&
+  //       "Ins types and function types did not match");
 
   int idx = 0;
-  for (unsigned i=0, e=Ins.size(); i!=e; ++i, ++idx) {
+  for (unsigned i=0, e=argTypes.size(); i!=e; ++i, ++idx) {
     Type *Ty = argTypes[i];
     EVT ObjectVT = getValueType(Ty);
-    assert(ObjectVT == Ins[i].VT &&
-           "Ins type did not match function type");
+    //assert(ObjectVT == Ins[i].VT &&
+    //       "Ins type did not match function type");
 
     // If the kernel argument is image*_t or sampler_t, convert it to
     // a i32 constant holding the parameter position. This can later
@@ -1077,7 +1081,15 @@ NVPTXTargetLowering::LowerFormalArguments(SDValue Chain,
 
     if (theArgs[i]->use_empty()) {
       // argument is dead
-      InVals.push_back(DAG.getNode(ISD::UNDEF, dl, ObjectVT));
+      if (ObjectVT.isVector()) {
+        EVT EltVT = ObjectVT.getVectorElementType();
+        unsigned NumElts = ObjectVT.getVectorNumElements();
+        for (unsigned vi = 0; vi < NumElts; ++vi) {
+          InVals.push_back(DAG.getNode(ISD::UNDEF, dl, EltVT));
+        }
+      } else {
+        InVals.push_back(DAG.getNode(ISD::UNDEF, dl, ObjectVT));
+      }
       continue;
     }
 
@@ -1086,6 +1098,31 @@ NVPTXTargetLowering::LowerFormalArguments(SDValue Chain,
     // appear in the same order as their order of appearance
     // in the original function. "idx+1" holds that order.
     if (PAL.hasAttribute(i+1, Attribute::ByVal) == false) {
+      if (ObjectVT.isVector()) {
+        unsigned NumElts = ObjectVT.getVectorNumElements();
+        EVT EltVT = ObjectVT.getVectorElementType();
+        unsigned Offset = 0;
+        for (unsigned vi = 0; vi < NumElts; ++vi) {
+          SDValue A = getParamSymbol(DAG, idx, getPointerTy());
+          SDValue B = DAG.getIntPtrConstant(Offset);
+          SDValue Addr = DAG.getNode(ISD::ADD, dl, getPointerTy(),
+                                     //getParamSymbol(DAG, idx, EltVT),
+                                     //DAG.getConstant(Offset, getPointerTy()));
+                                     A, B);
+          Value *SrcValue = Constant::getNullValue(PointerType::get(
+                                            EltVT.getTypeForEVT(F->getContext()),
+                                            llvm::ADDRESS_SPACE_PARAM));
+          SDValue Ld = DAG.getLoad(EltVT, dl, Root, Addr,
+                                   MachinePointerInfo(SrcValue),
+                                   false, false, false,
+                                   TD->getABITypeAlignment(EltVT.getTypeForEVT(
+                                     F->getContext())));
+          Offset += EltVT.getStoreSizeInBits()/8;
+          InVals.push_back(Ld);
+        }
+        continue;
+      }
+
       // A plain scalar.
       if (isABI || isKernel) {
         // If ABI, load from the param symbol

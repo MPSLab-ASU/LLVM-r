@@ -39,14 +39,11 @@ protected:
   bool isHWTrueValue(SDValue Op) const;
   bool isHWFalseValue(SDValue Op) const;
 
+  void AnalyzeFormalArguments(CCState &State,
+                              const SmallVectorImpl<ISD::InputArg> &Ins) const;
+
 public:
   AMDGPUTargetLowering(TargetMachine &TM);
-
-  virtual SDValue LowerFormalArguments(SDValue Chain, CallingConv::ID CallConv,
-                             bool isVarArg,
-                             const SmallVectorImpl<ISD::InputArg> &Ins,
-                             DebugLoc DL, SelectionDAG &DAG,
-                             SmallVectorImpl<SDValue> &InVals) const;
 
   virtual SDValue LowerReturn(SDValue Chain, CallingConv::ID CallConv,
                               bool isVarArg,
@@ -64,6 +61,10 @@ public:
   SDValue LowerIntrinsicLRP(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerMinMax(SDValue Op, SelectionDAG &DAG) const;
   virtual const char* getTargetNodeName(unsigned Opcode) const;
+
+  virtual SDNode *PostISelFolding(MachineSDNode *N, SelectionDAG &DAG) const {
+    return N;
+  }
 
 // Functions defined in AMDILISelLowering.cpp
 public:
@@ -108,7 +109,6 @@ namespace AMDGPUISD {
 enum {
   // AMDIL ISD Opcodes
   FIRST_NUMBER = ISD::BUILTIN_OP_END,
-  MAD,         // 32bit Fused Multiply Add instruction
   CALL,        // Function call based on a single integer
   UMUL,        // 32bit unsigned multiplication
   DIV_INF,      // Divide with infinity returned on zero divisor
@@ -134,16 +134,6 @@ enum {
 
 
 } // End namespace AMDGPUISD
-
-namespace SIISD {
-
-enum {
-  SI_FIRST = AMDGPUISD::LAST_AMDGPU_ISD_NUMBER,
-  VCC_AND,
-  VCC_BITCAST
-};
-
-} // End namespace SIISD
 
 } // End namespace llvm
 

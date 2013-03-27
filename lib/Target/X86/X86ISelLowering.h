@@ -360,6 +360,9 @@ namespace llvm {
       PCMPISTRI,
       PCMPESTRI,
 
+      // XTEST - Test if in transactional execution.
+      XTEST,
+
       // ATOMADD64_DAG, ATOMSUB64_DAG, ATOMOR64_DAG, ATOMAND64_DAG,
       // ATOMXOR64_DAG, ATOMNAND64_DAG, ATOMSWAP64_DAG -
       // Atomic 64-bit binary operations.
@@ -471,7 +474,7 @@ namespace llvm {
 
     virtual unsigned getJumpTableEncoding() const;
 
-    virtual MVT getShiftAmountTy(EVT LHSTy) const { return MVT::i8; }
+    virtual MVT getScalarShiftAmountTy(EVT LHSTy) const { return MVT::i8; }
 
     virtual const MCExpr *
     LowerCustomJumpTableEntry(const MachineJumpTableInfo *MJTI,

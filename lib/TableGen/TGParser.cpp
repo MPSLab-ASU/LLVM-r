@@ -382,7 +382,8 @@ static bool isObjectStart(tgtok::TokKind K) {
 
 static std::string GetNewAnonymousName() {
   static unsigned AnonCounter = 0;
-  return "anonymous."+utostr(AnonCounter++);
+  unsigned Tmp = AnonCounter++; // MSVC2012 ICEs without this.
+  return "anonymous." + utostr(Tmp);
 }
 
 /// ParseObjectName - If an object name is specified, return it.  Otherwise,
@@ -1546,29 +1547,39 @@ Init *TGParser::ParseValue(Record *CurRec, RecTy *ItemType, IDParseMode Mode) {
 
 /// ParseDagArgList - Parse the argument list for a dag literal expression.
 ///
-///    ParseDagArgList ::= Value (':' VARNAME)?
-///    ParseDagArgList ::= ParseDagArgList ',' Value (':' VARNAME)?
+///    DagArg     ::= Value (':' VARNAME)?
+///    DagArg     ::= VARNAME
+///    DagArgList ::= DagArg
+///    DagArgList ::= DagArgList ',' DagArg
 std::vector<std::pair<llvm::Init*, std::string> >
 TGParser::ParseDagArgList(Record *CurRec) {
   std::vector<std::pair<llvm::Init*, std::string> > Result;
 
   while (1) {
-    Init *Val = ParseValue(CurRec);
-    if (Val == 0) return std::vector<std::pair<llvm::Init*, std::string> >();
-
-    // If the variable name is present, add it.
-    std::string VarName;
-    if (Lex.getCode() == tgtok::colon) {
-      if (Lex.Lex() != tgtok::VarName) { // eat the ':'
-        TokError("expected variable name in dag literal");
+    // DagArg ::= VARNAME
+    if (Lex.getCode() == tgtok::VarName) {
+      // A missing value is treated like '?'.
+      Result.push_back(std::make_pair(UnsetInit::get(), Lex.getCurStrVal()));
+      Lex.Lex();
+    } else {
+      // DagArg ::= Value (':' VARNAME)?
+      Init *Val = ParseValue(CurRec);
+      if (Val == 0)
         return std::vector<std::pair<llvm::Init*, std::string> >();
+
+      // If the variable name is present, add it.
+      std::string VarName;
+      if (Lex.getCode() == tgtok::colon) {
+        if (Lex.Lex() != tgtok::VarName) { // eat the ':'
+          TokError("expected variable name in dag literal");
+          return std::vector<std::pair<llvm::Init*, std::string> >();
+        }
+        VarName = Lex.getCurStrVal();
+        Lex.Lex();  // eat the VarName.
       }
-      VarName = Lex.getCurStrVal();
-      Lex.Lex();  // eat the VarName.
+
+      Result.push_back(std::make_pair(Val, VarName));
     }
-
-    Result.push_back(std::make_pair(Val, VarName));
-
     if (Lex.getCode() != tgtok::comma) break;
     Lex.Lex(); // eat the ','
   }

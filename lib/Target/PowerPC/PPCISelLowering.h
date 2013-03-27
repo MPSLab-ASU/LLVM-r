@@ -16,6 +16,7 @@
 #define LLVM_TARGET_POWERPC_PPC32ISELLOWERING_H
 
 #include "PPC.h"
+#include "PPCRegisterInfo.h"
 #include "PPCSubtarget.h"
 #include "llvm/CodeGen/SelectionDAG.h"
 #include "llvm/Target/TargetLowering.h"
@@ -95,12 +96,9 @@ namespace llvm {
       EXTSW_32,
 
       /// CALL - A direct function call.
-      /// CALL_NOP_SVR4 is a call with the special  NOP which follows 64-bit
+      /// CALL_NOP is a call with the special NOP which follows 64-bit
       /// SVR4 calls.
-      CALL_Darwin, CALL_SVR4, CALL_NOP_SVR4,
-
-      /// NOP - Special NOP which follows 64-bit SVR4 calls.
-      NOP,
+      CALL, CALL_NOP,
 
       /// CHAIN,FLAG = MTCTR(VAL, CHAIN[, INFLAG]) - Directly corresponds to a
       /// MTCTR instruction.
@@ -108,7 +106,7 @@ namespace llvm {
 
       /// CHAIN,FLAG = BCTRL(CHAIN, INFLAG) - Directly corresponds to a
       /// BCTRL instruction.
-      BCTRL_Darwin, BCTRL_SVR4,
+      BCTRL,
 
       /// Return with a flag operand, matched by 'blr'
       RET_FLAG,
@@ -118,6 +116,12 @@ namespace llvm {
       /// CRREG into the resultant GPR.  Bits corresponding to other CR regs
       /// are undefined.
       MFCR,
+
+      // EH_SJLJ_SETJMP - SjLj exception handling setjmp.
+      EH_SJLJ_SETJMP,
+
+      // EH_SJLJ_LONGJMP - SjLj exception handling longjmp.
+      EH_SJLJ_LONGJMP,
 
       /// RESVEC = VCMP(LHS, RHS, OPC) - Represents one of the altivec VCMP*
       /// instructions.  For lack of better number, we use the opcode number
@@ -138,26 +142,13 @@ namespace llvm {
       /// an optional input flag argument.
       COND_BRANCH,
 
-      // The following 5 instructions are used only as part of the
-      // long double-to-int conversion sequence.
-
-      /// OUTFLAG = MFFS F8RC - This moves the FPSCR (not modelled) into the
-      /// register.
-      MFFS,
-
-      /// OUTFLAG = MTFSB0 INFLAG - This clears a bit in the FPSCR.
-      MTFSB0,
-
-      /// OUTFLAG = MTFSB1 INFLAG - This sets a bit in the FPSCR.
-      MTFSB1,
-
-      /// F8RC, OUTFLAG = FADDRTZ F8RC, F8RC, INFLAG - This is an FADD done with
-      /// rounding towards zero.  It has flags added so it won't move past the
-      /// FPSCR-setting instructions.
+      /// F8RC = FADDRTZ F8RC, F8RC - This is an FADD done with rounding
+      /// towards zero.  Used only as part of the long double-to-int
+      /// conversion sequence.
       FADDRTZ,
 
-      /// MTFSF = F8RC, INFLAG - This moves the register into the FPSCR.
-      MTFSF,
+      /// F8RC = MFFS - This moves the FPSCR (not modeled) into the register.
+      MFFS,
 
       /// LARX = This corresponds to PPC l{w|d}arx instrcution: load and
       /// reserve indexed. This is used to implement atomic operations.
@@ -237,6 +228,12 @@ namespace llvm {
       /// sym@got@dtprel@l.
       ADDI_DTPREL_L,
 
+      /// VRRC = VADD_SPLAT Elt, EltSize - Temporary node to be expanded
+      /// during instruction selection to optimize a BUILD_VECTOR into
+      /// operations on splats.  This is necessary to avoid losing these
+      /// optimizations due to constant folding.
+      VADD_SPLAT,
+
       /// STD_32 - This is the STD instruction for use with "32-bit" registers.
       STD_32 = ISD::FIRST_TARGET_MEMORY_OPCODE,
 
@@ -252,13 +249,14 @@ namespace llvm {
       /// or i32.
       LBRX,
 
-      /// G8RC = ADDIS_TOC_HA %X2, Symbol - For medium code model, produces
-      /// an ADDIS8 instruction that adds the TOC base register to sym@toc@ha.
+      /// G8RC = ADDIS_TOC_HA %X2, Symbol - For medium and large code model,
+      /// produces an ADDIS8 instruction that adds the TOC base register to
+      /// sym@toc@ha.
       ADDIS_TOC_HA,
 
-      /// G8RC = LD_TOC_L Symbol, G8RReg - For medium code model, produces a
-      /// LD instruction with base register G8RReg and offset sym@toc@l.
-      /// Preceded by an ADDIS_TOC_HA to form a full 32-bit offset.
+      /// G8RC = LD_TOC_L Symbol, G8RReg - For medium and large code model,
+      /// produces a LD instruction with base register G8RReg and offset
+      /// sym@toc@l.  Preceded by an ADDIS_TOC_HA to form a full 32-bit offset.
       LD_TOC_L,
 
       /// G8RC = ADDI_TOC_L G8RReg, Symbol - For medium code model, produces
@@ -314,6 +312,7 @@ namespace llvm {
 
   class PPCTargetLowering : public TargetLowering {
     const PPCSubtarget &PPCSubTarget;
+    const PPCRegisterInfo *PPCRegInfo;
 
   public:
     explicit PPCTargetLowering(PPCTargetMachine &TM);
@@ -322,7 +321,7 @@ namespace llvm {
     /// DAG node.
     virtual const char *getTargetNodeName(unsigned Opcode) const;
 
-    virtual MVT getShiftAmountTy(EVT LHSTy) const { return MVT::i32; }
+    virtual MVT getScalarShiftAmountTy(EVT LHSTy) const { return MVT::i32; }
 
     /// getSetCCResultType - Return the ISD::SETCC ValueType
     virtual EVT getSetCCResultType(EVT VT) const;
@@ -388,6 +387,12 @@ namespace llvm {
                                                 MachineBasicBlock *MBB,
                                             bool is8bit, unsigned Opcode) const;
 
+    MachineBasicBlock *emitEHSjLjSetJmp(MachineInstr *MI,
+                                        MachineBasicBlock *MBB) const;
+
+    MachineBasicBlock *emitEHSjLjLongJmp(MachineInstr *MI,
+                                         MachineBasicBlock *MBB) const;
+
     ConstraintType getConstraintType(const std::string &Constraint) const;
 
     /// Examine constraint string and operand type and determine a weight value.
@@ -441,6 +446,10 @@ namespace llvm {
     getOptimalMemOpType(uint64_t Size, unsigned DstAlign, unsigned SrcAlign, 
                         bool IsMemset, bool ZeroMemset, bool MemcpyStrSrc,
                         MachineFunction &MF) const;
+
+    /// Is unaligned memory access allowed for the given type, and is it fast
+    /// relative to software emulation.
+    virtual bool allowsUnalignedMemoryAccesses(EVT VT, bool *Fast = 0) const;
 
     /// isFMAFasterThanMulAndAdd - Return true if an FMA operation is faster than
     /// a pair of mul and add instructions. fmuladd intrinsics will be expanded to
@@ -597,6 +606,9 @@ namespace llvm {
                      const SmallVectorImpl<ISD::InputArg> &Ins,
                      DebugLoc dl, SelectionDAG &DAG,
                      SmallVectorImpl<SDValue> &InVals) const;
+
+    SDValue lowerEH_SJLJ_SETJMP(SDValue Op, SelectionDAG &DAG) const;
+    SDValue lowerEH_SJLJ_LONGJMP(SDValue Op, SelectionDAG &DAG) const;
   };
 }
 

@@ -36,6 +36,7 @@
 #include "llvm/MC/MCInst.h"
 #include "llvm/MC/MCStreamer.h"
 #include "llvm/MC/MCSymbol.h"
+#include "llvm/Support/ELF.h"
 #include "llvm/Support/TargetRegistry.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/Mangler.h"
@@ -73,6 +74,16 @@ void MipsAsmPrinter::EmitInstruction(const MachineInstr *MI) {
     // Do any auto-generated pseudo lowerings.
     if (emitPseudoExpansionLowering(OutStreamer, &*I))
       continue;
+
+    // The inMips16Mode() test is not permanent.
+    // Some instructions are marked as pseudo right now which
+    // would make the test fail for the wrong reason but
+    // that will be fixed soon. We need this here because we are
+    // removing another test for this situation downstream in the
+    // callchain.
+    //
+    if (I->isPseudo() && !Subtarget->inMips16Mode())
+      llvm_unreachable("Pseudo opcode found in EmitInstruction()");
 
     MCInst TmpInst0;
     MCInstLowering.Lower(I, TmpInst0);
@@ -221,6 +232,11 @@ void MipsAsmPrinter::EmitFunctionEntryLabel() {
     // OutStreamer.EmitRawText(StringRef("\t.set\tnomicromips"));
     OutStreamer.EmitRawText("\t.ent\t" + Twine(CurrentFnSym->getName()));
   }
+
+  if (Subtarget->inMicroMipsMode())
+    if (MipsELFStreamer *MES = dyn_cast<MipsELFStreamer>(&OutStreamer))
+      MES->emitMipsSTOCG(*Subtarget, CurrentFnSym,
+      (unsigned)ELF::STO_MIPS_MICROMIPS);
   OutStreamer.EmitLabel(CurrentFnSym);
 }
 

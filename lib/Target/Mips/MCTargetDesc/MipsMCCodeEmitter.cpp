@@ -38,7 +38,8 @@ class MipsMCCodeEmitter : public MCCodeEmitter {
   bool IsLittleEndian;
 
 public:
-  MipsMCCodeEmitter(const MCInstrInfo &mcii, MCContext &Ctx_, bool IsLittle) :
+  MipsMCCodeEmitter(const MCInstrInfo &mcii, MCContext &Ctx_,
+                    const MCSubtargetInfo &sti, bool IsLittle) :
     MCII(mcii), Ctx(Ctx_), IsLittleEndian(IsLittle) {}
 
   ~MipsMCCodeEmitter() {}
@@ -95,7 +96,7 @@ MCCodeEmitter *llvm::createMipsMCCodeEmitterEB(const MCInstrInfo &MCII,
                                                const MCSubtargetInfo &STI,
                                                MCContext &Ctx)
 {
-  return new MipsMCCodeEmitter(MCII, Ctx, false);
+  return new MipsMCCodeEmitter(MCII, Ctx, STI, false);
 }
 
 MCCodeEmitter *llvm::createMipsMCCodeEmitterEL(const MCInstrInfo &MCII,
@@ -103,7 +104,7 @@ MCCodeEmitter *llvm::createMipsMCCodeEmitterEL(const MCInstrInfo &MCII,
                                                const MCSubtargetInfo &STI,
                                                MCContext &Ctx)
 {
-  return new MipsMCCodeEmitter(MCII, Ctx, true);
+  return new MipsMCCodeEmitter(MCII, Ctx, STI, true);
 }
 
 /// EncodeInstruction - Emit the instruction.
@@ -141,12 +142,6 @@ EncodeInstruction(const MCInst &MI, raw_ostream &OS,
     llvm_unreachable("unimplemented opcode in EncodeInstruction()");
 
   const MCInstrDesc &Desc = MCII.get(TmpInst.getOpcode());
-  uint64_t TSFlags = Desc.TSFlags;
-
-  // Pseudo instructions don't get encoded and shouldn't be here
-  // in the first place!
-  if ((TSFlags & MipsII::FormMask) == MipsII::Pseudo)
-    llvm_unreachable("Pseudo opcode found in EncodeInstruction()");
 
   // Get byte count of instruction
   unsigned Size = Desc.getSize();
@@ -165,8 +160,9 @@ getBranchTargetOpValue(const MCInst &MI, unsigned OpNo,
 
   const MCOperand &MO = MI.getOperand(OpNo);
 
-  // If the destination is an immediate, we have nothing to do.
-  if (MO.isImm()) return MO.getImm();
+  // If the destination is an immediate, divide by 4.
+  if (MO.isImm()) return MO.getImm() >> 2;
+
   assert(MO.isExpr() &&
          "getBranchTargetOpValue expects only expressions or immediates");
 
@@ -184,8 +180,9 @@ getJumpTargetOpValue(const MCInst &MI, unsigned OpNo,
                      SmallVectorImpl<MCFixup> &Fixups) const {
 
   const MCOperand &MO = MI.getOperand(OpNo);
-  // If the destination is an immediate, we have nothing to do.
-  if (MO.isImm()) return MO.getImm();
+  // If the destination is an immediate, divide by 4.
+  if (MO.isImm()) return MO.getImm()>>2;
+
   assert(MO.isExpr() &&
          "getJumpTargetOpValue expects only expressions or an immediate");
 

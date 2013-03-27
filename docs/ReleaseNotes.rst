@@ -62,7 +62,13 @@ Non-comprehensive list of changes in this release
 * The Attributes classes have been completely rewritten and expanded. They now
   support not only enumerated attributes and alignments, but "string"
   attributes, which are useful for passing information to code generation. See
-  `How To Use Attributes <HowToUseAttributes.html>`_ for more details.
+  :doc:`HowToUseAttributes` for more details.
+
+* TableGen's syntax for instruction selection patterns has been simplified.
+  Instead of specifying types indirectly with register classes, you should now
+  specify types directly in the input patterns. See ``SparcInstrInfo.td`` for
+  examples of the new syntax. The old syntax using register classes still
+  works, but it will be removed in a future LLVM release.
 
 * ... next change ...
 
@@ -89,6 +95,13 @@ in fairly early stages, but we expect successful compilation when:
 
 Some additional functionality is also implemented, notably DWARF debugging,
 GNU-style thread local storage and inline assembly.
+
+Hexagon Target
+--------------
+
+- Removed support for legacy hexagonv2 and hexagonv3 processor
+  architectures which are no longer in use. Currently supported
+  architectures are hexagonv4 and hexagonv5.
 
 Loop Vectorizer
 ---------------

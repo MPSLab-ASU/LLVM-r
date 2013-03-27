@@ -44,7 +44,7 @@ define void @take_struct(%myStruct* byval %structval) {
     %val1 = load i64* %addr1
 ; CHECK: ldr [[REG64:x[0-9]+]], [{{x[0-9]+|sp}}]
     store i64 %val1, i64* @var64
-; CHECK str [[REG64]], [{{x[0-9]+}}, #:lo12:var64]
+; CHECK: str [[REG64]], [{{x[0-9]+}}, #:lo12:var64]
 
     ret void
 }
@@ -66,7 +66,7 @@ define void @check_byval_align(i32* byval %ignore, %myStruct* byval align 16 %st
     %val1 = load i64* %addr1
 ; CHECK: ldr [[REG64:x[0-9]+]], [sp, #16]
     store i64 %val1, i64* @var64
-; CHECK str [[REG64]], [{{x[0-9]+}}, #:lo12:var64]
+; CHECK: str [[REG64]], [{{x[0-9]+}}, #:lo12:var64]
 
     ret void
 }
@@ -83,7 +83,7 @@ define i32 @return_int() {
 define double @return_double() {
 ; CHECK: return_double:
     ret double 3.14
-; CHECK: ldr d0, .LCPI
+; CHECK: ldr d0, [{{x[0-9]+}}, #:lo12:.LCPI
 }
 
 ; This is the kind of IR clang will produce for returning a struct

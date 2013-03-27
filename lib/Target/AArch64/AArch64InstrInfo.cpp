@@ -582,8 +582,6 @@ unsigned AArch64InstrInfo::getInstSizeInBytes(const MachineInstr &MI) const {
   case TargetOpcode::EH_LABEL:
   case TargetOpcode::DBG_VALUE:
     return 0;
-  case AArch64::CONSTPOOL_ENTRY:
-    return MI.getOperand(2).getImm();
   case AArch64::TLSDESCCALL:
     return 0;
   default:
@@ -620,21 +618,38 @@ void llvm::emitRegUpdate(MachineBasicBlock &MBB,
                          int64_t NumBytes, MachineInstr::MIFlag MIFlags) {
   if (NumBytes == 0 && DstReg == SrcReg)
     return;
-  else if (abs(NumBytes) & ~0xffffff) {
+  else if (abs64(NumBytes) & ~0xffffff) {
     // Generically, we have to materialize the offset into a temporary register
     // and subtract it. There are a couple of ways this could be done, for now
-    // we'll go for a literal-pool load.
-    MachineFunction &MF = *MBB.getParent();
-    MachineConstantPool *MCP = MF.getConstantPool();
-    const Constant *C
-      = ConstantInt::get(Type::getInt64Ty(MF.getFunction()->getContext()),
-                         abs(NumBytes));
-    unsigned CPI = MCP->getConstantPoolIndex(C, 8);
+    // we'll use a movz/movk or movn/movk sequence.
+    uint64_t Bits = static_cast<uint64_t>(abs64(NumBytes));
+    BuildMI(MBB, MBBI, dl, TII.get(AArch64::MOVZxii), ScratchReg)
+      .addImm(0xffff & Bits).addImm(0)
+      .setMIFlags(MIFlags);
 
-    // LDR xTMP, .LITPOOL
-    BuildMI(MBB, MBBI, dl, TII.get(AArch64::LDRx_lit), ScratchReg)
-      .addConstantPoolIndex(CPI)
-      .setMIFlag(MIFlags);
+    Bits >>= 16;
+    if (Bits & 0xffff) {
+      BuildMI(MBB, MBBI, dl, TII.get(AArch64::MOVKxii), ScratchReg)
+        .addReg(ScratchReg)
+        .addImm(0xffff & Bits).addImm(1)
+        .setMIFlags(MIFlags);
+    }
+
+    Bits >>= 16;
+    if (Bits & 0xffff) {
+      BuildMI(MBB, MBBI, dl, TII.get(AArch64::MOVKxii), ScratchReg)
+        .addReg(ScratchReg)
+        .addImm(0xffff & Bits).addImm(2)
+        .setMIFlags(MIFlags);
+    }
+
+    Bits >>= 16;
+    if (Bits & 0xffff) {
+      BuildMI(MBB, MBBI, dl, TII.get(AArch64::MOVKxii), ScratchReg)
+        .addReg(ScratchReg)
+        .addImm(0xffff & Bits).addImm(3)
+        .setMIFlags(MIFlags);
+    }
 
     // ADD DST, SRC, xTMP (, lsl #0)
     unsigned AddOp = NumBytes > 0 ? AArch64::ADDxxx_uxtx : AArch64::SUBxxx_uxtx;
@@ -658,7 +673,7 @@ void llvm::emitRegUpdate(MachineBasicBlock &MBB,
   } else {
     LowOp = AArch64::SUBxxi_lsl0_s;
     HighOp = AArch64::SUBxxi_lsl12_s;
-    NumBytes = abs(NumBytes);
+    NumBytes = abs64(NumBytes);
   }
 
   // If we're here, at the very least a move needs to be produced, which just

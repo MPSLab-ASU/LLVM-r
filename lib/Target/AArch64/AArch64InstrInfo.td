@@ -159,7 +159,7 @@ let Defs = [XSP], Uses = [XSP] in {
 // Atomic operation pseudo-instructions
 //===----------------------------------------------------------------------===//
 
-let usesCustomInserter = 1, Defs = [NZCV] in {
+let usesCustomInserter = 1 in {
 multiclass AtomicSizes<string opname> {
   def _I8 : PseudoInst<(outs GPR32:$dst), (ins GPR64:$ptr, GPR32:$incr),
     [(set GPR32:$dst, (!cast<SDNode>(opname # "_8") GPR64:$ptr, GPR32:$incr))]>;
@@ -178,11 +178,14 @@ defm ATOMIC_LOAD_AND  : AtomicSizes<"atomic_load_and">;
 defm ATOMIC_LOAD_OR   : AtomicSizes<"atomic_load_or">;
 defm ATOMIC_LOAD_XOR  : AtomicSizes<"atomic_load_xor">;
 defm ATOMIC_LOAD_NAND : AtomicSizes<"atomic_load_nand">;
-defm ATOMIC_LOAD_MIN  : AtomicSizes<"atomic_load_min">;
-defm ATOMIC_LOAD_MAX  : AtomicSizes<"atomic_load_max">;
-defm ATOMIC_LOAD_UMIN : AtomicSizes<"atomic_load_umin">;
-defm ATOMIC_LOAD_UMAX : AtomicSizes<"atomic_load_umax">;
 defm ATOMIC_SWAP      : AtomicSizes<"atomic_swap">;
+let Defs = [NZCV] in {
+  // These operations need a CMP to calculate the correct value
+  defm ATOMIC_LOAD_MIN  : AtomicSizes<"atomic_load_min">;
+  defm ATOMIC_LOAD_MAX  : AtomicSizes<"atomic_load_max">;
+  defm ATOMIC_LOAD_UMIN : AtomicSizes<"atomic_load_umin">;
+  defm ATOMIC_LOAD_UMAX : AtomicSizes<"atomic_load_umax">;
+}
 
 let usesCustomInserter = 1, Defs = [NZCV] in {
 def ATOMIC_CMP_SWAP_I8
@@ -1942,43 +1945,41 @@ def fpz32 : Operand<f32>,
             ComplexPattern<f32, 1, "SelectFPZeroOperand", [fpimm]> {
   let ParserMatchClass = fpzero_asmoperand;
   let PrintMethod = "printFPZeroOperand";
+  let DecoderMethod = "DecodeFPZeroOperand";
 }
 
 def fpz64 : Operand<f64>,
             ComplexPattern<f64, 1, "SelectFPZeroOperand", [fpimm]> {
   let ParserMatchClass = fpzero_asmoperand;
   let PrintMethod = "printFPZeroOperand";
+  let DecoderMethod = "DecodeFPZeroOperand";
 }
 
-multiclass A64I_fpcmpSignal<bits<2> type, bit imm, dag ins, string asmop2,
-                            dag pattern> {
+multiclass A64I_fpcmpSignal<bits<2> type, bit imm, dag ins, dag pattern> {
   def _quiet : A64I_fpcmp<0b0, 0b0, type, 0b00, {0b0, imm, 0b0, 0b0, 0b0},
-                          (outs), ins, !strconcat("fcmp\t$Rn, ", asmop2),
-                          [pattern], NoItinerary> {
+                          (outs), ins, "fcmp\t$Rn, $Rm", [pattern],
+                          NoItinerary> {
     let Defs = [NZCV];
   }
 
   def _sig : A64I_fpcmp<0b0, 0b0, type, 0b00, {0b1, imm, 0b0, 0b0, 0b0},
-                        (outs), ins, !strconcat("fcmpe\t$Rn, ", asmop2),
-                        [], NoItinerary> {
+                        (outs), ins, "fcmpe\t$Rn, $Rm", [], NoItinerary> {
     let Defs = [NZCV];
   }
 }
 
-defm FCMPss : A64I_fpcmpSignal<0b00, 0b0, (ins FPR32:$Rn, FPR32:$Rm), "$Rm",
+defm FCMPss : A64I_fpcmpSignal<0b00, 0b0, (ins FPR32:$Rn, FPR32:$Rm),
                                (set NZCV, (A64cmp (f32 FPR32:$Rn), FPR32:$Rm))>;
-defm FCMPdd : A64I_fpcmpSignal<0b01, 0b0, (ins FPR64:$Rn, FPR64:$Rm), "$Rm",
+defm FCMPdd : A64I_fpcmpSignal<0b01, 0b0, (ins FPR64:$Rn, FPR64:$Rm),
                                (set NZCV, (A64cmp (f64 FPR64:$Rn), FPR64:$Rm))>;
 
-// What would be Rm should be written as 0, but anything is valid for
-// disassembly so we can't set the bits
-let PostEncoderMethod = "fixFCMPImm" in {
-  defm FCMPsi : A64I_fpcmpSignal<0b00, 0b1, (ins FPR32:$Rn, fpz32:$Imm), "$Imm",
-                              (set NZCV, (A64cmp (f32 FPR32:$Rn), fpz32:$Imm))>;
+// What would be Rm should be written as 0; note that even though it's called
+// "$Rm" here to fit in with the InstrFormats, it's actually an immediate.
+defm FCMPsi : A64I_fpcmpSignal<0b00, 0b1, (ins FPR32:$Rn, fpz32:$Rm),
+                               (set NZCV, (A64cmp (f32 FPR32:$Rn), fpz32:$Rm))>;
 
-  defm FCMPdi : A64I_fpcmpSignal<0b01, 0b1, (ins FPR64:$Rn, fpz64:$Imm), "$Imm",
-                              (set NZCV, (A64cmp (f64 FPR64:$Rn), fpz64:$Imm))>;
-}
+defm FCMPdi : A64I_fpcmpSignal<0b01, 0b1, (ins FPR64:$Rn, fpz64:$Rm),
+                               (set NZCV, (A64cmp (f64 FPR64:$Rn), fpz64:$Rm))>;
 
 
 //===----------------------------------------------------------------------===//
@@ -2449,16 +2450,12 @@ class A64I_LDRlitSimple<bits<2> opc, bit v, RegisterClass OutReg,
                  "ldr\t$Rt, $Imm19", patterns, NoItinerary>;
 
 let mayLoad = 1 in {
-  def LDRw_lit : A64I_LDRlitSimple<0b00, 0b0, GPR32,
-                              [(set (i32 GPR32:$Rt), (load constpool:$Imm19))]>;
-  def LDRx_lit : A64I_LDRlitSimple<0b01, 0b0, GPR64,
-                              [(set (i64 GPR64:$Rt), (load constpool:$Imm19))]>;
+  def LDRw_lit : A64I_LDRlitSimple<0b00, 0b0, GPR32>;
+  def LDRx_lit : A64I_LDRlitSimple<0b01, 0b0, GPR64>;
 }
 
-def LDRs_lit  : A64I_LDRlitSimple<0b00, 0b1, FPR32,
-                              [(set (f32 FPR32:$Rt), (load constpool:$Imm19))]>;
-def LDRd_lit  : A64I_LDRlitSimple<0b01, 0b1, FPR64,
-                              [(set (f64 FPR64:$Rt), (load constpool:$Imm19))]>;
+def LDRs_lit  : A64I_LDRlitSimple<0b00, 0b1, FPR32>;
+def LDRd_lit  : A64I_LDRlitSimple<0b01, 0b1, FPR64>;
 
 let mayLoad = 1 in {
   def LDRq_lit : A64I_LDRlitSimple<0b10, 0b1, FPR128>;
@@ -4565,22 +4562,6 @@ def : Pat<(and (A64Bfi GPR64:$src, GPR64:$Rn, imm:$ImmR, imm:$ImmS),
 }
 
 //===----------------------------------------------------------------------===//
-// Constant island entries
-//===----------------------------------------------------------------------===//
-
-// The constant island pass needs to create "instructions" in the middle of the
-// instruction stream to reresent its constants.
-
-def cpinst_operand : Operand<i32>;
-
-def CONSTPOOL_ENTRY : PseudoInst<(outs), (ins cpinst_operand:$instid,
-                                              cpinst_operand:$cpidx,
-                                              i32imm:$size), []> {
-  let hasSideEffects = 0;
-  let isNotDuplicable = 1;
-}
-
-//===----------------------------------------------------------------------===//
 // Miscellaneous patterns
 //===----------------------------------------------------------------------===//
 
@@ -4898,6 +4879,8 @@ defm : uimm12_pats<(A64WrapperSmall texternalsym:$Hi, texternalsym:$Lo12,
                                     ALIGN),
                    (ADRPxi texternalsym:$Hi), (i64 texternalsym:$Lo12)>;
 
+defm : uimm12_pats<(A64WrapperSmall tconstpool:$Hi, tconstpool:$Lo12, ALIGN),
+                   (ADRPxi tconstpool:$Hi), (i64 tconstpool:$Lo12)>;
 
 // We also want to use uimm12 instructions for local variables at the moment.
 def tframeindex_XFORM : SDNodeXForm<frameindex, [{

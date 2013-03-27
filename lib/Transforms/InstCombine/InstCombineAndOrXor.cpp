@@ -22,8 +22,8 @@ using namespace PatternMatch;
 
 
 /// AddOne - Add one to a ConstantInt.
-static Constant *AddOne(Constant *C) {
-  return ConstantExpr::getAdd(C, ConstantInt::get(C->getType(), 1));
+static Constant *AddOne(ConstantInt *C) {
+  return ConstantInt::get(C->getContext(), C->getValue() + 1);
 }
 /// SubOne - Subtract one from a ConstantInt.
 static Constant *SubOne(ConstantInt *C) {
@@ -2069,6 +2069,20 @@ Instruction *InstCombiner::visitOr(BinaryOperator &I) {
     Value *Inner = Builder->CreateOr(A, Op1);
     Inner->takeName(Op0);
     return BinaryOperator::CreateOr(Inner, C1);
+  }
+
+  // Change (or (bool?A:B),(bool?C:D)) --> (bool?(or A,C):(or B,D))
+  // Since this OR statement hasn't been optimized further yet, we hope
+  // that this transformation will allow the new ORs to be optimized.
+  {
+    Value *X = 0, *Y = 0;
+    if (Op0->hasOneUse() && Op1->hasOneUse() &&
+        match(Op0, m_Select(m_Value(X), m_Value(A), m_Value(B))) &&
+        match(Op1, m_Select(m_Value(Y), m_Value(C), m_Value(D))) && X == Y) {
+      Value *orTrue = Builder->CreateOr(A, C);
+      Value *orFalse = Builder->CreateOr(B, D);
+      return SelectInst::Create(X, orTrue, orFalse);
+    }
   }
 
   return Changed ? &I : 0;

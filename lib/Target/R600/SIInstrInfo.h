@@ -35,6 +35,11 @@ public:
                            unsigned DestReg, unsigned SrcReg,
                            bool KillSrc) const;
 
+  unsigned commuteOpcode(unsigned Opcode) const;
+
+  virtual MachineInstr *commuteInstruction(MachineInstr *MI,
+                                           bool NewMI=false) const;
+
   virtual MachineInstr * getMovImmInstr(MachineFunction *MF, unsigned DstReg,
                                         int64_t Imm) const;
 
@@ -69,6 +74,14 @@ public:
 
   virtual const TargetRegisterClass *getSuperIndirectRegClass() const;
   };
+
+namespace AMDGPU {
+
+  int getVOPe64(uint16_t Opcode);
+  int getCommuteRev(uint16_t Opcode);
+  int getCommuteOrig(uint16_t Opcode);
+
+} // End namespace AMDGPU
 
 } // End namespace llvm
 

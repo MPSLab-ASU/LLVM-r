@@ -91,8 +91,6 @@ void AMDGPUAsmPrinter::EmitProgramInfo(MachineFunction &MF) {
         switch (reg) {
         default: break;
         case AMDGPU::EXEC:
-        case AMDGPU::SI_LITERAL_CONSTANT:
-        case AMDGPU::SREG_LIT_0:
         case AMDGPU::M0:
           continue;
         }
@@ -143,5 +141,5 @@ void AMDGPUAsmPrinter::EmitProgramInfo(MachineFunction &MF) {
   SIMachineFunctionInfo * MFI = MF.getInfo<SIMachineFunctionInfo>();
   OutStreamer.EmitIntValue(MaxSGPR + 1, 4);
   OutStreamer.EmitIntValue(MaxVGPR + 1, 4);
-  OutStreamer.EmitIntValue(MFI->SPIPSInputAddr, 4);
+  OutStreamer.EmitIntValue(MFI->PSInputAddr, 4);
 }
