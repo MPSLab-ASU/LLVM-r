@@ -256,7 +256,7 @@ OR1KOperand *OR1KAsmParser::ParseImmediate() {
     case AsmToken::Plus:
     case AsmToken::Minus:
     case AsmToken::Integer:
-      if(getParser().ParseExpression(EVal))
+      if(getParser().parseExpression(EVal))
         return 0;
 
       int64_t ans;

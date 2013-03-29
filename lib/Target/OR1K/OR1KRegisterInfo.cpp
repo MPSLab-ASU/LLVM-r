@@ -62,13 +62,6 @@ OR1KRegisterInfo::requiresRegisterScavenging(const MachineFunction &MF) const {
   return true;
 }
 
-void OR1KRegisterInfo::
-eliminateCallFramePseudoInstr(MachineFunction &MF, MachineBasicBlock &MBB,
-                              MachineBasicBlock::iterator I) const {
-  // Discard ADJCALLSTACKDOWN, ADJCALLSTACKUP instructions.
-  MBB.erase(I);
-}
-
 void
 OR1KRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
                                       int SPAdj, unsigned FIOperandNum,
