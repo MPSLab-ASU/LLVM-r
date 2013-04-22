@@ -47,9 +47,7 @@ STATISTIC(NumCacheCompleteNonLocalPtr,
           "Number of block queries that were completely cached");
 
 // Limit for the number of instructions to scan in a block.
-// FIXME: Figure out what a sane value is for this.
-//        (500 is relatively insane.)
-static const int BlockScanLimit = 500;
+static const int BlockScanLimit = 100;
 
 char MemoryDependenceAnalysis::ID = 0;
 
@@ -1136,7 +1134,7 @@ getNonLocalPointerDepFromBB(const PHITransAddr &Pointer,
 
         // Make sure to clean up the Visited map before continuing on to
         // PredTranslationFailure.
-        for (unsigned i = 0; i < PredList.size(); i++)
+        for (unsigned i = 0, n = PredList.size(); i < n; ++i)
           Visited.erase(PredList[i].first);
 
         goto PredTranslationFailure;
@@ -1148,7 +1146,7 @@ getNonLocalPointerDepFromBB(const PHITransAddr &Pointer,
     // any results for.  (getNonLocalPointerDepFromBB will modify our
     // datastructures in ways the code after the PredTranslationFailure label
     // doesn't expect.)
-    for (unsigned i = 0; i < PredList.size(); i++) {
+    for (unsigned i = 0, n = PredList.size(); i < n; ++i) {
       BasicBlock *Pred = PredList[i].first;
       PHITransAddr &PredPointer = PredList[i].second;
       Value *PredPtrVal = PredPointer.getAddr();

@@ -92,13 +92,8 @@ set(LLVM_ALL_TARGETS
 # List of targets with JIT support:
 set(LLVM_TARGETS_WITH_JIT X86 PowerPC ARM Mips)
 
-if( MSVC )
-  set(LLVM_TARGETS_TO_BUILD X86
+set(LLVM_TARGETS_TO_BUILD "all"
     CACHE STRING "Semicolon-separated list of targets to build, or \"all\".")
-else( MSVC )
-  set(LLVM_TARGETS_TO_BUILD "all"
-    CACHE STRING "Semicolon-separated list of targets to build, or \"all\".")
-endif( MSVC )
 
 set(LLVM_EXPERIMENTAL_TARGETS_TO_BUILD ""
   CACHE STRING "Semicolon-separated list of experimental targets to build.")
@@ -391,6 +386,10 @@ if( ${CMAKE_SYSTEM_NAME} MATCHES SunOS )
    SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -include llvm/Support/Solaris.h")
 endif( ${CMAKE_SYSTEM_NAME} MATCHES SunOS )
 
+# Make sure we don't get -rdynamic in every binary. For those that need it,
+# use set_target_properties(target PROPERTIES ENABLE_EXPORTS 1)
+set(CMAKE_SHARED_LIBRARY_LINK_CXX_FLAGS "")
+
 include(AddLLVM)
 include(TableGen)
 
@@ -416,8 +415,6 @@ add_subdirectory(utils/count)
 add_subdirectory(utils/not)
 add_subdirectory(utils/llvm-lit)
 add_subdirectory(utils/yaml-bench)
-add_subdirectory(utils/obj2yaml)
-add_subdirectory(utils/yaml2obj)
 
 add_subdirectory(projects)
 

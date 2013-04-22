@@ -537,6 +537,15 @@ MachineInstr *HexagonInstrInfo::foldMemoryOperandImpl(MachineFunction &MF,
   return(0);
 }
 
+MachineInstr*
+HexagonInstrInfo::emitFrameIndexDebugValue(MachineFunction &MF,
+                                           int FrameIx, uint64_t Offset,
+                                           const MDNode *MDPtr,
+                                           DebugLoc DL) const {
+  MachineInstrBuilder MIB = BuildMI(MF, DL, get(Hexagon::DBG_VALUE))
+    .addImm(0).addImm(Offset).addMetadata(MDPtr);
+  return &*MIB;
+}
 
 unsigned HexagonInstrInfo::createVR(MachineFunction* MF, MVT VT) const {
 
@@ -1881,6 +1890,13 @@ bool HexagonInstrInfo::isPredicated(const MachineInstr *MI) const {
   return ((F >> HexagonII::PredicatedPos) & HexagonII::PredicatedMask);
 }
 
+bool HexagonInstrInfo::isPredicatedNew(const MachineInstr *MI) const {
+  const uint64_t F = MI->getDesc().TSFlags;
+
+  assert(isPredicated(MI));
+  return ((F >> HexagonII::PredicatedNewPos) & HexagonII::PredicatedNewMask);
+}
+
 bool
 HexagonInstrInfo::DefinesPredicate(MachineInstr *MI,
                                    std::vector<MachineOperand> &Pred) const {
@@ -2351,6 +2367,13 @@ isConditionalStore (const MachineInstr* MI) const {
     //                           Double Dot New Store
     //
   }
+}
+
+// Returns true, if any one of the operands is a dot new
+// insn, whether it is predicated dot new or register dot new.
+bool HexagonInstrInfo::isDotNewInst (const MachineInstr* MI) const {
+  return (isNewValueInst(MI) ||
+     (isPredicated(MI) && isPredicatedNew(MI)));
 }
 
 unsigned HexagonInstrInfo::getAddrMode(const MachineInstr* MI) const {

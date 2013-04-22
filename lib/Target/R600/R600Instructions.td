@@ -234,6 +234,80 @@ class VTX_WORD1_GPR {
   let Word1{31}    = SRF_MODE_ALL;
 }
 
+class TEX_WORD0 {
+  field bits<32> Word0;
+
+  bits<5> TEX_INST;
+  bits<2> INST_MOD;
+  bits<1> FETCH_WHOLE_QUAD;
+  bits<8> RESOURCE_ID;
+  bits<7> SRC_GPR;
+  bits<1> SRC_REL;
+  bits<1> ALT_CONST;
+  bits<2> RESOURCE_INDEX_MODE;
+  bits<2> SAMPLER_INDEX_MODE;
+
+  let Word0{4-0} = TEX_INST;
+  let Word0{6-5} = INST_MOD;
+  let Word0{7} = FETCH_WHOLE_QUAD;
+  let Word0{15-8} = RESOURCE_ID;
+  let Word0{22-16} = SRC_GPR;
+  let Word0{23} = SRC_REL;
+  let Word0{24} = ALT_CONST;
+  let Word0{26-25} = RESOURCE_INDEX_MODE;
+  let Word0{28-27} = SAMPLER_INDEX_MODE;
+}
+
+class TEX_WORD1 {
+  field bits<32> Word1;
+
+  bits<7> DST_GPR;
+  bits<1> DST_REL;
+  bits<3> DST_SEL_X;
+  bits<3> DST_SEL_Y;
+  bits<3> DST_SEL_Z;
+  bits<3> DST_SEL_W;
+  bits<7> LOD_BIAS;
+  bits<1> COORD_TYPE_X;
+  bits<1> COORD_TYPE_Y;
+  bits<1> COORD_TYPE_Z;
+  bits<1> COORD_TYPE_W;
+
+  let Word1{6-0} = DST_GPR;
+  let Word1{7} = DST_REL;
+  let Word1{11-9} = DST_SEL_X;
+  let Word1{14-12} = DST_SEL_Y;
+  let Word1{17-15} = DST_SEL_Z;
+  let Word1{20-18} = DST_SEL_W;
+  let Word1{27-21} = LOD_BIAS;
+  let Word1{28} = COORD_TYPE_X;
+  let Word1{29} = COORD_TYPE_Y;
+  let Word1{30} = COORD_TYPE_Z;
+  let Word1{31} = COORD_TYPE_W;
+}
+
+class TEX_WORD2 {
+  field bits<32> Word2;
+
+  bits<5> OFFSET_X;
+  bits<5> OFFSET_Y;
+  bits<5> OFFSET_Z;
+  bits<5> SAMPLER_ID;
+  bits<3> SRC_SEL_X;
+  bits<3> SRC_SEL_Y;
+  bits<3> SRC_SEL_Z;
+  bits<3> SRC_SEL_W;
+
+  let Word2{4-0} = OFFSET_X;
+  let Word2{9-5} = OFFSET_Y;
+  let Word2{14-10} = OFFSET_Z;
+  let Word2{19-15} = SAMPLER_ID;
+  let Word2{22-20} = SRC_SEL_X;
+  let Word2{25-23} = SRC_SEL_Y;
+  let Word2{28-26} = SRC_SEL_Z;
+  let Word2{31-29} = SRC_SEL_W;
+}
+
 /*
 XXX: R600 subtarget uses a slightly different encoding than the other
 subtargets.  We currently handle this in R600MCCodeEmitter, but we may
@@ -277,9 +351,9 @@ class R600_1OP <bits<11> inst, string opName, list<dag> pattern,
               (ins WRITE:$write, OMOD:$omod, REL:$dst_rel, CLAMP:$clamp,
                    R600_Reg32:$src0, NEG:$src0_neg, REL:$src0_rel, ABS:$src0_abs, SEL:$src0_sel,
                    LAST:$last, R600_Pred:$pred_sel, LITERAL:$literal),
-              !strconcat(opName,
+              !strconcat("  ", opName,
                    "$clamp $dst$write$dst_rel$omod, "
-                   "$src0_neg$src0_abs$src0$src0_sel$src0_abs$src0_rel, "
+                   "$src0_neg$src0_abs$src0$src0_abs$src0_rel, "
                    "$literal $pred_sel$last"),
               pattern,
               itin>,
@@ -318,10 +392,10 @@ class R600_2OP <bits<11> inst, string opName, list<dag> pattern,
                R600_Reg32:$src0, NEG:$src0_neg, REL:$src0_rel, ABS:$src0_abs, SEL:$src0_sel,
                R600_Reg32:$src1, NEG:$src1_neg, REL:$src1_rel, ABS:$src1_abs, SEL:$src1_sel,
                LAST:$last, R600_Pred:$pred_sel, LITERAL:$literal),
-          !strconcat(opName,
+          !strconcat("  ", opName,
                 "$clamp $update_exec_mask$update_pred$dst$write$dst_rel$omod, "
-                "$src0_neg$src0_abs$src0$src0_sel$src0_abs$src0_rel, "
-                "$src1_neg$src1_abs$src1$src1_sel$src1_abs$src1_rel, "
+                "$src0_neg$src0_abs$src0$src0_abs$src0_rel, "
+                "$src1_neg$src1_abs$src1$src1_abs$src1_rel, "
                 "$literal $pred_sel$last"),
           pattern,
           itin>,
@@ -356,10 +430,10 @@ class R600_3OP <bits<5> inst, string opName, list<dag> pattern,
                R600_Reg32:$src1, NEG:$src1_neg, REL:$src1_rel, SEL:$src1_sel,
                R600_Reg32:$src2, NEG:$src2_neg, REL:$src2_rel, SEL:$src2_sel,
                LAST:$last, R600_Pred:$pred_sel, LITERAL:$literal),
-          !strconcat(opName, "$clamp $dst$dst_rel, "
-                             "$src0_neg$src0$src0_sel$src0_rel, "
-                             "$src1_neg$src1$src1_sel$src1_rel, "
-                             "$src2_neg$src2$src2_sel$src2_rel, "
+          !strconcat("  ", opName, "$clamp $dst$dst_rel, "
+                             "$src0_neg$src0$src0_rel, "
+                             "$src1_neg$src1$src1_rel, "
+                             "$src2_neg$src2$src2_rel, "
                              "$literal $pred_sel$last"),
           pattern,
           itin>,
@@ -386,12 +460,32 @@ class R600_REDUCTION <bits<11> inst, dag ins, string asm, list<dag> pattern,
 class R600_TEX <bits<11> inst, string opName, list<dag> pattern,
                 InstrItinClass itin = AnyALU> :
   InstR600 <inst,
-          (outs R600_Reg128:$dst),
-          (ins R600_Reg128:$src0, i32imm:$resourceId, i32imm:$samplerId, i32imm:$textureTarget),
-          !strconcat(opName, "$dst, $src0, $resourceId, $samplerId, $textureTarget"),
+          (outs R600_Reg128:$DST_GPR),
+          (ins R600_Reg128:$SRC_GPR, i32imm:$RESOURCE_ID, i32imm:$SAMPLER_ID, i32imm:$textureTarget),
+          !strconcat(opName, "$DST_GPR, $SRC_GPR, $RESOURCE_ID, $SAMPLER_ID, $textureTarget"),
           pattern,
-          itin>{
-    let Inst {10-0} = inst;
+          itin>, TEX_WORD0, TEX_WORD1, TEX_WORD2 {
+    let Inst{31-0} = Word0;
+    let Inst{63-32} = Word1;
+
+    let TEX_INST = inst{4-0};
+    let SRC_REL = 0;
+    let DST_REL = 0;
+    let DST_SEL_X = 0;
+    let DST_SEL_Y = 1;
+    let DST_SEL_Z = 2;
+    let DST_SEL_W = 3;
+    let LOD_BIAS = 0;
+
+    let INST_MOD = 0;
+    let FETCH_WHOLE_QUAD = 0;
+    let ALT_CONST = 0;
+    let SAMPLER_INDEX_MODE = 0;
+
+    let COORD_TYPE_X = 0;
+    let COORD_TYPE_Y = 0;
+    let COORD_TYPE_Z = 0;
+    let COORD_TYPE_W = 0;
   }
 
 } // End mayLoad = 1, mayStore = 0, hasSideEffects = 0
@@ -644,7 +738,9 @@ multiclass SteamOutputExportPattern<Instruction ExportInst,
       4095, imm:$mask, buf3inst, 0)>;
 }
 
-let usesCustomInserter = 1 in {
+// Export Instructions should not be duplicated by TailDuplication pass
+// (which assumes that duplicable instruction are affected by exec mask)
+let usesCustomInserter = 1, isNotDuplicable = 1 in {
 
 class ExportSwzInst : InstR600ISA<(
     outs),
@@ -669,6 +765,173 @@ class ExportBufInst : InstR600ISA<(
   let elem_size = 0;
   let Inst{31-0} = Word0;
   let Inst{63-32} = Word1;
+}
+
+//===----------------------------------------------------------------------===//
+// Control Flow Instructions
+//===----------------------------------------------------------------------===//
+
+class CF_ALU_WORD0 {
+  field bits<32> Word0;
+
+  bits<22> ADDR;
+  bits<4> KCACHE_BANK0;
+  bits<4> KCACHE_BANK1;
+  bits<2> KCACHE_MODE0;
+
+  let Word0{21-0} = ADDR;
+  let Word0{25-22} = KCACHE_BANK0;
+  let Word0{29-26} = KCACHE_BANK1;
+  let Word0{31-30} = KCACHE_MODE0;
+}
+
+class CF_ALU_WORD1 {
+  field bits<32> Word1;
+
+  bits<2> KCACHE_MODE1;
+  bits<8> KCACHE_ADDR0;
+  bits<8> KCACHE_ADDR1;
+  bits<7> COUNT;
+  bits<1> ALT_CONST;
+  bits<4> CF_INST;
+  bits<1> WHOLE_QUAD_MODE;
+  bits<1> BARRIER;
+
+  let Word1{1-0} = KCACHE_MODE1;
+  let Word1{9-2} = KCACHE_ADDR0;
+  let Word1{17-10} = KCACHE_ADDR1;
+  let Word1{24-18} = COUNT;
+  let Word1{25} = ALT_CONST;
+  let Word1{29-26} = CF_INST;
+  let Word1{30} = WHOLE_QUAD_MODE;
+  let Word1{31} = BARRIER;
+}
+
+class ALU_CLAUSE<bits<4> inst, string OpName> : AMDGPUInst <(outs),
+(ins i32imm:$ADDR, i32imm:$KCACHE_BANK0, i32imm:$KCACHE_BANK1, i32imm:$KCACHE_MODE0, i32imm:$KCACHE_MODE1,
+i32imm:$KCACHE_ADDR0, i32imm:$KCACHE_ADDR1, i32imm:$COUNT),
+!strconcat(OpName, " $COUNT, @$ADDR, "
+"KC0[CB$KCACHE_BANK0:$KCACHE_ADDR0-$KCACHE_ADDR0+32]"
+", KC1[CB$KCACHE_BANK1:$KCACHE_ADDR1-$KCACHE_ADDR1+32]"),
+[] >, CF_ALU_WORD0, CF_ALU_WORD1 {
+  field bits<64> Inst;
+
+  let CF_INST = inst;
+  let ALT_CONST = 0;
+  let WHOLE_QUAD_MODE = 0;
+  let BARRIER = 1;
+
+  let Inst{31-0} = Word0;
+  let Inst{63-32} = Word1;
+}
+
+class CF_WORD0_R600 {
+  field bits<32> Word0;
+
+  bits<32> ADDR;
+
+  let Word0 = ADDR;
+}
+
+class CF_WORD1_R600 {
+  field bits<32> Word1;
+
+  bits<3> POP_COUNT;
+  bits<5> CF_CONST;
+  bits<2> COND;
+  bits<3> COUNT;
+  bits<6> CALL_COUNT;
+  bits<1> COUNT_3;
+  bits<1> END_OF_PROGRAM;
+  bits<1> VALID_PIXEL_MODE;
+  bits<7> CF_INST;
+  bits<1> WHOLE_QUAD_MODE;
+  bits<1> BARRIER;
+
+  let Word1{2-0} = POP_COUNT;
+  let Word1{7-3} = CF_CONST;
+  let Word1{9-8} = COND;
+  let Word1{12-10} = COUNT;
+  let Word1{18-13} = CALL_COUNT;
+  let Word1{19} = COUNT_3;
+  let Word1{21} = END_OF_PROGRAM;
+  let Word1{22} = VALID_PIXEL_MODE;
+  let Word1{29-23} = CF_INST;
+  let Word1{30} = WHOLE_QUAD_MODE;
+  let Word1{31} = BARRIER;
+}
+
+class CF_CLAUSE_R600 <bits<7> inst, dag ins, string AsmPrint> : AMDGPUInst <(outs),
+ins, AsmPrint, [] >, CF_WORD0_R600, CF_WORD1_R600 {
+  field bits<64> Inst;
+
+  let CF_INST = inst;
+  let BARRIER = 1;
+  let CF_CONST = 0;
+  let VALID_PIXEL_MODE = 0;
+  let COND = 0;
+  let CALL_COUNT = 0;
+  let COUNT_3 = 0;
+  let END_OF_PROGRAM = 0;
+  let WHOLE_QUAD_MODE = 0;
+
+  let Inst{31-0} = Word0;
+  let Inst{63-32} = Word1;
+}
+
+class CF_WORD0_EG {
+  field bits<32> Word0;
+
+  bits<24> ADDR;
+  bits<3> JUMPTABLE_SEL;
+
+  let Word0{23-0} = ADDR;
+  let Word0{26-24} = JUMPTABLE_SEL;
+}
+
+class CF_WORD1_EG {
+  field bits<32> Word1;
+
+  bits<3> POP_COUNT;
+  bits<5> CF_CONST;
+  bits<2> COND;
+  bits<6> COUNT;
+  bits<1> VALID_PIXEL_MODE;
+  bits<8> CF_INST;
+  bits<1> BARRIER;
+
+  let Word1{2-0} = POP_COUNT;
+  let Word1{7-3} = CF_CONST;
+  let Word1{9-8} = COND;
+  let Word1{15-10} = COUNT;
+  let Word1{20} = VALID_PIXEL_MODE;
+  let Word1{29-22} = CF_INST;
+  let Word1{31} = BARRIER;
+}
+
+class CF_CLAUSE_EG <bits<8> inst, dag ins, string AsmPrint> : AMDGPUInst <(outs),
+ins, AsmPrint, [] >, CF_WORD0_EG, CF_WORD1_EG {
+  field bits<64> Inst;
+
+  let CF_INST = inst;
+  let BARRIER = 1;
+  let JUMPTABLE_SEL = 0;
+  let CF_CONST = 0;
+  let VALID_PIXEL_MODE = 0;
+  let COND = 0;
+
+  let Inst{31-0} = Word0;
+  let Inst{63-32} = Word1;
+}
+
+def CF_ALU : ALU_CLAUSE<8, "ALU">;
+def CF_ALU_PUSH_BEFORE : ALU_CLAUSE<9, "ALU_PUSH_BEFORE">;
+
+def STACK_SIZE : AMDGPUInst <(outs),
+(ins i32imm:$num), "nstack $num", [] > {
+  field bits<8> Inst;
+  bits<8> num;
+  let Inst = num;
 }
 
 let Predicates = [isR600toCayman] in {
@@ -867,25 +1130,33 @@ def CNDGT_INT : R600_3OP <
 
 def TEX_LD : R600_TEX <
   0x03, "TEX_LD",
-  [(set R600_Reg128:$dst, (int_AMDGPU_txf R600_Reg128:$src0, imm:$src1, imm:$src2, imm:$src3, imm:$resourceId, imm:$samplerId, imm:$textureTarget))]
+  [(set R600_Reg128:$DST_GPR, (int_AMDGPU_txf R600_Reg128:$SRC_GPR,
+      imm:$OFFSET_X, imm:$OFFSET_Y, imm:$OFFSET_Z, imm:$RESOURCE_ID,
+      imm:$SAMPLER_ID, imm:$textureTarget))]
 > {
-let AsmString = "TEX_LD $dst, $src0, $src1, $src2, $src3, $resourceId, $samplerId, $textureTarget";
-let InOperandList = (ins R600_Reg128:$src0, i32imm:$src1, i32imm:$src2, i32imm:$src3, i32imm:$resourceId, i32imm:$samplerId, i32imm:$textureTarget);
+let AsmString = "TEX_LD $DST_GPR, $SRC_GPR, $OFFSET_X, $OFFSET_Y, $OFFSET_Z,"
+    "$RESOURCE_ID, $SAMPLER_ID, $textureTarget";
+let InOperandList = (ins R600_Reg128:$SRC_GPR, i32imm:$OFFSET_X,
+    i32imm:$OFFSET_Y, i32imm:$OFFSET_Z, i32imm:$RESOURCE_ID, i32imm:$SAMPLER_ID,
+    i32imm:$textureTarget);
 }
 
 def TEX_GET_TEXTURE_RESINFO : R600_TEX <
   0x04, "TEX_GET_TEXTURE_RESINFO",
-  [(set R600_Reg128:$dst, (int_AMDGPU_txq R600_Reg128:$src0, imm:$resourceId, imm:$samplerId, imm:$textureTarget))]
+  [(set R600_Reg128:$DST_GPR, (int_AMDGPU_txq R600_Reg128:$SRC_GPR,
+      imm:$RESOURCE_ID, imm:$SAMPLER_ID, imm:$textureTarget))]
 >;
 
 def TEX_GET_GRADIENTS_H : R600_TEX <
   0x07, "TEX_GET_GRADIENTS_H",
-  [(set R600_Reg128:$dst, (int_AMDGPU_ddx R600_Reg128:$src0, imm:$resourceId, imm:$samplerId, imm:$textureTarget))]
+  [(set R600_Reg128:$DST_GPR, (int_AMDGPU_ddx R600_Reg128:$SRC_GPR,
+      imm:$RESOURCE_ID, imm:$SAMPLER_ID, imm:$textureTarget))]
 >;
 
 def TEX_GET_GRADIENTS_V : R600_TEX <
   0x08, "TEX_GET_GRADIENTS_V",
-  [(set R600_Reg128:$dst, (int_AMDGPU_ddy R600_Reg128:$src0, imm:$resourceId, imm:$samplerId, imm:$textureTarget))]
+  [(set R600_Reg128:$DST_GPR, (int_AMDGPU_ddy R600_Reg128:$SRC_GPR,
+      imm:$RESOURCE_ID, imm:$SAMPLER_ID, imm:$textureTarget))]
 >;
 
 def TEX_SET_GRADIENTS_H : R600_TEX <
@@ -900,32 +1171,38 @@ def TEX_SET_GRADIENTS_V : R600_TEX <
 
 def TEX_SAMPLE : R600_TEX <
   0x10, "TEX_SAMPLE",
-  [(set R600_Reg128:$dst, (int_AMDGPU_tex R600_Reg128:$src0, imm:$resourceId, imm:$samplerId, imm:$textureTarget))]
+  [(set R600_Reg128:$DST_GPR, (int_AMDGPU_tex R600_Reg128:$SRC_GPR,
+      imm:$RESOURCE_ID, imm:$SAMPLER_ID, imm:$textureTarget))]
 >;
 
 def TEX_SAMPLE_C : R600_TEX <
   0x18, "TEX_SAMPLE_C",
-  [(set R600_Reg128:$dst, (int_AMDGPU_tex R600_Reg128:$src0, imm:$resourceId, imm:$samplerId, TEX_SHADOW:$textureTarget))]
+  [(set R600_Reg128:$DST_GPR, (int_AMDGPU_tex R600_Reg128:$SRC_GPR,
+      imm:$RESOURCE_ID, imm:$SAMPLER_ID, TEX_SHADOW:$textureTarget))]
 >;
 
 def TEX_SAMPLE_L : R600_TEX <
   0x11, "TEX_SAMPLE_L",
-  [(set R600_Reg128:$dst, (int_AMDGPU_txl R600_Reg128:$src0, imm:$resourceId, imm:$samplerId, imm:$textureTarget))]
+  [(set R600_Reg128:$DST_GPR, (int_AMDGPU_txl R600_Reg128:$SRC_GPR,
+      imm:$RESOURCE_ID, imm:$SAMPLER_ID, imm:$textureTarget))]
 >;
 
 def TEX_SAMPLE_C_L : R600_TEX <
   0x19, "TEX_SAMPLE_C_L",
-  [(set R600_Reg128:$dst, (int_AMDGPU_txl R600_Reg128:$src0, imm:$resourceId, imm:$samplerId, TEX_SHADOW:$textureTarget))]
+  [(set R600_Reg128:$DST_GPR, (int_AMDGPU_txl R600_Reg128:$SRC_GPR,
+      imm:$RESOURCE_ID, imm:$SAMPLER_ID, TEX_SHADOW:$textureTarget))]
 >;
 
 def TEX_SAMPLE_LB : R600_TEX <
   0x12, "TEX_SAMPLE_LB",
-  [(set R600_Reg128:$dst, (int_AMDGPU_txb R600_Reg128:$src0,imm:$resourceId, imm:$samplerId, imm:$textureTarget))]
+  [(set R600_Reg128:$DST_GPR, (int_AMDGPU_txb R600_Reg128:$SRC_GPR,
+      imm:$RESOURCE_ID, imm:$SAMPLER_ID, imm:$textureTarget))]
 >;
 
 def TEX_SAMPLE_C_LB : R600_TEX <
   0x1A, "TEX_SAMPLE_C_LB",
-  [(set R600_Reg128:$dst, (int_AMDGPU_txb R600_Reg128:$src0, imm:$resourceId, imm:$samplerId, TEX_SHADOW:$textureTarget))]
+  [(set R600_Reg128:$DST_GPR, (int_AMDGPU_txb R600_Reg128:$SRC_GPR,
+      imm:$RESOURCE_ID, imm:$SAMPLER_ID, TEX_SHADOW:$textureTarget))]
 >;
 
 def TEX_SAMPLE_G : R600_TEX <
@@ -1148,7 +1425,7 @@ let Predicates = [isR600] in {
     (MUL R600_Reg32:$src, (RECIPSQRT_CLAMPED_r600 R600_Reg32:$src))>;
 
   def R600_ExportSwz : ExportSwzInst {
-    let Word1{20-17} = 1; // BURST_COUNT
+    let Word1{20-17} = 0; // BURST_COUNT
     let Word1{21} = eop;
     let Word1{22} = 1; // VALID_PIXEL_MODE
     let Word1{30-23} = inst;
@@ -1157,13 +1434,59 @@ let Predicates = [isR600] in {
   defm : ExportPattern<R600_ExportSwz, 39>;
 
   def R600_ExportBuf : ExportBufInst {
-    let Word1{20-17} = 1; // BURST_COUNT
+    let Word1{20-17} = 0; // BURST_COUNT
     let Word1{21} = eop;
     let Word1{22} = 1; // VALID_PIXEL_MODE
     let Word1{30-23} = inst;
     let Word1{31} = 1; // BARRIER
   }
   defm : SteamOutputExportPattern<R600_ExportBuf, 0x20, 0x21, 0x22, 0x23>;
+
+  def CF_TC_R600 : CF_CLAUSE_R600<1, (ins i32imm:$ADDR, i32imm:$COUNT),
+  "TEX $COUNT @$ADDR"> {
+    let POP_COUNT = 0;
+  }
+  def CF_VC_R600 : CF_CLAUSE_R600<2, (ins i32imm:$ADDR, i32imm:$COUNT),
+  "VTX $COUNT @$ADDR"> {
+    let POP_COUNT = 0;
+  }
+  def WHILE_LOOP_R600 : CF_CLAUSE_R600<6, (ins i32imm:$ADDR),
+  "LOOP_START_DX10 @$ADDR"> {
+    let POP_COUNT = 0;
+    let COUNT = 0;
+  }
+  def END_LOOP_R600 : CF_CLAUSE_R600<5, (ins i32imm:$ADDR), "END_LOOP @$ADDR"> {
+    let POP_COUNT = 0;
+    let COUNT = 0;
+  }
+  def LOOP_BREAK_R600 : CF_CLAUSE_R600<9, (ins i32imm:$ADDR),
+  "LOOP_BREAK @$ADDR"> {
+    let POP_COUNT = 0;
+    let COUNT = 0;
+  }
+  def CF_CONTINUE_R600 : CF_CLAUSE_R600<8, (ins i32imm:$ADDR),
+  "CONTINUE @$ADDR"> {
+    let POP_COUNT = 0;
+    let COUNT = 0;
+  }
+  def CF_JUMP_R600 : CF_CLAUSE_R600<10, (ins i32imm:$ADDR, i32imm:$POP_COUNT),
+  "JUMP @$ADDR POP:$POP_COUNT"> {
+    let COUNT = 0;
+  }
+  def CF_ELSE_R600 : CF_CLAUSE_R600<13, (ins i32imm:$ADDR, i32imm:$POP_COUNT),
+  "ELSE @$ADDR POP:$POP_COUNT"> {
+    let COUNT = 0;
+  }
+  def CF_CALL_FS_R600 : CF_CLAUSE_R600<19, (ins), "CALL_FS"> {
+    let ADDR = 0;
+    let COUNT = 0;
+    let POP_COUNT = 0;
+  }
+  def POP_R600 : CF_CLAUSE_R600<14, (ins i32imm:$ADDR, i32imm:$POP_COUNT),
+  "POP @$ADDR POP:$POP_COUNT"> {
+    let COUNT = 0;
+  }
+
 }
 
 // Helper pattern for normalizing inputs to triginomic instructions for R700+
@@ -1247,6 +1570,9 @@ let Predicates = [isEGorCayman] in {
     VecALU
   >;
 
+  def BFI_INT_eg : R600_3OP <0x06, "BFI_INT", []>;
+  defm : BFIPatterns <BFI_INT_eg>;
+
   def BIT_ALIGN_INT_eg : R600_3OP <0xC, "BIT_ALIGN_INT",
     [(set R600_Reg32:$dst, (AMDGPUbitalign R600_Reg32:$src0, R600_Reg32:$src1,
                                           R600_Reg32:$src2))],
@@ -1301,7 +1627,7 @@ let hasSideEffects = 1 in {
     (FLT_TO_UINT_eg (TRUNC R600_Reg32:$src0))>;
 
   def EG_ExportSwz : ExportSwzInst {
-    let Word1{19-16} = 1; // BURST_COUNT
+    let Word1{19-16} = 0; // BURST_COUNT
     let Word1{20} = 1; // VALID_PIXEL_MODE
     let Word1{21} = eop;
     let Word1{29-22} = inst;
@@ -1311,7 +1637,7 @@ let hasSideEffects = 1 in {
   defm : ExportPattern<EG_ExportSwz, 83>;
 
   def EG_ExportBuf : ExportBufInst {
-    let Word1{19-16} = 1; // BURST_COUNT
+    let Word1{19-16} = 0; // BURST_COUNT
     let Word1{20} = 1; // VALID_PIXEL_MODE
     let Word1{21} = eop;
     let Word1{29-22} = inst;
@@ -1319,6 +1645,52 @@ let hasSideEffects = 1 in {
     let Word1{31} = 1; // BARRIER
   }
   defm : SteamOutputExportPattern<EG_ExportBuf, 0x40, 0x41, 0x42, 0x43>;
+
+  def CF_TC_EG : CF_CLAUSE_EG<1, (ins i32imm:$ADDR, i32imm:$COUNT),
+  "TEX $COUNT @$ADDR"> {
+    let POP_COUNT = 0;
+  }
+  def CF_VC_EG : CF_CLAUSE_EG<2, (ins i32imm:$ADDR, i32imm:$COUNT),
+  "VTX $COUNT @$ADDR"> {
+    let POP_COUNT = 0;
+  }
+  def WHILE_LOOP_EG : CF_CLAUSE_EG<6, (ins i32imm:$ADDR),
+  "LOOP_START_DX10 @$ADDR"> {
+    let POP_COUNT = 0;
+    let COUNT = 0;
+  }
+  def END_LOOP_EG : CF_CLAUSE_EG<5, (ins i32imm:$ADDR), "END_LOOP @$ADDR"> {
+    let POP_COUNT = 0;
+    let COUNT = 0;
+  }
+  def LOOP_BREAK_EG : CF_CLAUSE_EG<9, (ins i32imm:$ADDR),
+  "LOOP_BREAK @$ADDR"> {
+    let POP_COUNT = 0;
+    let COUNT = 0;
+  }
+  def CF_CONTINUE_EG : CF_CLAUSE_EG<8, (ins i32imm:$ADDR),
+  "CONTINUE @$ADDR"> {
+    let POP_COUNT = 0;
+    let COUNT = 0;
+  }
+  def CF_JUMP_EG : CF_CLAUSE_EG<10, (ins i32imm:$ADDR, i32imm:$POP_COUNT),
+  "JUMP @$ADDR POP:$POP_COUNT"> {
+    let COUNT = 0;
+  }
+  def CF_ELSE_EG : CF_CLAUSE_EG<13, (ins i32imm:$ADDR, i32imm:$POP_COUNT),
+  "ELSE @$ADDR POP:$POP_COUNT"> {
+    let COUNT = 0;
+  }
+  def CF_CALL_FS_EG : CF_CLAUSE_EG<19, (ins), "CALL_FS"> {
+    let ADDR = 0;
+    let COUNT = 0;
+    let POP_COUNT = 0;
+  }
+  def POP_EG : CF_CLAUSE_EG<14, (ins i32imm:$ADDR, i32imm:$POP_COUNT),
+  "POP @$ADDR POP:$POP_COUNT"> {
+    let COUNT = 0;
+  }
+
 
 //===----------------------------------------------------------------------===//
 // Memory read/write instructions
@@ -1556,10 +1928,11 @@ def : COS_PAT <COS_cm>;
 defm DIV_cm : DIV_Common<RECIP_IEEE_cm>;
 
 // RECIP_UINT emulation for Cayman
+// The multiplication scales from [0,1] to the unsigned integer range
 def : Pat <
   (AMDGPUurecip R600_Reg32:$src0),
   (FLT_TO_UINT_eg (MUL_IEEE (RECIP_IEEE_cm (UINT_TO_FLT_eg R600_Reg32:$src0)),
-                            (MOV_IMM_I32 0x4f800000)))
+                            (MOV_IMM_I32 CONST.FP_UINT_MAX_PLUS_1)))
 >;
 
 

@@ -201,7 +201,7 @@ StringRef MCSymbolRefExpr::getVariantKindName(VariantKind Kind) {
   case VK_TPOFF: return "TPOFF";
   case VK_DTPOFF: return "DTPOFF";
   case VK_TLVP: return "TLVP";
-  case VK_SECREL: return "SECREL";
+  case VK_SECREL: return "SECREL32";
   case VK_ARM_NONE: return "(NONE)";
   case VK_ARM_PLT: return "(PLT)";
   case VK_ARM_GOT: return "(GOT)";
@@ -265,6 +265,7 @@ StringRef MCSymbolRefExpr::getVariantKindName(VariantKind Kind) {
   case VK_OR1K_GOTOFFHI: return "gotoffhi";
   case VK_OR1K_GOTOFFLO: return "gotofflo";
   case VK_OR1K_GOT: return "got";
+  case VK_COFF_IMGREL32: return "IMGREL32";
   }
   llvm_unreachable("Invalid variant kind");
 }
@@ -300,6 +301,8 @@ MCSymbolRefExpr::getVariantKindForName(StringRef Name) {
     .Case("dtpoff", VK_DTPOFF)
     .Case("TLVP", VK_TLVP)
     .Case("tlvp", VK_TLVP)
+    .Case("IMGREL", VK_COFF_IMGREL32)
+    .Case("imgrel", VK_COFF_IMGREL32)
     .Default(VK_Invalid);
 }
 

@@ -126,6 +126,8 @@ def FeatureADX     : SubtargetFeature<"adx", "HasADX", "true",
                                       "Support ADX instructions">;
 def FeaturePRFCHW  : SubtargetFeature<"prfchw", "HasPRFCHW", "true",
                                       "Support PRFCHW instructions">;
+def FeatureRDSEED  : SubtargetFeature<"rdseed", "HasRDSEED", "true",
+                                      "Support RDSEED instruction">;
 def FeatureLeaForSP : SubtargetFeature<"lea-sp", "UseLeaForSP", "true",
                                      "Use LEA for adjusting the stack pointer">;
 def FeatureSlowDivide : SubtargetFeature<"idiv-to-divb",
@@ -215,7 +217,7 @@ def : ProcessorModel<"core-avx-i", SandyBridgeModel,
                       FeatureF16C, FeatureFSGSBase]>;
 
 // Haswell
-def : ProcessorModel<"core-avx2", SandyBridgeModel,
+def : ProcessorModel<"core-avx2", HaswellModel,
                      [FeatureAVX2, FeatureCMPXCHG16B, FeatureFastUAMem,
                       FeaturePOPCNT, FeatureAES, FeaturePCLMUL, FeatureRDRAND,
                       FeatureF16C, FeatureFSGSBase, FeatureMOVBE, FeatureLZCNT,
@@ -298,6 +300,9 @@ def ATTAsmParser : AsmParser {
 def ATTAsmParserVariant : AsmParserVariant {
   int Variant = 0;
 
+  // Variant name.
+  string Name = "att";
+
   // Discard comments in assembly strings.
   string CommentDelimiter = "#";
 
@@ -307,6 +312,9 @@ def ATTAsmParserVariant : AsmParserVariant {
 
 def IntelAsmParserVariant : AsmParserVariant {
   int Variant = 1;
+
+  // Variant name.
+  string Name = "intel";
 
   // Discard comments in assembly strings.
   string CommentDelimiter = ";";

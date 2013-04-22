@@ -41,7 +41,7 @@ error_code check(error_code Err) {
 template<class ELFT>
 class DyldELFObject
   : public ELFObjectFile<ELFT> {
-  LLVM_ELF_IMPORT_TYPES(ELFT)
+  LLVM_ELF_IMPORT_TYPES_ELFT(ELFT)
 
   typedef Elf_Shdr_Impl<ELFT> Elf_Shdr;
   typedef Elf_Sym_Impl<ELFT> Elf_Sym;
@@ -617,14 +617,14 @@ void RuntimeDyldELF::processRelocationRef(const ObjRelocationInfo &Rel,
   Symbol.getType(SymType);
   if (lsi != Symbols.end()) {
     Value.SectionID = lsi->second.first;
-    Value.Addend = lsi->second.second;
+    Value.Addend = lsi->second.second + Addend;
   } else {
     // Search for the symbol in the global symbol table
     SymbolTableMap::const_iterator gsi =
         GlobalSymbolTable.find(TargetName.data());
     if (gsi != GlobalSymbolTable.end()) {
       Value.SectionID = gsi->second.first;
-      Value.Addend = gsi->second.second;
+      Value.Addend = gsi->second.second + Addend;
     } else {
       switch (SymType) {
         case SymbolRef::ST_Debug: {

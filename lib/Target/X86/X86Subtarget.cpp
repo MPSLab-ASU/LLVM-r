@@ -37,8 +37,7 @@ using namespace llvm;
 /// ClassifyBlockAddressReference - Classify a blockaddress reference for the
 /// current subtarget according to how we should reference it in a non-pcrel
 /// context.
-unsigned char X86Subtarget::
-ClassifyBlockAddressReference() const {
+unsigned char X86Subtarget::ClassifyBlockAddressReference() const {
   if (isPICStyleGOT())    // 32-bit ELF targets.
     return X86II::MO_GOTOFF;
 
@@ -330,6 +329,14 @@ void X86Subtarget::AutoDetectSubtargetFeatures() {
         HasRTM = true;
         ToggleFeature(X86::FeatureRTM);
       }
+      if (IsIntel && ((EBX >> 19) & 0x1)) {
+        HasADX = true;
+        ToggleFeature(X86::FeatureADX);
+      }
+      if (IsIntel && ((EBX >> 18) & 0x1)) {
+        HasRDSEED = true;
+        ToggleFeature(X86::FeatureRDSEED);
+      }
     }
   }
 }
@@ -450,6 +457,7 @@ void X86Subtarget::initializeEnvironment() {
   HasHLE = false;
   HasADX = false;
   HasPRFCHW = false;
+  HasRDSEED = false;
   IsBTMemSlow = false;
   IsUAMemFast = false;
   HasVectorUAMem = false;

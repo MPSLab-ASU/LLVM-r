@@ -270,7 +270,6 @@ private:
   SDValue PromoteIntOp_EXTRACT_ELEMENT(SDNode *N);
   SDValue PromoteIntOp_EXTRACT_VECTOR_ELT(SDNode *N);
   SDValue PromoteIntOp_CONCAT_VECTORS(SDNode *N);
-  SDValue PromoteIntOp_MEMBARRIER(SDNode *N);
   SDValue PromoteIntOp_SCALAR_TO_VECTOR(SDNode *N);
   SDValue PromoteIntOp_SELECT(SDNode *N, unsigned OpNo);
   SDValue PromoteIntOp_SELECT_CC(SDNode *N, unsigned OpNo);
@@ -465,6 +464,7 @@ private:
   void ExpandFloatRes_FP_EXTEND (SDNode *N, SDValue &Lo, SDValue &Hi);
   void ExpandFloatRes_FPOW      (SDNode *N, SDValue &Lo, SDValue &Hi);
   void ExpandFloatRes_FPOWI     (SDNode *N, SDValue &Lo, SDValue &Hi);
+  void ExpandFloatRes_FREM      (SDNode *N, SDValue &Lo, SDValue &Hi);
   void ExpandFloatRes_FRINT     (SDNode *N, SDValue &Lo, SDValue &Hi);
   void ExpandFloatRes_FSIN      (SDNode *N, SDValue &Lo, SDValue &Hi);
   void ExpandFloatRes_FSQRT     (SDNode *N, SDValue &Lo, SDValue &Hi);

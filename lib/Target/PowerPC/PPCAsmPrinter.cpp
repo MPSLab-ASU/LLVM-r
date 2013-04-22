@@ -721,7 +721,7 @@ void PPCLinuxAsmPrinter::EmitFunctionEntryLabel() {
     return AsmPrinter::EmitFunctionEntryLabel();
     
   // Emit an official procedure descriptor.
-  const MCSection *Current = OutStreamer.getCurrentSection();
+  MCSectionSubPair Current = OutStreamer.getCurrentSection();
   const MCSectionELF *Section = OutStreamer.getContext().getELFSection(".opd",
       ELF::SHT_PROGBITS, ELF::SHF_WRITE | ELF::SHF_ALLOC,
       SectionKind::getReadOnly());
@@ -741,7 +741,7 @@ void PPCLinuxAsmPrinter::EmitFunctionEntryLabel() {
                         8/*size*/);
   // Emit a null environment pointer.
   OutStreamer.EmitIntValue(0, 8 /* size */);
-  OutStreamer.SwitchSection(Current);
+  OutStreamer.SwitchSection(Current.first, Current.second);
 
   MCSymbol *RealFnSym = OutContext.GetOrCreateSymbol(
                           ".L." + Twine(CurrentFnSym->getName()));
@@ -914,7 +914,7 @@ EmitFunctionStubs(const MachineModuleInfoMachO::SymbolListTy &Stubs) {
       // mflr r0
       OutStreamer.EmitInstruction(MCInstBuilder(PPC::MFLR).addReg(PPC::R0));
       // bcl 20, 31, AnonSymbol
-      OutStreamer.EmitInstruction(MCInstBuilder(PPC::BCL).addExpr(Anon));
+      OutStreamer.EmitInstruction(MCInstBuilder(PPC::BCLalways).addExpr(Anon));
       OutStreamer.EmitLabel(AnonSymbol);
       // mflr r11
       OutStreamer.EmitInstruction(MCInstBuilder(PPC::MFLR).addReg(PPC::R11));

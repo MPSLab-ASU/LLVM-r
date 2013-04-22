@@ -243,7 +243,6 @@ namespace {
     SDValue visitCONCAT_VECTORS(SDNode *N);
     SDValue visitEXTRACT_SUBVECTOR(SDNode *N);
     SDValue visitVECTOR_SHUFFLE(SDNode *N);
-    SDValue visitMEMBARRIER(SDNode *N);
 
     SDValue XformToShuffleWithZero(SDNode *N);
     SDValue ReassociateOps(unsigned Opc, DebugLoc DL, SDValue LHS, SDValue RHS);
@@ -1165,7 +1164,6 @@ SDValue DAGCombiner::visit(SDNode *N) {
   case ISD::CONCAT_VECTORS:     return visitCONCAT_VECTORS(N);
   case ISD::EXTRACT_SUBVECTOR:  return visitEXTRACT_SUBVECTOR(N);
   case ISD::VECTOR_SHUFFLE:     return visitVECTOR_SHUFFLE(N);
-  case ISD::MEMBARRIER:         return visitMEMBARRIER(N);
   }
   return SDValue();
 }
@@ -6823,9 +6821,9 @@ SDValue DAGCombiner::visitBRCOND(SDNode *N) {
                              MVT::Other, Chain, Tmp, N2);
         }
 
-        // visitXOR has changed XOR's operands.
-        Op0 = TheXor->getOperand(0);
-        Op1 = TheXor->getOperand(1);
+        // visitXOR has changed XOR's operands or replaced the XOR completely,
+        // bail out.
+        return SDValue(N, 0);
       }
     }
 
@@ -7711,16 +7709,82 @@ SDValue DAGCombiner::TransformFPLoadStorePair(SDNode *N) {
   return SDValue();
 }
 
-/// Returns the base pointer and an integer offset from that object.
-static std::pair<SDValue, int64_t> GetPointerBaseAndOffset(SDValue Ptr) {
-  if (Ptr->getOpcode() == ISD::ADD && isa<ConstantSDNode>(Ptr->getOperand(1))) {
-    int64_t Offset = cast<ConstantSDNode>(Ptr->getOperand(1))->getSExtValue();
-    SDValue Base = Ptr->getOperand(0);
-    return std::make_pair(Base, Offset);
+/// Helper struct to parse and store a memory address as base + index + offset.
+/// We ignore sign extensions when it is safe to do so.
+/// The following two expressions are not equivalent. To differentiate we need
+/// to store whether there was a sign extension involved in the index
+/// computation.
+///  (load (i64 add (i64 copyfromreg %c)
+///                 (i64 signextend (add (i8 load %index)
+///                                      (i8 1))))
+/// vs
+///
+/// (load (i64 add (i64 copyfromreg %c)
+///                (i64 signextend (i32 add (i32 signextend (i8 load %index))
+///                                         (i32 1)))))
+struct BaseIndexOffset {
+  SDValue Base;
+  SDValue Index;
+  int64_t Offset;
+  bool IsIndexSignExt;
+
+  BaseIndexOffset() : Offset(0), IsIndexSignExt(false) {}
+
+  BaseIndexOffset(SDValue Base, SDValue Index, int64_t Offset,
+                  bool IsIndexSignExt) :
+    Base(Base), Index(Index), Offset(Offset), IsIndexSignExt(IsIndexSignExt) {}
+
+  bool equalBaseIndex(const BaseIndexOffset &Other) {
+    return Other.Base == Base && Other.Index == Index &&
+      Other.IsIndexSignExt == IsIndexSignExt;
   }
 
-  return std::make_pair(Ptr, 0);
-}
+  /// Parses tree in Ptr for base, index, offset addresses.
+  static BaseIndexOffset match(SDValue Ptr) {
+    bool IsIndexSignExt = false;
+
+    // Just Base or possibly anything else.
+    if (Ptr->getOpcode() != ISD::ADD)
+      return BaseIndexOffset(Ptr, SDValue(), 0, IsIndexSignExt);
+
+    // Base + offset.
+    if (isa<ConstantSDNode>(Ptr->getOperand(1))) {
+      int64_t Offset = cast<ConstantSDNode>(Ptr->getOperand(1))->getSExtValue();
+      return  BaseIndexOffset(Ptr->getOperand(0), SDValue(), Offset,
+                              IsIndexSignExt);
+    }
+
+    // Look at Base + Index + Offset cases.
+    SDValue Base = Ptr->getOperand(0);
+    SDValue IndexOffset = Ptr->getOperand(1);
+
+    // Skip signextends.
+    if (IndexOffset->getOpcode() == ISD::SIGN_EXTEND) {
+      IndexOffset = IndexOffset->getOperand(0);
+      IsIndexSignExt = true;
+    }
+
+    // Either the case of Base + Index (no offset) or something else.
+    if (IndexOffset->getOpcode() != ISD::ADD)
+      return BaseIndexOffset(Base, IndexOffset, 0, IsIndexSignExt);
+
+    // Now we have the case of Base + Index + offset.
+    SDValue Index = IndexOffset->getOperand(0);
+    SDValue Offset = IndexOffset->getOperand(1);
+
+    if (!isa<ConstantSDNode>(Offset))
+      return BaseIndexOffset(Ptr, SDValue(), 0, IsIndexSignExt);
+
+    // Ignore signextends.
+    if (Index->getOpcode() == ISD::SIGN_EXTEND) {
+      Index = Index->getOperand(0);
+      IsIndexSignExt = true;
+    } else IsIndexSignExt = false;
+
+    int64_t Off = cast<ConstantSDNode>(Offset)->getSExtValue();
+    return BaseIndexOffset(Base, Index, Off, IsIndexSignExt);
+  }
+};
 
 /// Holds a pointer to an LSBaseSDNode as well as information on where it
 /// is located in a sequence of memory operations connected by a chain.
@@ -7767,16 +7831,16 @@ bool DAGCombiner::MergeConsecutiveStores(StoreSDNode* St) {
   if (Chain->hasOneUse() && Chain->use_begin()->getOpcode() == ISD::STORE)
     return false;
 
-  // This holds the base pointer and the offset in bytes from the base pointer.
-  std::pair<SDValue, int64_t> BasePtr =
-      GetPointerBaseAndOffset(St->getBasePtr());
+  // This holds the base pointer, index, and the offset in bytes from the base
+  // pointer.
+  BaseIndexOffset BasePtr = BaseIndexOffset::match(St->getBasePtr());
 
   // We must have a base and an offset.
-  if (!BasePtr.first.getNode())
+  if (!BasePtr.Base.getNode())
     return false;
 
   // Do not handle stores to undef base pointers.
-  if (BasePtr.first.getOpcode() == ISD::UNDEF)
+  if (BasePtr.Base.getOpcode() == ISD::UNDEF)
     return false;
 
   // Save the LoadSDNodes that we find in the chain.
@@ -7798,11 +7862,10 @@ bool DAGCombiner::MergeConsecutiveStores(StoreSDNode* St) {
       break;
 
     // Find the base pointer and offset for this memory node.
-    std::pair<SDValue, int64_t> Ptr =
-      GetPointerBaseAndOffset(Index->getBasePtr());
+    BaseIndexOffset Ptr = BaseIndexOffset::match(Index->getBasePtr());
 
     // Check that the base pointer is the same as the original one.
-    if (Ptr.first.getNode() != BasePtr.first.getNode())
+    if (!Ptr.equalBaseIndex(BasePtr))
       break;
 
     // Check that the alignment is the same.
@@ -7828,7 +7891,7 @@ bool DAGCombiner::MergeConsecutiveStores(StoreSDNode* St) {
       break;
 
     // We found a potential memory operand to merge.
-    StoreNodes.push_back(MemOpLink(Index, Ptr.second, Seq++));
+    StoreNodes.push_back(MemOpLink(Index, Ptr.Offset, Seq++));
 
     // Find the next memory operand in the chain. If the next operand in the
     // chain is a store then move up and continue the scan with the next
@@ -7915,6 +7978,14 @@ bool DAGCombiner::MergeConsecutiveStores(StoreSDNode* St) {
       EVT StoreTy = EVT::getIntegerVT(*DAG.getContext(), StoreBW);
       if (TLI.isTypeLegal(StoreTy))
         LastLegalType = i+1;
+      // Or check whether a truncstore is legal.
+      else if (TLI.getTypeAction(*DAG.getContext(), StoreTy) ==
+               TargetLowering::TypePromoteInteger) {
+        EVT LegalizedStoredValueTy =
+          TLI.getTypeToTransformTo(*DAG.getContext(), StoredVal.getValueType());
+        if (TLI.isTruncStoreLegal(LegalizedStoredValueTy, StoreTy))
+          LastLegalType = i+1;
+      }
 
       // Find a legal type for the vector store.
       EVT Ty = EVT::getVectorVT(*DAG.getContext(), MemVT, i+1);
@@ -8025,7 +8096,7 @@ bool DAGCombiner::MergeConsecutiveStores(StoreSDNode* St) {
 
   // Find acceptable loads. Loads need to have the same chain (token factor),
   // must not be zext, volatile, indexed, and they must be consecutive.
-  SDValue LdBasePtr;
+  BaseIndexOffset LdBasePtr;
   for (unsigned i=0; i<LastConsecutiveStore+1; ++i) {
     StoreSDNode *St  = cast<StoreSDNode>(StoreNodes[i].MemNode);
     LoadSDNode *Ld = dyn_cast<LoadSDNode>(St->getValue());
@@ -8051,21 +8122,19 @@ bool DAGCombiner::MergeConsecutiveStores(StoreSDNode* St) {
     if (Ld->getMemoryVT() != MemVT)
       break;
 
-    std::pair<SDValue, int64_t> LdPtr =
-    GetPointerBaseAndOffset(Ld->getBasePtr());
-
+    BaseIndexOffset LdPtr = BaseIndexOffset::match(Ld->getBasePtr());
     // If this is not the first ptr that we check.
-    if (LdBasePtr.getNode()) {
+    if (LdBasePtr.Base.getNode()) {
       // The base ptr must be the same.
-      if (LdPtr.first != LdBasePtr)
+      if (!LdPtr.equalBaseIndex(LdBasePtr))
         break;
     } else {
       // Check that all other base pointers are the same as this one.
-      LdBasePtr = LdPtr.first;
+      LdBasePtr = LdPtr;
     }
 
     // We found a potential memory operand to merge.
-    LoadNodes.push_back(MemOpLink(Ld, LdPtr.second, 0));
+    LoadNodes.push_back(MemOpLink(Ld, LdPtr.Offset, 0));
   }
 
   if (LoadNodes.size() < 2)
@@ -8100,6 +8169,17 @@ bool DAGCombiner::MergeConsecutiveStores(StoreSDNode* St) {
     StoreTy = EVT::getIntegerVT(*DAG.getContext(), StoreBW);
     if (TLI.isTypeLegal(StoreTy))
       LastLegalIntegerType = i + 1;
+    // Or check whether a truncstore and extload is legal.
+    else if (TLI.getTypeAction(*DAG.getContext(), StoreTy) ==
+             TargetLowering::TypePromoteInteger) {
+      EVT LegalizedStoredValueTy =
+        TLI.getTypeToTransformTo(*DAG.getContext(), StoreTy);
+      if (TLI.isTruncStoreLegal(LegalizedStoredValueTy, StoreTy) &&
+          TLI.isLoadExtLegal(ISD::ZEXTLOAD, StoreTy) &&
+          TLI.isLoadExtLegal(ISD::SEXTLOAD, StoreTy) &&
+          TLI.isLoadExtLegal(ISD::EXTLOAD, StoreTy))
+        LastLegalIntegerType = i+1;
+    }
   }
 
   // Only use vector types if the vector type is larger than the integer type.
@@ -9043,6 +9123,44 @@ SDValue DAGCombiner::visitEXTRACT_SUBVECTOR(SDNode* N) {
   return SDValue();
 }
 
+// Tries to turn a shuffle of two CONCAT_VECTORS into a single concat.
+static SDValue partitionShuffleOfConcats(SDNode *N, SelectionDAG &DAG) {
+  EVT VT = N->getValueType(0);
+  unsigned NumElts = VT.getVectorNumElements();
+
+  SDValue N0 = N->getOperand(0);
+  SDValue N1 = N->getOperand(1);
+  ShuffleVectorSDNode *SVN = cast<ShuffleVectorSDNode>(N);
+
+  SmallVector<SDValue, 4> Ops;
+  EVT ConcatVT = N0.getOperand(0).getValueType();
+  unsigned NumElemsPerConcat = ConcatVT.getVectorNumElements();
+  unsigned NumConcats = NumElts / NumElemsPerConcat;
+
+  // Look at every vector that's inserted. We're looking for exact
+  // subvector-sized copies from a concatenated vector
+  for (unsigned I = 0; I != NumConcats; ++I) {
+    // Make sure we're dealing with a copy.
+    unsigned Begin = I * NumElemsPerConcat;
+    if (SVN->getMaskElt(Begin) % NumElemsPerConcat != 0)
+      return SDValue();
+
+    for (unsigned J = 1; J != NumElemsPerConcat; ++J) {
+      if (SVN->getMaskElt(Begin + J - 1) + 1 != SVN->getMaskElt(Begin + J))
+        return SDValue();
+    }
+
+    unsigned FirstElt = SVN->getMaskElt(Begin) / NumElemsPerConcat;
+    if (FirstElt < N0.getNumOperands())
+      Ops.push_back(N0.getOperand(FirstElt));
+    else
+      Ops.push_back(N1.getOperand(FirstElt - N0.getNumOperands()));
+  }
+
+  return DAG.getNode(ISD::CONCAT_VECTORS, N->getDebugLoc(), VT, Ops.data(),
+                     Ops.size());
+}
+
 SDValue DAGCombiner::visitVECTOR_SHUFFLE(SDNode *N) {
   EVT VT = N->getValueType(0);
   unsigned NumElts = VT.getVectorNumElements();
@@ -9144,6 +9262,17 @@ SDValue DAGCombiner::visitVECTOR_SHUFFLE(SDNode *N) {
     }
   }
 
+  if (N0.getOpcode() == ISD::CONCAT_VECTORS &&
+      Level < AfterLegalizeVectorOps &&
+      (N1.getOpcode() == ISD::UNDEF ||
+      (N1.getOpcode() == ISD::CONCAT_VECTORS &&
+       N0.getOperand(0).getValueType() == N1.getOperand(0).getValueType()))) {
+    SDValue V = partitionShuffleOfConcats(N, DAG);
+
+    if (V.getNode())
+      return V;
+  }
+
   // If this shuffle node is simply a swizzle of another shuffle node,
   // and it reverses the swizzle of the previous shuffle then we can
   // optimize shuffle(shuffle(x, undef), undef) -> x.
@@ -9178,59 +9307,6 @@ SDValue DAGCombiner::visitVECTOR_SHUFFLE(SDNode *N) {
   }
 
   return SDValue();
-}
-
-SDValue DAGCombiner::visitMEMBARRIER(SDNode* N) {
-  if (!TLI.getShouldFoldAtomicFences())
-    return SDValue();
-
-  SDValue atomic = N->getOperand(0);
-  switch (atomic.getOpcode()) {
-    case ISD::ATOMIC_CMP_SWAP:
-    case ISD::ATOMIC_SWAP:
-    case ISD::ATOMIC_LOAD_ADD:
-    case ISD::ATOMIC_LOAD_SUB:
-    case ISD::ATOMIC_LOAD_AND:
-    case ISD::ATOMIC_LOAD_OR:
-    case ISD::ATOMIC_LOAD_XOR:
-    case ISD::ATOMIC_LOAD_NAND:
-    case ISD::ATOMIC_LOAD_MIN:
-    case ISD::ATOMIC_LOAD_MAX:
-    case ISD::ATOMIC_LOAD_UMIN:
-    case ISD::ATOMIC_LOAD_UMAX:
-      break;
-    default:
-      return SDValue();
-  }
-
-  SDValue fence = atomic.getOperand(0);
-  if (fence.getOpcode() != ISD::MEMBARRIER)
-    return SDValue();
-
-  switch (atomic.getOpcode()) {
-    case ISD::ATOMIC_CMP_SWAP:
-      return SDValue(DAG.UpdateNodeOperands(atomic.getNode(),
-                                    fence.getOperand(0),
-                                    atomic.getOperand(1), atomic.getOperand(2),
-                                    atomic.getOperand(3)), atomic.getResNo());
-    case ISD::ATOMIC_SWAP:
-    case ISD::ATOMIC_LOAD_ADD:
-    case ISD::ATOMIC_LOAD_SUB:
-    case ISD::ATOMIC_LOAD_AND:
-    case ISD::ATOMIC_LOAD_OR:
-    case ISD::ATOMIC_LOAD_XOR:
-    case ISD::ATOMIC_LOAD_NAND:
-    case ISD::ATOMIC_LOAD_MIN:
-    case ISD::ATOMIC_LOAD_MAX:
-    case ISD::ATOMIC_LOAD_UMIN:
-    case ISD::ATOMIC_LOAD_UMAX:
-      return SDValue(DAG.UpdateNodeOperands(atomic.getNode(),
-                                    fence.getOperand(0),
-                                    atomic.getOperand(1), atomic.getOperand(2)),
-                     atomic.getResNo());
-    default:
-      return SDValue();
-  }
 }
 
 /// XformToShuffleWithZero - Returns a vector_shuffle if it able to transform

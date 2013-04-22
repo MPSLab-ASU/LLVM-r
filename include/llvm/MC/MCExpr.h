@@ -225,7 +225,9 @@ public:
     VK_OR1K_GOTPCHI,
     VK_OR1K_GOTPCLO,
     VK_OR1K_GOTOFFHI,
-    VK_OR1K_GOTOFFLO
+    VK_OR1K_GOTOFFLO,
+
+    VK_COFF_IMGREL32 // symbol@imgrel (image-relative)
   };
 
 private:

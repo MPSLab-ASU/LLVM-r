@@ -1002,14 +1002,6 @@ HexagonTargetLowering::LowerFRAMEADDR(SDValue Op, SelectionDAG &DAG) const {
   return FrameAddr;
 }
 
-
-SDValue HexagonTargetLowering::LowerMEMBARRIER(SDValue Op,
-                                               SelectionDAG& DAG) const {
-  DebugLoc dl = Op.getDebugLoc();
-  return DAG.getNode(HexagonISD::BARRIER, dl, MVT::Other,  Op.getOperand(0));
-}
-
-
 SDValue HexagonTargetLowering::LowerATOMIC_FENCE(SDValue Op,
                                                  SelectionDAG& DAG) const {
   DebugLoc dl = Op.getDebugLoc();
@@ -1370,12 +1362,13 @@ HexagonTargetLowering::HexagonTargetLowering(HexagonTargetMachine
     // Increase jump tables cutover to 5, was 4.
     setMinimumJumpTableEntries(5);
 
+    setOperationAction(ISD::BR_CC, MVT::Other, Expand);
     setOperationAction(ISD::BR_CC, MVT::f32, Expand);
     setOperationAction(ISD::BR_CC, MVT::f64, Expand);
     setOperationAction(ISD::BR_CC, MVT::i1,  Expand);
     setOperationAction(ISD::BR_CC, MVT::i32, Expand);
+    setOperationAction(ISD::BR_CC, MVT::i64, Expand);
 
-    setOperationAction(ISD::MEMBARRIER, MVT::Other, Custom);
     setOperationAction(ISD::ATOMIC_FENCE, MVT::Other, Custom);
 
     setOperationAction(ISD::FSIN , MVT::f64, Expand);
@@ -1527,7 +1520,6 @@ HexagonTargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
     case ISD::FRAMEADDR:          return LowerFRAMEADDR(Op, DAG);
     case ISD::GlobalTLSAddress:
                           llvm_unreachable("TLS not implemented for Hexagon.");
-    case ISD::MEMBARRIER:         return LowerMEMBARRIER(Op, DAG);
     case ISD::ATOMIC_FENCE:       return LowerATOMIC_FENCE(Op, DAG);
     case ISD::GlobalAddress:      return LowerGLOBALADDRESS(Op, DAG);
     case ISD::BlockAddress:       return LowerBlockAddress(Op, DAG);
