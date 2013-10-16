@@ -37,13 +37,11 @@ using namespace llvm;
 ///
 namespace {
   class XCoreDAGToDAGISel : public SelectionDAGISel {
-    const XCoreTargetLowering &Lowering;
     const XCoreSubtarget &Subtarget;
 
   public:
     XCoreDAGToDAGISel(XCoreTargetMachine &TM, CodeGenOpt::Level OptLevel)
       : SelectionDAGISel(TM, OptLevel),
-        Lowering(*TM.getTargetLowering()), 
         Subtarget(*TM.getSubtargetImpl()) { }
 
     SDNode *Select(SDNode *N);
@@ -61,15 +59,13 @@ namespace {
       if (!isMask_32(value)) {
         return false;
       }
-      int msksize = 32 - CountLeadingZeros_32(value);
+      int msksize = 32 - countLeadingZeros(value);
       return (msksize >= 1 && msksize <= 8) ||
               msksize == 16 || msksize == 24 || msksize == 32;
     }
 
     // Complex Pattern Selectors.
     bool SelectADDRspii(SDValue Addr, SDValue &Base, SDValue &Offset);
-    bool SelectADDRdpii(SDValue Addr, SDValue &Base, SDValue &Offset);
-    bool SelectADDRcpii(SDValue Addr, SDValue &Base, SDValue &Offset);
     
     virtual const char *getPassName() const {
       return "XCore DAG->DAG Pattern Instruction Selection";
@@ -110,50 +106,8 @@ bool XCoreDAGToDAGISel::SelectADDRspii(SDValue Addr, SDValue &Base,
   return false;
 }
 
-bool XCoreDAGToDAGISel::SelectADDRdpii(SDValue Addr, SDValue &Base,
-                                       SDValue &Offset) {
-  if (Addr.getOpcode() == XCoreISD::DPRelativeWrapper) {
-    Base = Addr.getOperand(0);
-    Offset = CurDAG->getTargetConstant(0, MVT::i32);
-    return true;
-  }
-  if (Addr.getOpcode() == ISD::ADD) {
-    ConstantSDNode *CN = 0;
-    if ((Addr.getOperand(0).getOpcode() == XCoreISD::DPRelativeWrapper)
-      && (CN = dyn_cast<ConstantSDNode>(Addr.getOperand(1)))
-      && (CN->getSExtValue() % 4 == 0 && CN->getSExtValue() >= 0)) {
-      // Constant word offset from a object in the data region
-      Base = Addr.getOperand(0).getOperand(0);
-      Offset = CurDAG->getTargetConstant(CN->getSExtValue(), MVT::i32);
-      return true;
-    }
-  }
-  return false;
-}
-
-bool XCoreDAGToDAGISel::SelectADDRcpii(SDValue Addr, SDValue &Base,
-                                       SDValue &Offset) {
-  if (Addr.getOpcode() == XCoreISD::CPRelativeWrapper) {
-    Base = Addr.getOperand(0);
-    Offset = CurDAG->getTargetConstant(0, MVT::i32);
-    return true;
-  }
-  if (Addr.getOpcode() == ISD::ADD) {
-    ConstantSDNode *CN = 0;
-    if ((Addr.getOperand(0).getOpcode() == XCoreISD::CPRelativeWrapper)
-      && (CN = dyn_cast<ConstantSDNode>(Addr.getOperand(1)))
-      && (CN->getSExtValue() % 4 == 0 && CN->getSExtValue() >= 0)) {
-      // Constant word offset from a object in the data region
-      Base = Addr.getOperand(0).getOperand(0);
-      Offset = CurDAG->getTargetConstant(CN->getSExtValue(), MVT::i32);
-      return true;
-    }
-  }
-  return false;
-}
-
 SDNode *XCoreDAGToDAGISel::Select(SDNode *N) {
-  DebugLoc dl = N->getDebugLoc();
+  SDLoc dl(N);
   switch (N->getOpcode()) {
   default: break;
   case ISD::Constant: {
@@ -161,7 +115,7 @@ SDNode *XCoreDAGToDAGISel::Select(SDNode *N) {
     if (immMskBitp(N)) {
       // Transformation function: get the size of a mask
       // Look for the first non-zero bit
-      SDValue MskSize = getI32Imm(32 - CountLeadingZeros_32(Val));
+      SDValue MskSize = getI32Imm(32 - countLeadingZeros((uint32_t)Val));
       return CurDAG->getMachineNode(XCore::MKMSK_rus, dl,
                                     MVT::i32, MskSize);
     }
@@ -169,7 +123,7 @@ SDNode *XCoreDAGToDAGISel::Select(SDNode *N) {
       SDValue CPIdx =
         CurDAG->getTargetConstantPool(ConstantInt::get(
                               Type::getInt32Ty(*CurDAG->getContext()), Val),
-                                      TLI.getPointerTy());
+                                      getTargetLowering()->getPointerTy());
       SDNode *node = CurDAG->getMachineNode(XCore::LDWCP_lru6, dl, MVT::i32,
                                             MVT::Other, CPIdx,
                                             CurDAG->getEntryNode());
@@ -248,12 +202,12 @@ replaceInChain(SelectionDAG *CurDAG, SDValue Chain, SDValue Old, SDValue New)
   }
   if (!found)
     return SDValue();
-  return CurDAG->getNode(ISD::TokenFactor, Chain->getDebugLoc(), MVT::Other,
+  return CurDAG->getNode(ISD::TokenFactor, SDLoc(Chain), MVT::Other,
                          &Ops[0], Ops.size());
 }
 
 SDNode *XCoreDAGToDAGISel::SelectBRIND(SDNode *N) {
-  DebugLoc dl = N->getDebugLoc();
+  SDLoc dl(N);
   // (brind (int_xcore_checkevent (addr)))
   SDValue Chain = N->getOperand(0);
   SDValue Addr = N->getOperand(1);

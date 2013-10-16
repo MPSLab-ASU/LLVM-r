@@ -17,6 +17,7 @@
 #include "llvm-c/lto.h"
 #include "llvm/ADT/OwningPtr.h"
 #include "llvm/Support/Errno.h"
+#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/Program.h"
@@ -64,7 +65,7 @@ namespace {
   lto_codegen_model output_type = LTO_CODEGEN_PIC_MODEL_STATIC;
   std::string output_name = "";
   std::list<claimed_file> Modules;
-  std::vector<sys::Path> Cleanup;
+  std::vector<std::string> Cleanup;
   lto_code_gen_t code_gen = NULL;
 }
 
@@ -196,7 +197,7 @@ ld_plugin_status onload(ld_plugin_tv *tv) {
       case LDPT_ADD_SYMBOLS:
         add_symbols = tv->tv_u.tv_add_symbols;
         break;
-      case LDPT_GET_SYMBOLS:
+      case LDPT_GET_SYMBOLS_V2:
         get_symbols = tv->tv_u.tv_get_symbols;
         break;
       case LDPT_ADD_INPUT_FILE:
@@ -251,9 +252,8 @@ static ld_plugin_status claim_file_hook(const ld_plugin_input_file *file,
     if (file->offset) {
       offset = file->offset;
     }
-    if (error_code ec =
-        MemoryBuffer::getOpenFile(file->fd, file->name, buffer, file->filesize,
-                                  -1, offset, false)) {
+    if (error_code ec = MemoryBuffer::getOpenFileSlice(
+            file->fd, file->name, buffer, file->filesize, offset)) {
       (*message)(LDPL_ERROR, ec.message().c_str());
       return LDPS_ERR;
     }
@@ -386,6 +386,11 @@ static ld_plugin_status all_symbols_read_hook(void) {
 
         if (options::generate_api_file)
           api_file << I->syms[i].name << "\n";
+      } else if (I->syms[i].resolution == LDPR_PREVAILING_DEF_IRONLY_EXP) {
+        lto_codegen_add_dso_symbol(code_gen, I->syms[i].name);
+
+        if (options::generate_api_file)
+          api_file << I->syms[i].name << " dso only\n";
       }
     }
   }
@@ -417,8 +422,10 @@ static ld_plugin_status all_symbols_read_hook(void) {
     bool err = lto_codegen_write_merged_modules(code_gen, path.c_str());
     if (err)
       (*message)(LDPL_FATAL, "Failed to write the output file.");
-    if (options::generate_bc_file == options::BC_ONLY)
+    if (options::generate_bc_file == options::BC_ONLY) {
+      lto_codegen_dispose(code_gen);
       exit(0);
+    }
   }
   const char *objPath;
   if (lto_codegen_compile_to_file(code_gen, &objPath)) {
@@ -447,18 +454,18 @@ static ld_plugin_status all_symbols_read_hook(void) {
   }
 
   if (options::obj_path.empty())
-    Cleanup.push_back(sys::Path(objPath));
+    Cleanup.push_back(objPath);
 
   return LDPS_OK;
 }
 
 static ld_plugin_status cleanup_hook(void) {
-  std::string ErrMsg;
-
-  for (int i = 0, e = Cleanup.size(); i != e; ++i)
-    if (Cleanup[i].eraseFromDisk(false, &ErrMsg))
+  for (int i = 0, e = Cleanup.size(); i != e; ++i) {
+    error_code EC = sys::fs::remove(Cleanup[i]);
+    if (EC)
       (*message)(LDPL_ERROR, "Failed to delete '%s': %s", Cleanup[i].c_str(),
-                 ErrMsg.c_str());
+                 EC.message().c_str());
+  }
 
   return LDPS_OK;
 }

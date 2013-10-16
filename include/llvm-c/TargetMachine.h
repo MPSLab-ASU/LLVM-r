@@ -25,7 +25,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-typedef struct LLVMTargetMachine *LLVMTargetMachineRef;
+typedef struct LLVMOpaqueTargetMachine *LLVMTargetMachineRef;
 typedef struct LLVMTarget *LLVMTargetRef;
 
 typedef enum {
@@ -57,7 +57,7 @@ typedef enum {
 } LLVMCodeGenFileType;
 
 /** Returns the first llvm::Target in the registered targets list. */
-LLVMTargetRef LLVMGetFirstTarget();
+LLVMTargetRef LLVMGetFirstTarget(void);
 /** Returns the next llvm::Target given a previous one (or null if there's none) */
 LLVMTargetRef LLVMGetNextTarget(LLVMTargetRef T);
 
@@ -117,29 +117,7 @@ LLVMBool LLVMTargetMachineEmitToFile(LLVMTargetMachineRef T, LLVMModuleRef M,
 /** Compile the LLVM IR stored in \p M and store the result in \p OutMemBuf. */
 LLVMBool LLVMTargetMachineEmitToMemoryBuffer(LLVMTargetMachineRef T, LLVMModuleRef M,
   LLVMCodeGenFileType codegen, char** ErrorMessage, LLVMMemoryBufferRef *OutMemBuf);
-
-
-
 #ifdef __cplusplus
-}
-
-namespace llvm {
-  class TargetMachine;
-  class Target;
-
-  inline TargetMachine *unwrap(LLVMTargetMachineRef P) {
-    return reinterpret_cast<TargetMachine*>(P);
-  }
-  inline Target *unwrap(LLVMTargetRef P) {
-    return reinterpret_cast<Target*>(P);
-  }
-  inline LLVMTargetMachineRef wrap(const TargetMachine *P) {
-    return reinterpret_cast<LLVMTargetMachineRef>(
-      const_cast<TargetMachine*>(P));
-  }
-  inline LLVMTargetRef wrap(const Target * P) {
-    return reinterpret_cast<LLVMTargetRef>(const_cast<Target*>(P));
-  }
 }
 #endif
 

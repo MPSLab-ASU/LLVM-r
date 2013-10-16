@@ -85,18 +85,17 @@ public:
   /// This is one of the functions used to emit data into an ELF section, so the
   /// AArch64 streamer overrides it to add the appropriate mapping symbol ($d)
   /// if necessary.
-  virtual void EmitBytes(StringRef Data, unsigned AddrSpace) {
+  virtual void EmitBytes(StringRef Data) {
     EmitDataMappingSymbol();
-    MCELFStreamer::EmitBytes(Data, AddrSpace);
+    MCELFStreamer::EmitBytes(Data);
   }
 
   /// This is one of the functions used to emit data into an ELF section, so the
   /// AArch64 streamer overrides it to add the appropriate mapping symbol ($d)
   /// if necessary.
-  virtual void EmitValueImpl(const MCExpr *Value, unsigned Size,
-                             unsigned AddrSpace) {
+  virtual void EmitValueImpl(const MCExpr *Value, unsigned Size) {
     EmitDataMappingSymbol();
-    MCELFStreamer::EmitValueImpl(Value, Size, AddrSpace);
+    MCELFStreamer::EmitValueImpl(Value, Size);
   }
 
 private:
@@ -130,7 +129,7 @@ private:
     MCELF::SetType(SD, ELF::STT_NOTYPE);
     MCELF::SetBinding(SD, ELF::STB_LOCAL);
     SD.setExternal(false);
-    Symbol->setSection(*getCurrentSection().first);
+    AssignSection(Symbol, getCurrentSection().first);
 
     const MCExpr *Value = MCSymbolRefExpr::Create(Start, getContext());
     Symbol->setVariableValue(Value);

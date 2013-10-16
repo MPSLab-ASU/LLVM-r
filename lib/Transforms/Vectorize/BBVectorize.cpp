@@ -356,7 +356,7 @@ namespace {
                      Instruction *J, unsigned o, bool IBeforeJ);
 
     void getReplacementInputsForPair(LLVMContext& Context, Instruction *I,
-                     Instruction *J, SmallVector<Value *, 3> &ReplacedOperands,
+                     Instruction *J, SmallVectorImpl<Value *> &ReplacedOperands,
                      bool IBeforeJ);
 
     void replaceOutputsOfPair(LLVMContext& Context, Instruction *I,
@@ -533,7 +533,7 @@ namespace {
       default: break;
       case Instruction::GetElementPtr:
         // We mark this instruction as zero-cost because scalar GEPs are usually
-        // lowered to the intruction addressing mode. At the moment we don't
+        // lowered to the instruction addressing mode. At the moment we don't
         // generate vector GEPs.
         return 0;
       case Instruction::Br:
@@ -1182,6 +1182,8 @@ namespace {
       // Look for an instruction with which to pair instruction *I...
       DenseSet<Value *> Users;
       AliasSetTracker WriteSet(*AA);
+      if (I->mayWriteToMemory()) WriteSet.add(I);
+
       bool JAfterStart = IAfterStart;
       BasicBlock::iterator J = llvm::next(I);
       for (unsigned ss = 0; J != E && ss <= Config.SearchLimit; ++J, ++ss) {
@@ -1403,6 +1405,8 @@ namespace {
 
       DenseSet<Value *> Users;
       AliasSetTracker WriteSet(*AA);
+      if (I->mayWriteToMemory()) WriteSet.add(I);
+
       for (BasicBlock::iterator J = llvm::next(I); J != E; ++J) {
         (void) trackUsesOfI(Users, WriteSet, I, J);
 
@@ -1602,7 +1606,7 @@ namespace {
         DenseSet<ValuePair> CurrentPairs;
 
         bool CanAdd = true;
-        for (SmallVector<ValuePairWithDepth, 8>::iterator C2
+        for (SmallVectorImpl<ValuePairWithDepth>::iterator C2
               = BestChildren.begin(), E2 = BestChildren.end();
              C2 != E2; ++C2) {
           if (C2->first.first == C->first.first ||
@@ -1642,7 +1646,7 @@ namespace {
         if (!CanAdd) continue;
 
         // And check the queue too...
-        for (SmallVector<ValuePairWithDepth, 32>::iterator C2 = Q.begin(),
+        for (SmallVectorImpl<ValuePairWithDepth>::iterator C2 = Q.begin(),
              E2 = Q.end(); C2 != E2; ++C2) {
           if (C2->first.first == C->first.first ||
               C2->first.first == C->first.second ||
@@ -1691,7 +1695,7 @@ namespace {
         // to an already-selected child. Check for this here, and if a
         // conflict is found, then remove the previously-selected child
         // before adding this one in its place.
-        for (SmallVector<ValuePairWithDepth, 8>::iterator C2
+        for (SmallVectorImpl<ValuePairWithDepth>::iterator C2
               = BestChildren.begin(); C2 != BestChildren.end();) {
           if (C2->first.first == C->first.first ||
               C2->first.first == C->first.second ||
@@ -1706,7 +1710,7 @@ namespace {
         BestChildren.push_back(ValuePairWithDepth(C->first, C->second));
       }
 
-      for (SmallVector<ValuePairWithDepth, 8>::iterator C
+      for (SmallVectorImpl<ValuePairWithDepth>::iterator C
             = BestChildren.begin(), E2 = BestChildren.end();
            C != E2; ++C) {
         size_t DepthF = getDepthFactor(C->first.first);
@@ -2340,6 +2344,12 @@ namespace {
     return ExpandedIEChain;
   }
 
+  static unsigned getNumScalarElements(Type *Ty) {
+    if (VectorType *VecTy = dyn_cast<VectorType>(Ty))
+      return VecTy->getNumElements();
+    return 1;
+  }
+
   // Returns the value to be used as the specified operand of the vector
   // instruction that fuses I with J.
   Value *BBVectorize::getReplacementInput(LLVMContext& Context, Instruction *I,
@@ -2355,17 +2365,8 @@ namespace {
     Instruction *L = I, *H = J;
     Type *ArgTypeL = ArgTypeI, *ArgTypeH = ArgTypeJ;
 
-    unsigned numElemL;
-    if (ArgTypeL->isVectorTy())
-      numElemL = cast<VectorType>(ArgTypeL)->getNumElements();
-    else
-      numElemL = 1;
-
-    unsigned numElemH;
-    if (ArgTypeH->isVectorTy())
-      numElemH = cast<VectorType>(ArgTypeH)->getNumElements();
-    else
-      numElemH = 1;
+    unsigned numElemL = getNumScalarElements(ArgTypeL);
+    unsigned numElemH = getNumScalarElements(ArgTypeH);
 
     Value *LOp = L->getOperand(o);
     Value *HOp = H->getOperand(o);
@@ -2687,7 +2688,7 @@ namespace {
   // to the vector instruction that fuses I with J.
   void BBVectorize::getReplacementInputsForPair(LLVMContext& Context,
                      Instruction *I, Instruction *J,
-                     SmallVector<Value *, 3> &ReplacedOperands,
+                     SmallVectorImpl<Value *> &ReplacedOperands,
                      bool IBeforeJ) {
     unsigned NumOperands = I->getNumOperands();
 
@@ -2746,16 +2747,8 @@ namespace {
       VectorType *VType = getVecTypeForPair(IType, JType);
       unsigned numElem = VType->getNumElements();
 
-      unsigned numElemI, numElemJ;
-      if (IType->isVectorTy())
-        numElemI = cast<VectorType>(IType)->getNumElements();
-      else
-        numElemI = 1;
-
-      if (JType->isVectorTy())
-        numElemJ = cast<VectorType>(JType)->getNumElements();
-      else
-        numElemJ = 1;
+      unsigned numElemI = getNumScalarElements(IType);
+      unsigned numElemJ = getNumScalarElements(JType);
 
       if (IType->isVectorTy()) {
         std::vector<Constant*> Mask1(numElemI), Mask2(numElemI);
@@ -2804,6 +2797,8 @@ namespace {
 
     DenseSet<Value *> Users;
     AliasSetTracker WriteSet(*AA);
+    if (I->mayWriteToMemory()) WriteSet.add(I);
+
     for (; cast<Instruction>(L) != J; ++L)
       (void) trackUsesOfI(Users, WriteSet, I, L, true, &LoadMoveSetPairs);
 
@@ -2824,6 +2819,8 @@ namespace {
 
     DenseSet<Value *> Users;
     AliasSetTracker WriteSet(*AA);
+    if (I->mayWriteToMemory()) WriteSet.add(I);
+
     for (; cast<Instruction>(L) != J;) {
       if (trackUsesOfI(Users, WriteSet, I, L, true, &LoadMoveSetPairs)) {
         // Move this instruction
@@ -2853,6 +2850,7 @@ namespace {
 
     DenseSet<Value *> Users;
     AliasSetTracker WriteSet(*AA);
+    if (I->mayWriteToMemory()) WriteSet.add(I);
 
     // Note: We cannot end the loop when we reach J because J could be moved
     // farther down the use chain by another instruction pairing. Also, J

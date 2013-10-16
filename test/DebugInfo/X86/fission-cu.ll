@@ -6,7 +6,7 @@
 
 !llvm.dbg.cu = !{!0}
 
-!0 = metadata !{i32 786449, metadata !8, i32 12, metadata !"clang version 3.3 (trunk 169021) (llvm/trunk 169020)", i1 false, metadata !"", i32 0, metadata !1, metadata !1, metadata !1, metadata !3, metadata !"baz.dwo"} ; [ DW_TAG_compile_unit ] [/usr/local/google/home/echristo/tmp/baz.c] [DW_LANG_C99]
+!0 = metadata !{i32 786449, metadata !8, i32 12, metadata !"clang version 3.3 (trunk 169021) (llvm/trunk 169020)", i1 false, metadata !"", i32 0, metadata !1, metadata !1, metadata !1, metadata !3,  metadata !3, metadata !"baz.dwo"} ; [ DW_TAG_compile_unit ] [/usr/local/google/home/echristo/tmp/baz.c] [DW_LANG_C99]
 !1 = metadata !{i32 0}
 !3 = metadata !{metadata !5}
 !5 = metadata !{i32 786484, i32 0, null, metadata !"a", metadata !"a", metadata !"", metadata !6, i32 1, metadata !7, i32 0, i32 1, i32* @a, null} ; [ DW_TAG_variable ] [a] [line 1] [def]
@@ -23,20 +23,20 @@
 ; CHECK: Abbrev table for offset: 0x00000000
 ; CHECK: [1] DW_TAG_compile_unit DW_CHILDREN_no
 ; CHECK: DW_AT_GNU_dwo_name      DW_FORM_strp
-; CHECK: DW_AT_GNU_dwo_id        DW_FORM_data8
 ; CHECK: DW_AT_GNU_addr_base     DW_FORM_sec_offset
 ; CHECK: DW_AT_low_pc    DW_FORM_addr
 ; CHECK: DW_AT_stmt_list DW_FORM_sec_offset
 ; CHECK: DW_AT_comp_dir  DW_FORM_strp
+; CHECK: DW_AT_GNU_dwo_id        DW_FORM_data8
 
 ; CHECK: .debug_info contents:
 ; CHECK: DW_TAG_compile_unit
 ; CHECK: DW_AT_GNU_dwo_name [DW_FORM_strp] ( .debug_str[0x00000000] = "baz.dwo")
-; CHECK: DW_AT_GNU_dwo_id [DW_FORM_data8]  (0x0000000000000000)
 ; CHECK: DW_AT_GNU_addr_base [DW_FORM_sec_offset]                   (0x00000000)
 ; CHECK: DW_AT_low_pc [DW_FORM_addr]       (0x0000000000000000)
 ; CHECK: DW_AT_stmt_list [DW_FORM_sec_offset]   (0x00000000)
 ; CHECK: DW_AT_comp_dir [DW_FORM_strp]     ( .debug_str[0x00000008] = "/usr/local/google/home/echristo/tmp")
+; CHECK: DW_AT_GNU_dwo_id [DW_FORM_data8]  (0x0000000000000000)
 
 ; CHECK: .debug_str contents:
 ; CHECK: 0x00000000: "baz.dwo"

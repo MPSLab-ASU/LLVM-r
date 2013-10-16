@@ -84,6 +84,11 @@ void ARMInstPrinter::printInst(const MCInst *MI, raw_ostream &O,
     case 2: O << "\twfe"; break;
     case 3: O << "\twfi"; break;
     case 4: O << "\tsev"; break;
+    case 5:
+      if ((getAvailableFeatures() & ARM::HasV8Ops)) {
+        O << "\tsevl";
+        break;
+      } // Fallthrough for non-v8
     default:
       // Anything else should just print normally.
       printInstruction(MI, O);
@@ -243,24 +248,16 @@ void ARMInstPrinter::printInst(const MCInst *MI, raw_ostream &O,
     return;
   }
 
-  // Thumb1 NOP
-  if (Opcode == ARM::tMOVr && MI->getOperand(0).getReg() == ARM::R8 &&
-      MI->getOperand(1).getReg() == ARM::R8) {
-    O << "\tnop";
-    printPredicateOperand(MI, 2, O);
-    printAnnotation(O, Annot);
-    return;
-  }
-
   // Combine 2 GPRs from disassember into a GPRPair to match with instr def.
   // ldrexd/strexd require even/odd GPR pair. To enforce this constraint,
   // a single GPRPair reg operand is used in the .td file to replace the two
   // GPRs. However, when decoding them, the two GRPs cannot be automatically
   // expressed as a GPRPair, so we have to manually merge them.
   // FIXME: We would really like to be able to tablegen'erate this.
-  if (Opcode == ARM::LDREXD || Opcode == ARM::STREXD) {
+  if (Opcode == ARM::LDREXD || Opcode == ARM::STREXD ||
+      Opcode == ARM::LDAEXD || Opcode == ARM::STLEXD) {
     const MCRegisterClass& MRC = MRI.getRegClass(ARM::GPRRegClassID);
-    bool isStore = Opcode == ARM::STREXD;
+    bool isStore = Opcode == ARM::STREXD || Opcode == ARM::STLEXD;
     unsigned Reg = MI->getOperand(isStore ? 1 : 0).getReg();
     if (MRC.contains(Reg)) {
       MCInst NewMI;
@@ -315,15 +312,29 @@ void ARMInstPrinter::printOperand(const MCInst *MI, unsigned OpNo,
 void ARMInstPrinter::printThumbLdrLabelOperand(const MCInst *MI, unsigned OpNum,
                                                raw_ostream &O) {
   const MCOperand &MO1 = MI->getOperand(OpNum);
-  if (MO1.isExpr())
+  if (MO1.isExpr()) {
     O << *MO1.getExpr();
-  else if (MO1.isImm()) {
-    O << markup("<mem:") << "[pc, "
-      << markup("<imm:") << "#" << formatImm(MO1.getImm())
-      << markup(">]>", "]");
+    return;
   }
-  else
-    llvm_unreachable("Unknown LDR label operand?");
+
+  O << markup("<mem:") << "[pc, ";
+
+  int32_t OffImm = (int32_t)MO1.getImm();
+  bool isSub = OffImm < 0;
+
+  // Special value for #-0. All others are normal.
+  if (OffImm == INT32_MIN)
+    OffImm = 0;
+  if (isSub) {
+    O << markup("<imm:")
+      << "#-" << formatImm(-OffImm)
+      << markup(">");
+  } else {
+    O << markup("<imm:")
+      << "#" << formatImm(OffImm)
+      << markup(">");
+  }
+  O << "]" << markup(">");
 }
 
 // so_reg is a 4-operand unit corresponding to register forms of the A5.1
@@ -660,8 +671,8 @@ void ARMInstPrinter::printBitfieldInvMaskImmOperand(const MCInst *MI,
                                                     raw_ostream &O) {
   const MCOperand &MO = MI->getOperand(OpNum);
   uint32_t v = ~MO.getImm();
-  int32_t lsb = CountTrailingZeros_32(v);
-  int32_t width = (32 - CountLeadingZeros_32 (v)) - lsb;
+  int32_t lsb = countTrailingZeros(v);
+  int32_t width = (32 - countLeadingZeros (v)) - lsb;
   assert(MO.isImm() && "Not a valid bf_inv_mask_imm value!");
   O << markup("<imm:") << '#' << lsb << markup(">")
     << ", "
@@ -671,7 +682,13 @@ void ARMInstPrinter::printBitfieldInvMaskImmOperand(const MCInst *MI,
 void ARMInstPrinter::printMemBOption(const MCInst *MI, unsigned OpNum,
                                      raw_ostream &O) {
   unsigned val = MI->getOperand(OpNum).getImm();
-  O << ARM_MB::MemBOptToString(val);
+  O << ARM_MB::MemBOptToString(val, (getAvailableFeatures() & ARM::HasV8Ops));
+}
+
+void ARMInstPrinter::printInstSyncBOption(const MCInst *MI, unsigned OpNum,
+                                          raw_ostream &O) {
+  unsigned val = MI->getOperand(OpNum).getImm();
+  O << ARM_ISB::InstSyncBOptToString(val);
 }
 
 void ARMInstPrinter::printShiftImmOperand(const MCInst *MI, unsigned OpNum,
@@ -889,6 +906,7 @@ void ARMInstPrinter::printPCLabel(const MCInst *MI, unsigned OpNum,
   llvm_unreachable("Unhandled PC-relative pseudo-instruction!");
 }
 
+template<unsigned scale>
 void ARMInstPrinter::printAdrLabelOperand(const MCInst *MI, unsigned OpNum,
                                   raw_ostream &O) {
   const MCOperand &MO = MI->getOperand(OpNum);
@@ -898,7 +916,7 @@ void ARMInstPrinter::printAdrLabelOperand(const MCInst *MI, unsigned OpNum,
     return;
   }
 
-  int32_t OffImm = (int32_t)MO.getImm();
+  int32_t OffImm = (int32_t)MO.getImm() << scale;
 
   O << markup("<imm:");
   if (OffImm == INT32_MIN)
@@ -931,7 +949,7 @@ void ARMInstPrinter::printThumbITMask(const MCInst *MI, unsigned OpNum,
   unsigned Mask = MI->getOperand(OpNum).getImm();
   unsigned Firstcond = MI->getOperand(OpNum-1).getImm();
   unsigned CondBit0 = Firstcond & 1;
-  unsigned NumTZ = CountTrailingZeros_32(Mask);
+  unsigned NumTZ = countTrailingZeros(Mask);
   assert(NumTZ <= 3 && "Invalid IT mask!");
   for (unsigned Pos = 3, e = NumTZ; Pos > e; --Pos) {
     bool T = ((Mask >> Pos) & 1) == CondBit0;
@@ -1059,6 +1077,7 @@ void ARMInstPrinter::printAddrModeImm12Operand(const MCInst *MI, unsigned OpNum,
   O << "]" << markup(">");
 }
 
+template<bool AlwaysPrintImm0>
 void ARMInstPrinter::printT2AddrModeImm8Operand(const MCInst *MI,
                                                 unsigned OpNum,
                                                 raw_ostream &O) {
@@ -1069,22 +1088,25 @@ void ARMInstPrinter::printT2AddrModeImm8Operand(const MCInst *MI,
   printRegName(O, MO1.getReg());
 
   int32_t OffImm = (int32_t)MO2.getImm();
+  bool isSub = OffImm < 0;
   // Don't print +0.
-  if (OffImm != 0)
-    O << ", ";
-  if (OffImm != 0 && UseMarkup)
-    O << "<imm:";
   if (OffImm == INT32_MIN)
-    O << "#-0";
-  else if (OffImm < 0)
-    O << "#-" << -OffImm;
-  else if (OffImm > 0)
-    O << "#" << OffImm;
-  if (OffImm != 0 && UseMarkup)
-    O << ">";
+    OffImm = 0;
+  if (isSub) {
+    O << ", "
+      << markup("<imm:")
+      << "#-" << -OffImm
+      << markup(">");
+  } else if (AlwaysPrintImm0 || OffImm > 0) {
+    O << ", "
+      << markup("<imm:")
+      << "#" << OffImm
+      << markup(">");
+  }
   O << "]" << markup(">");
 }
 
+template<bool AlwaysPrintImm0>
 void ARMInstPrinter::printT2AddrModeImm8s4Operand(const MCInst *MI,
                                                   unsigned OpNum,
                                                   raw_ostream &O) {
@@ -1100,22 +1122,24 @@ void ARMInstPrinter::printT2AddrModeImm8s4Operand(const MCInst *MI,
   printRegName(O, MO1.getReg());
 
   int32_t OffImm = (int32_t)MO2.getImm();
+  bool isSub = OffImm < 0;
 
   assert(((OffImm & 0x3) == 0) && "Not a valid immediate!");
 
   // Don't print +0.
-  if (OffImm != 0)
-    O << ", ";
-  if (OffImm != 0 && UseMarkup)
-    O << "<imm:";
   if (OffImm == INT32_MIN)
-    O << "#-0";
-  else if (OffImm < 0)
-    O << "#-" << -OffImm;
-  else if (OffImm > 0)
-    O << "#" << OffImm;
-  if (OffImm != 0 && UseMarkup)
-    O << ">";
+    OffImm = 0;
+  if (isSub) {
+    O << ", "
+      << markup("<imm:")
+      << "#-" << -OffImm
+      << markup(">");
+  } else if (AlwaysPrintImm0 || OffImm > 0) {
+    O << ", "
+      << markup("<imm:")
+      << "#" << OffImm
+      << markup(">");
+  }
   O << "]" << markup(">");
 }
 
@@ -1142,7 +1166,9 @@ void ARMInstPrinter::printT2AddrModeImm8OffsetOperand(const MCInst *MI,
   const MCOperand &MO1 = MI->getOperand(OpNum);
   int32_t OffImm = (int32_t)MO1.getImm();
   O << ", " << markup("<imm:");
-  if (OffImm < 0)
+  if (OffImm == INT32_MIN)
+    O << "#-0";
+  else if (OffImm < 0)
     O << "#-" << -OffImm;
   else
     O << "#" << OffImm;
@@ -1157,19 +1183,14 @@ void ARMInstPrinter::printT2AddrModeImm8s4OffsetOperand(const MCInst *MI,
 
   assert(((OffImm & 0x3) == 0) && "Not a valid immediate!");
 
-  // Don't print +0.
-  if (OffImm != 0)
-    O << ", ";
-  if (OffImm != 0 && UseMarkup)
-    O << "<imm:";
+  O << ", " << markup("<imm:");
   if (OffImm == INT32_MIN)
     O << "#-0";
   else if (OffImm < 0)
     O << "#-" << -OffImm;
-  else if (OffImm > 0)
+  else
     O << "#" << OffImm;
-  if (OffImm != 0 && UseMarkup)
-    O << ">";
+  O << markup(">");
 }
 
 void ARMInstPrinter::printT2AddrModeSoRegOperand(const MCInst *MI,

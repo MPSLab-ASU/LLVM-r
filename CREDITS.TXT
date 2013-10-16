@@ -300,6 +300,7 @@ D: Added STI Cell SPU backend.
 N: Kai Nacke
 E: kai@redstar.de
 D: Support for implicit TLS model used with MS VC runtime
+D: Dumping of Win64 EH structures
 
 N: Takumi Nakamura
 E: geek4civic@gmail.com
@@ -428,10 +429,11 @@ D: ARM backend improvements
 D: Thread Local Storage implementation
 
 N: Bill Wendling
-E: wendling@apple.com
-D: Release manager
+I: wendling
+E: isanbard@gmail.com
+D: Release manager, IR Linker, LTO
 D: Bunches of stuff
 
 N: Bob Wilson
 E: bob.wilson@acm.org
-D: Advanced SIMD (NEON) support in the ARM backend
+D: Advanced SIMD (NEON) support in the ARM backend.

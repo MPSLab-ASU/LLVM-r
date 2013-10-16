@@ -7,7 +7,7 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file implements the auto-upgrade helper functions 
+// This file implements the auto-upgrade helper functions
 //
 //===----------------------------------------------------------------------===//
 
@@ -55,14 +55,14 @@ static bool UpgradeIntrinsicFunction1(Function *F, Function *&NewFn) {
   case 'a': {
     if (Name.startswith("arm.neon.vclz")) {
       Type* args[2] = {
-        F->arg_begin()->getType(), 
+        F->arg_begin()->getType(),
         Type::getInt1Ty(F->getContext())
       };
       // Can't use Intrinsic::getDeclaration here as it adds a ".i1" to
       // the end of the name. Change name from llvm.arm.neon.vclz.* to
       //  llvm.ctlz.*
       FunctionType* fType = FunctionType::get(F->getReturnType(), args, false);
-      NewFn = Function::Create(fType, F->getLinkage(), 
+      NewFn = Function::Create(fType, F->getLinkage(),
                                "llvm.ctlz." + Name.substr(14), F->getParent());
       return true;
     }
@@ -369,8 +369,8 @@ void llvm::UpgradeIntrinsicCall(CallInst *CI, Function *NewFn) {
   }
 }
 
-// This tests each Function to determine if it needs upgrading. When we find 
-// one we are interested in, we then upgrade all calls to reflect the new 
+// This tests each Function to determine if it needs upgrading. When we find
+// one we are interested in, we then upgrade all calls to reflect the new
 // function.
 void llvm::UpgradeCallsToIntrinsic(Function* F) {
   assert(F && "Illegal attempt to upgrade a non-existent intrinsic.");
@@ -391,3 +391,30 @@ void llvm::UpgradeCallsToIntrinsic(Function* F) {
   }
 }
 
+void llvm::UpgradeInstWithTBAATag(Instruction *I) {
+  MDNode *MD = I->getMetadata(LLVMContext::MD_tbaa);
+  assert(MD && "UpgradeInstWithTBAATag should have a TBAA tag");
+  // Check if the tag uses struct-path aware TBAA format.
+  if (isa<MDNode>(MD->getOperand(0)) && MD->getNumOperands() >= 3)
+    return;
+
+  if (MD->getNumOperands() == 3) {
+    Value *Elts[] = {
+      MD->getOperand(0),
+      MD->getOperand(1)
+    };
+    MDNode *ScalarType = MDNode::get(I->getContext(), Elts);
+    // Create a MDNode <ScalarType, ScalarType, offset 0, const>
+    Value *Elts2[] = {
+      ScalarType, ScalarType,
+      Constant::getNullValue(Type::getInt64Ty(I->getContext())),
+      MD->getOperand(2)
+    };
+    I->setMetadata(LLVMContext::MD_tbaa, MDNode::get(I->getContext(), Elts2));
+  } else {
+    // Create a MDNode <MD, MD, offset 0>
+    Value *Elts[] = {MD, MD,
+      Constant::getNullValue(Type::getInt64Ty(I->getContext()))};
+    I->setMetadata(LLVMContext::MD_tbaa, MDNode::get(I->getContext(), Elts));
+  }
+}

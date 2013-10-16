@@ -22,7 +22,7 @@ namespace llvm {
   
   class OR1KMCAsmInfo : public MCAsmInfo {
   public:
-    explicit OR1KMCAsmInfo(const Target &T, StringRef TT);
+    explicit OR1KMCAsmInfo(StringRef TT);
   };
 
 } // namespace llvm

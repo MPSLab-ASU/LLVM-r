@@ -15,6 +15,7 @@
 #include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCInst.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/TargetRegistry.h"
 using namespace llvm;
 
@@ -51,7 +52,8 @@ class OR1KAsmParser : public MCTargetAsmParser {
 #include "OR1KGenAsmMatcher.inc"
 
 public:
-  OR1KAsmParser(MCSubtargetInfo &sti, MCAsmParser &_Parser)
+  OR1KAsmParser(MCSubtargetInfo &sti, MCAsmParser &_Parser,
+                const MCInstrInfo &MII)
     : MCTargetAsmParser(), Parser(_Parser), STI(sti) {
       setAvailableFeatures(ComputeAvailableFeatures(STI.getFeatureBits()));
   }

@@ -14,7 +14,7 @@
 #include "OR1KMCAsmInfo.h"
 using namespace llvm;
 
-OR1KMCAsmInfo::OR1KMCAsmInfo(const Target &T, StringRef TT) {
+OR1KMCAsmInfo::OR1KMCAsmInfo(StringRef TT) {
   IsLittleEndian = false;
   PrivateGlobalPrefix         = ".L";
   WeakRefDirective            = "\t.weak\t";

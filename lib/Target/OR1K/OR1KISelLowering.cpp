@@ -172,7 +172,7 @@ SDValue OR1KTargetLowering::LowerOperation(SDValue Op,
 std::pair<unsigned, const TargetRegisterClass*>
 OR1KTargetLowering::
 getRegForInlineAsmConstraint(const std::string &Constraint,
-                             EVT VT) const {
+                             MVT VT) const {
   if (Constraint.size() == 1) {
     // GCC Constraint Letters
     switch (Constraint[0]) {
@@ -336,7 +336,7 @@ OR1KTargetLowering::LowerFormalArguments(SDValue Chain,
                                          bool isVarArg,
                                          const SmallVectorImpl<ISD::InputArg>
                                          &Ins,
-                                         DebugLoc dl,
+                                         SDLoc dl,
                                          SelectionDAG &DAG,
                                          SmallVectorImpl<SDValue> &InVals)
                                            const {
@@ -354,7 +354,7 @@ SDValue
 OR1KTargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
                               SmallVectorImpl<SDValue> &InVals) const {
   SelectionDAG &DAG                     = CLI.DAG;
-  DebugLoc &dl                          = CLI.DL;
+  SDLoc &dl                             = CLI.DL;
   SmallVector<ISD::OutputArg, 32> &Outs = CLI.Outs;
   SmallVector<SDValue, 32> &OutVals     = CLI.OutVals;
   SmallVector<ISD::InputArg, 32> &Ins   = CLI.Ins;
@@ -385,7 +385,7 @@ OR1KTargetLowering::LowerCCCArguments(SDValue Chain,
                                       bool isVarArg,
                                       const SmallVectorImpl<ISD::InputArg>
                                       &Ins,
-                                      DebugLoc dl,
+                                      SDLoc dl,
                                       SelectionDAG &DAG,
                                       SmallVectorImpl<SDValue> &InVals) const {
   MachineFunction &MF = DAG.getMachineFunction();
@@ -485,7 +485,7 @@ OR1KTargetLowering::LowerReturn(SDValue Chain,
                                 CallingConv::ID CallConv, bool isVarArg,
                                 const SmallVectorImpl<ISD::OutputArg> &Outs,
                                 const SmallVectorImpl<SDValue> &OutVals,
-                                DebugLoc dl, SelectionDAG &DAG) const {
+                                SDLoc dl, SelectionDAG &DAG) const {
 
   // CCValAssign - represent the assignment of the return value to a location
   SmallVector<CCValAssign, 16> RVLocs;
@@ -550,7 +550,7 @@ OR1KTargetLowering::LowerCCCCallTo(SDValue Chain, SDValue Callee,
                                    &Outs,
                                    const SmallVectorImpl<SDValue> &OutVals,
                                    const SmallVectorImpl<ISD::InputArg> &Ins,
-                                   DebugLoc dl, SelectionDAG &DAG,
+                                   SDLoc dl, SelectionDAG &DAG,
                                    SmallVectorImpl<SDValue> &InVals) const {
   // Analyze operands of the call, assigning locations to each operand.
   SmallVector<CCValAssign, 16> ArgLocs;
@@ -597,7 +597,7 @@ OR1KTargetLowering::LowerCCCCallTo(SDValue Chain, SDValue Callee,
   }
 
   Chain = DAG.getCALLSEQ_START(Chain, DAG.getConstant(NumBytes,
-                                                      getPointerTy(), true));
+                                                      getPointerTy(), true), dl);
 
   SmallVector<std::pair<unsigned, SDValue>, 4> RegsToPass;
   SmallVector<SDValue, 12> MemOpChains;
@@ -708,7 +708,7 @@ OR1KTargetLowering::LowerCCCCallTo(SDValue Chain, SDValue Callee,
   Chain = DAG.getCALLSEQ_END(Chain,
                              DAG.getConstant(NumBytes, getPointerTy(), true),
                              DAG.getConstant(0, getPointerTy(), true),
-                             InFlag);
+                             InFlag, dl);
   InFlag = Chain.getValue(1);
 
   // Handle result values, copying them out of physregs into vregs that we
@@ -724,7 +724,7 @@ SDValue
 OR1KTargetLowering::LowerCallResult(SDValue Chain, SDValue InFlag,
                                     CallingConv::ID CallConv, bool isVarArg,
                                     const SmallVectorImpl<ISD::InputArg> &Ins,
-                                    DebugLoc dl, SelectionDAG &DAG,
+                                    SDLoc dl, SelectionDAG &DAG,
                                     SmallVectorImpl<SDValue> &InVals) const {
 
   // Assign locations to each value returned by this call.
@@ -796,7 +796,8 @@ SDValue OR1KTargetLowering::LowerBR_CC(SDValue Op,
   SDValue LHS   = Op.getOperand(2);
   SDValue RHS   = Op.getOperand(3);
   SDValue Dest  = Op.getOperand(4);
-  DebugLoc dl   = Op.getDebugLoc();
+  //DebugLoc dl   = Op.getDebugLoc();
+  SDLoc dl(Op);
 
   // FIXME: This could probably be done more efficiently
   switch (CC) {
@@ -830,7 +831,8 @@ SDValue OR1KTargetLowering::LowerSELECT_CC(SDValue Op,
   SDValue TrueV  = Op.getOperand(2);
   SDValue FalseV = Op.getOperand(3);
   ISD::CondCode CC = cast<CondCodeSDNode>(Op.getOperand(4))->get();
-  DebugLoc dl    = Op.getDebugLoc();
+  //DebugLoc dl    = Op.getDebugLoc();
+  SDLoc dl(Op);
 
   // FIXME: This could probably be done more efficiently
   switch (CC) {
@@ -869,7 +871,8 @@ SDValue OR1KTargetLowering::LowerVASTART(SDValue Op, SelectionDAG &DAG) const {
   MachineFunction &MF = DAG.getMachineFunction();
   OR1KMachineFunctionInfo *FuncInfo = MF.getInfo<OR1KMachineFunctionInfo>();
 
-  DebugLoc dl = Op.getDebugLoc();
+  //DebugLoc dl = Op.getDebugLoc();
+  SDLoc dl(Op);
   SDValue FI = DAG.getFrameIndex(FuncInfo->getVarArgsFrameIndex(),
                                  getPointerTy());
 
@@ -885,7 +888,8 @@ OR1KTargetLowering::LowerDYNAMIC_STACKALLOC(SDValue Op,
                                             SelectionDAG &DAG) const {
   SDValue Chain = Op.getOperand(0);
   SDValue Size = Op.getOperand(1);
-  DebugLoc dl = Op.getDebugLoc();
+  //DebugLoc dl = Op.getDebugLoc();
+  SDLoc dl(Op);
 
   unsigned SPReg = getStackPointerRegisterToSaveRestore();
 
@@ -924,7 +928,8 @@ OR1KTargetLowering::LowerDYNAMIC_STACKALLOC(SDValue Op,
 SDValue
 OR1KTargetLowering::LowerCTTZ(SDValue Op,
                               SelectionDAG &DAG) const {
-  DebugLoc dl = Op.getDebugLoc();
+  //DebugLoc dl = Op.getDebugLoc();
+  SDLoc dl(Op);
   EVT VT = Op.getValueType();
   SDValue SrcReg = Op.getOperand(0);
   SDValue ZeroUndef = LowerCTTZ_ZERO_UNDEF(Op, DAG);
@@ -941,7 +946,8 @@ OR1KTargetLowering::LowerCTTZ(SDValue Op,
 SDValue
 OR1KTargetLowering::LowerCTLZ(SDValue Op,
                               SelectionDAG &DAG) const {
-  DebugLoc dl = Op.getDebugLoc();
+  //DebugLoc dl = Op.getDebugLoc();
+  SDLoc dl(Op);
   EVT VT = Op.getValueType();
   SDValue fl1 = DAG.getNode(OR1KISD::FL1, dl, VT, Op.getOperand(0));
   return DAG.getNode(ISD::SUB, dl, VT,
@@ -954,7 +960,8 @@ OR1KTargetLowering::LowerCTLZ(SDValue Op,
 SDValue
 OR1KTargetLowering::LowerCTTZ_ZERO_UNDEF(SDValue Op,
                                          SelectionDAG &DAG) const {
-  DebugLoc dl = Op.getDebugLoc();
+  //DebugLoc dl = Op.getDebugLoc();
+  SDLoc dl(Op);
   EVT VT = Op.getValueType();
   SDValue ff1 = DAG.getNode(OR1KISD::FF1, dl, VT, Op.getOperand(0));
   return DAG.getNode(ISD::SUB, dl, VT, ff1, DAG.getConstant(1, MVT::i32));
@@ -968,7 +975,8 @@ OR1KTargetLowering::LowerRETURNADDR(SDValue Op, SelectionDAG &DAG) const {
   MFI->setReturnAddressIsTaken(true);
 
   EVT VT = Op.getValueType();
-  DebugLoc dl = Op.getDebugLoc();
+  //DebugLoc dl = Op.getDebugLoc();
+  SDLoc dl(Op);
   unsigned Depth = cast<ConstantSDNode>(Op.getOperand(0))->getZExtValue();
   if (Depth) {
     SDValue FrameAddr = LowerFRAMEADDR(Op, DAG);
@@ -990,7 +998,8 @@ OR1KTargetLowering::LowerFRAMEADDR(SDValue Op, SelectionDAG &DAG) const {
   MFI->setFrameAddressIsTaken(true);
 
   EVT VT = Op.getValueType();
-  DebugLoc dl = Op.getDebugLoc();
+  //DebugLoc dl = Op.getDebugLoc();
+  SDLoc dl(Op);
   unsigned Depth = cast<ConstantSDNode>(Op.getOperand(0))->getZExtValue();
   SDValue FrameAddr = DAG.getCopyFromReg(DAG.getEntryNode(), dl, OR1K::R2, VT);
   while (Depth--)
@@ -1019,7 +1028,8 @@ const char *OR1KTargetLowering::getTargetNodeName(unsigned Opcode) const {
 
 SDValue OR1KTargetLowering::LowerConstantPool(SDValue Op,
                                               SelectionDAG &DAG) const {
-  DebugLoc dl = Op.getDebugLoc();
+  //DebugLoc dl = Op.getDebugLoc();
+  SDLoc dl(Op);
   ConstantPoolSDNode *N = cast<ConstantPoolSDNode>(Op);
   const Constant *C = N->getConstVal();
   bool IsPIC = getTargetMachine().getRelocationModel() == Reloc::PIC_;
@@ -1041,7 +1051,8 @@ SDValue OR1KTargetLowering::LowerConstantPool(SDValue Op,
 
 SDValue OR1KTargetLowering::LowerGlobalAddress(SDValue Op,
                                                SelectionDAG &DAG) const {
-  DebugLoc dl = Op.getDebugLoc();
+  //DebugLoc dl = Op.getDebugLoc();
+  SDLoc dl(Op);
   const GlobalValue *GV = cast<GlobalAddressSDNode>(Op)->getGlobal();
   int64_t Offset = cast<GlobalAddressSDNode>(Op)->getOffset();
   bool IsPIC = getTargetMachine().getRelocationModel() == Reloc::PIC_;
@@ -1072,7 +1083,8 @@ SDValue OR1KTargetLowering::LowerGlobalAddress(SDValue Op,
 
 SDValue OR1KTargetLowering::LowerBlockAddress(SDValue Op,
                                               SelectionDAG &DAG) const {
-  DebugLoc dl = Op.getDebugLoc();
+  //DebugLoc dl = Op.getDebugLoc();
+  SDLoc dl(Op);
   const BlockAddress *BA = cast<BlockAddressSDNode>(Op)->getBlockAddress();
   bool IsPIC = getTargetMachine().getRelocationModel() == Reloc::PIC_;
   uint8_t OpFlagHi = IsPIC ? OR1KII::MO_GOTOFFHI : OR1KII::MO_ABS_HI;
@@ -1091,7 +1103,7 @@ SDValue OR1KTargetLowering::LowerBlockAddress(SDValue Op,
 
 SDValue OR1KTargetLowering::LowerJumpTable(SDValue Op,
                                            SelectionDAG &DAG) const {
-  DebugLoc dl = Op.getDebugLoc();
+  SDLoc dl(Op);
   JumpTableSDNode *JT = cast<JumpTableSDNode>(Op);
   bool IsPIC = getTargetMachine().getRelocationModel() == Reloc::PIC_;
   uint8_t OpFlagHi = IsPIC ? OR1KII::MO_GOTOFFHI : OR1KII::MO_ABS_HI;
@@ -1115,6 +1127,7 @@ OR1KTargetLowering::EmitInstrWithCustomInserter(MachineInstr *MI,
 
   const TargetInstrInfo &TII = *getTargetMachine().getInstrInfo();
   DebugLoc dl = MI->getDebugLoc();
+  //SDLoc dl(MI);
 
   assert((Opc == OR1K::Select || Opc == OR1K::Selectf32) &&
          "Unexpected instr type to insert");

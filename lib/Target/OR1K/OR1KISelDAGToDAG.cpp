@@ -186,7 +186,7 @@ SelectInlineAsmMemoryOperand(const SDValue &Op, char ConstraintCode,
 /// expanded, promoted and normal instructions
 SDNode* OR1KDAGToDAGISel::Select(SDNode *Node) {
   unsigned Opcode = Node->getOpcode();
-  DebugLoc dl = Node->getDebugLoc();
+  SDLoc dl(Node);
 
   // Dump information about the Node being selected
   DEBUG(errs() << "Selecting: "; Node->dump(CurDAG); errs() << "\n");

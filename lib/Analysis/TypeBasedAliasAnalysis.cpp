@@ -16,7 +16,12 @@
 // typical C/C++ TBAA, but it can also be used to implement custom alias
 // analysis behavior for other languages.
 //
-// The current metadata format is very simple. TBAA MDNodes have up to
+// We now support two types of metadata format: scalar TBAA and struct-path
+// aware TBAA. After all testing cases are upgraded to use struct-path aware
+// TBAA and we can auto-upgrade existing bc files, the support for scalar TBAA
+// can be dropped.
+//
+// The scalar TBAA metadata format is very simple. TBAA MDNodes have up to
 // three fields, e.g.:
 //   !0 = metadata !{ metadata !"an example type tree" }
 //   !1 = metadata !{ metadata !"int", metadata !0 }
@@ -39,6 +44,65 @@
 // indicates that the type is "constant" (meaning pointsToConstantMemory
 // should return true; see
 // http://llvm.org/docs/AliasAnalysis.html#OtherItfs).
+//
+// With struct-path aware TBAA, the MDNodes attached to an instruction using
+// "!tbaa" are called path tag nodes.
+//
+// The path tag node has 4 fields with the last field being optional.
+//
+// The first field is the base type node, it can be a struct type node
+// or a scalar type node. The second field is the access type node, it
+// must be a scalar type node. The third field is the offset into the base type.
+// The last field has the same meaning as the last field of our scalar TBAA:
+// it's an integer which if equal to 1 indicates that the access is "constant".
+//
+// The struct type node has a name and a list of pairs, one pair for each member
+// of the struct. The first element of each pair is a type node (a struct type
+// node or a sclar type node), specifying the type of the member, the second
+// element of each pair is the offset of the member.
+//
+// Given an example
+// typedef struct {
+//   short s;
+// } A;
+// typedef struct {
+//   uint16_t s;
+//   A a;
+// } B;
+//
+// For an acess to B.a.s, we attach !5 (a path tag node) to the load/store
+// instruction. The base type is !4 (struct B), the access type is !2 (scalar
+// type short) and the offset is 4.
+//
+// !0 = metadata !{metadata !"Simple C/C++ TBAA"}
+// !1 = metadata !{metadata !"omnipotent char", metadata !0} // Scalar type node
+// !2 = metadata !{metadata !"short", metadata !1}           // Scalar type node
+// !3 = metadata !{metadata !"A", metadata !2, i64 0}        // Struct type node
+// !4 = metadata !{metadata !"B", metadata !2, i64 0, metadata !3, i64 4}
+//                                                           // Struct type node
+// !5 = metadata !{metadata !4, metadata !2, i64 4}          // Path tag node
+//
+// The struct type nodes and the scalar type nodes form a type DAG.
+//         Root (!0)
+//         char (!1)  -- edge to Root
+//         short (!2) -- edge to char
+//         A (!3) -- edge with offset 0 to short
+//         B (!4) -- edge with offset 0 to short and edge with offset 4 to A
+//
+// To check if two tags (tagX and tagY) can alias, we start from the base type
+// of tagX, follow the edge with the correct offset in the type DAG and adjust
+// the offset until we reach the base type of tagY or until we reach the Root
+// node.
+// If we reach the base type of tagY, compare the adjusted offset with
+// offset of tagY, return Alias if the offsets are the same, return NoAlias
+// otherwise.
+// If we reach the Root node, perform the above starting from base type of tagY
+// to see if we reach base type of tagX.
+//
+// If they have different roots, they're part of different potentially
+// unrelated type systems, so we return Alias to be conservative.
+// If neither node is an ancestor of the other and they have the same root,
+// then we say NoAlias.
 //
 // TODO: The current metadata format doesn't support struct
 // fields. For example:
@@ -71,7 +135,6 @@ using namespace llvm;
 // achieved by stripping the !tbaa tags from IR, but this option is sometimes
 // more convenient.
 static cl::opt<bool> EnableTBAA("enable-tbaa", cl::init(true));
-static cl::opt<bool> EnableStructPathTBAA("struct-path-tbaa", cl::init(false));
 
 namespace {
   /// TBAANode - This is a simple wrapper around an MDNode which provides a
@@ -134,6 +197,17 @@ namespace {
     uint64_t getOffset() const {
       return cast<ConstantInt>(Node->getOperand(2))->getZExtValue();
     }
+    /// TypeIsImmutable - Test if this TBAAStructTagNode represents a type for
+    /// objects which are not modified (by any means) in the context where this
+    /// AliasAnalysis is relevant.
+    bool TypeIsImmutable() const {
+      if (Node->getNumOperands() < 4)
+        return false;
+      ConstantInt *CI = dyn_cast<ConstantInt>(Node->getOperand(3));
+      if (!CI)
+        return false;
+      return CI->getValue()[0];
+    }
   };
 
   /// This is a simple wrapper around an MDNode which provides a
@@ -153,14 +227,24 @@ namespace {
     /// Get this TBAAStructTypeNode's field in the type DAG with
     /// given offset. Update the offset to be relative to the field type.
     TBAAStructTypeNode getParent(uint64_t &Offset) const {
+      // Parent can be omitted for the root node.
       if (Node->getNumOperands() < 2)
         return TBAAStructTypeNode();
+
+      // Special handling for a scalar type node. 
+      if (Node->getNumOperands() <= 3) {
+        MDNode *P = dyn_cast_or_null<MDNode>(Node->getOperand(1));
+        if (!P)
+          return TBAAStructTypeNode();
+        return TBAAStructTypeNode(P);
+      }
 
       // Assume the offsets are in order. We return the previous field if
       // the current offset is bigger than the given offset.
       unsigned TheIdx = 0;
       for (unsigned Idx = 1; Idx < Node->getNumOperands(); Idx += 2) {
-        uint64_t Cur = cast<ConstantInt>(Node->getOperand(Idx))->getZExtValue();
+        uint64_t Cur = cast<ConstantInt>(Node->getOperand(Idx + 1))->
+                         getZExtValue();
         if (Cur > Offset) {
           assert(Idx >= 3 &&
                  "TBAAStructTypeNode::getParent should have an offset match!");
@@ -171,10 +255,10 @@ namespace {
       // Move along the last field.
       if (TheIdx == 0)
         TheIdx = Node->getNumOperands() - 2;
-      uint64_t Cur = cast<ConstantInt>(Node->getOperand(TheIdx))->
+      uint64_t Cur = cast<ConstantInt>(Node->getOperand(TheIdx + 1))->
                        getZExtValue();
       Offset -= Cur;
-      MDNode *P = dyn_cast_or_null<MDNode>(Node->getOperand(TheIdx + 1));
+      MDNode *P = dyn_cast_or_null<MDNode>(Node->getOperand(TheIdx));
       if (!P)
         return TBAAStructTypeNode();
       return TBAAStructTypeNode(P);
@@ -238,12 +322,21 @@ TypeBasedAliasAnalysis::getAnalysisUsage(AnalysisUsage &AU) const {
   AliasAnalysis::getAnalysisUsage(AU);
 }
 
+/// Check the first operand of the tbaa tag node, if it is a MDNode, we treat
+/// it as struct-path aware TBAA format, otherwise, we treat it as scalar TBAA
+/// format.
+static bool isStructPathTBAA(const MDNode *MD) {
+  // Anonymous TBAA root starts with a MDNode and dragonegg uses it as
+  // a TBAA tag.
+  return isa<MDNode>(MD->getOperand(0)) && MD->getNumOperands() >= 3;
+}
+
 /// Aliases - Test whether the type represented by A may alias the
 /// type represented by B.
 bool
 TypeBasedAliasAnalysis::Aliases(const MDNode *A,
                                 const MDNode *B) const {
-  if (EnableStructPathTBAA)
+  if (isStructPathTBAA(A))
     return PathAliases(A, B);
 
   // Keep track of the root node for A and B.
@@ -376,7 +469,8 @@ bool TypeBasedAliasAnalysis::pointsToConstantMemory(const Location &Loc,
 
   // If this is an "immutable" type, we can assume the pointer is pointing
   // to constant memory.
-  if (TBAANode(M).TypeIsImmutable())
+  if ((!isStructPathTBAA(M) && TBAANode(M).TypeIsImmutable()) ||
+      (isStructPathTBAA(M) && TBAAStructTagNode(M).TypeIsImmutable()))
     return true;
 
   return AliasAnalysis::pointsToConstantMemory(Loc, OrLocal);
@@ -392,7 +486,8 @@ TypeBasedAliasAnalysis::getModRefBehavior(ImmutableCallSite CS) {
   // If this is an "immutable" type, we can assume the call doesn't write
   // to memory.
   if (const MDNode *M = CS.getInstruction()->getMetadata(LLVMContext::MD_tbaa))
-    if (TBAANode(M).TypeIsImmutable())
+    if ((!isStructPathTBAA(M) && TBAANode(M).TypeIsImmutable()) ||
+        (isStructPathTBAA(M) && TBAAStructTagNode(M).TypeIsImmutable()))
       Min = OnlyReadsMemory;
 
   return ModRefBehavior(AliasAnalysis::getModRefBehavior(CS) & Min);
@@ -433,4 +528,76 @@ TypeBasedAliasAnalysis::getModRefInfo(ImmutableCallSite CS1,
         return NoModRef;
 
   return AliasAnalysis::getModRefInfo(CS1, CS2);
+}
+
+bool MDNode::isTBAAVtableAccess() const {
+  if (!isStructPathTBAA(this)) {
+    if (getNumOperands() < 1) return false;
+    if (MDString *Tag1 = dyn_cast<MDString>(getOperand(0))) {
+      if (Tag1->getString() == "vtable pointer") return true;
+    }
+    return false;
+  }
+
+  // For struct-path aware TBAA, we use the access type of the tag.
+  if (getNumOperands() < 2) return false;
+  MDNode *Tag = cast_or_null<MDNode>(getOperand(1));
+  if (!Tag) return false;
+  if (MDString *Tag1 = dyn_cast<MDString>(Tag->getOperand(0))) {
+    if (Tag1->getString() == "vtable pointer") return true;
+  }
+  return false;  
+}
+
+MDNode *MDNode::getMostGenericTBAA(MDNode *A, MDNode *B) {
+  if (!A || !B)
+    return NULL;
+
+  if (A == B)
+    return A;
+
+  // For struct-path aware TBAA, we use the access type of the tag.
+  bool StructPath = isStructPathTBAA(A);
+  if (StructPath) {
+    A = cast_or_null<MDNode>(A->getOperand(1));
+    if (!A) return 0;
+    B = cast_or_null<MDNode>(B->getOperand(1));
+    if (!B) return 0;
+  }
+
+  SmallVector<MDNode *, 4> PathA;
+  MDNode *T = A;
+  while (T) {
+    PathA.push_back(T);
+    T = T->getNumOperands() >= 2 ? cast_or_null<MDNode>(T->getOperand(1)) : 0;
+  }
+
+  SmallVector<MDNode *, 4> PathB;
+  T = B;
+  while (T) {
+    PathB.push_back(T);
+    T = T->getNumOperands() >= 2 ? cast_or_null<MDNode>(T->getOperand(1)) : 0;
+  }
+
+  int IA = PathA.size() - 1;
+  int IB = PathB.size() - 1;
+
+  MDNode *Ret = 0;
+  while (IA >= 0 && IB >=0) {
+    if (PathA[IA] == PathB[IB])
+      Ret = PathA[IA];
+    else
+      break;
+    --IA;
+    --IB;
+  }
+  if (!StructPath)
+    return Ret;
+
+  if (!Ret)
+    return 0;
+  // We need to convert from a type node to a tag node.
+  Type *Int64 = IntegerType::get(A->getContext(), 64);
+  Value *Ops[3] = { Ret, Ret, ConstantInt::get(Int64, 0) };
+  return MDNode::get(A->getContext(), Ops);
 }

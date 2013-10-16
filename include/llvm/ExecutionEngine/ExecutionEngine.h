@@ -15,6 +15,7 @@
 #ifndef LLVM_EXECUTIONENGINE_EXECUTIONENGINE_H
 #define LLVM_EXECUTIONENGINE_EXECUTIONENGINE_H
 
+#include "llvm-c/ExecutionEngine.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
@@ -33,6 +34,7 @@ namespace llvm {
 
 struct GenericValue;
 class Constant;
+class DataLayout;
 class ExecutionEngine;
 class Function;
 class GlobalVariable;
@@ -42,7 +44,8 @@ class JITMemoryManager;
 class MachineCodeInfo;
 class Module;
 class MutexGuard;
-class DataLayout;
+class ObjectCache;
+class RTDyldMemoryManager;
 class Triple;
 class Type;
 
@@ -140,7 +143,7 @@ protected:
   static ExecutionEngine *(*MCJITCtor)(
     Module *M,
     std::string *ErrorStr,
-    JITMemoryManager *JMM,
+    RTDyldMemoryManager *MCJMM,
     bool GVsWithCode,
     TargetMachine *TM);
   static ExecutionEngine *(*InterpCtor)(Module *M, std::string *ErrorStr);
@@ -237,6 +240,8 @@ public:
   /// found, this function silently returns a null pointer. Otherwise,
   /// it prints a message to stderr and aborts.
   ///
+  /// This function is deprecated for the MCJIT execution engine.
+  ///
   virtual void *getPointerToNamedFunction(const std::string &Name,
                                           bool AbortOnFailure = true) = 0;
 
@@ -249,11 +254,31 @@ public:
                      "EE!");
   }
 
-  // finalizeObject - This method should be called after sections within an
-  // object have been relocated using mapSectionAddress.  When this method is
-  // called the MCJIT execution engine will reapply relocations for a loaded
-  // object.  This method has no effect for the legacy JIT engine or the
-  // interpeter.
+  /// generateCodeForModule - Run code generationen for the specified module and
+  /// load it into memory.
+  ///
+  /// When this function has completed, all code and data for the specified
+  /// module, and any module on which this module depends, will be generated
+  /// and loaded into memory, but relocations will not yet have been applied
+  /// and all memory will be readable and writable but not executable.
+  ///
+  /// This function is primarily useful when generating code for an external
+  /// target, allowing the client an opportunity to remap section addresses
+  /// before relocations are applied.  Clients that intend to execute code
+  /// locally can use the getFunctionAddress call, which will generate code
+  /// and apply final preparations all in one step.
+  ///
+  /// This method has no effect for the legacy JIT engine or the interpeter.
+  virtual void generateCodeForModule(Module *M) {}
+
+  /// finalizeObject - ensure the module is fully processed and is usable.
+  ///
+  /// It is the user-level function for completing the process of making the
+  /// object usable for execution.  It should be called after sections within an
+  /// object have been relocated using mapSectionAddress.  When this method is
+  /// called the MCJIT execution engine will reapply relocations for a loaded
+  /// object.  This method has no effect for the legacy JIT engine or the
+  /// interpeter.
   virtual void finalizeObject() {}
 
   /// runStaticConstructorsDestructors - This method is used to execute all of
@@ -301,10 +326,16 @@ public:
   /// getPointerToGlobalIfAvailable - This returns the address of the specified
   /// global value if it is has already been codegen'd, otherwise it returns
   /// null.
+  ///
+  /// This function is deprecated for the MCJIT execution engine.  It doesn't
+  /// seem to be needed in that case, but an equivalent can be added if it is.
   void *getPointerToGlobalIfAvailable(const GlobalValue *GV);
 
   /// getPointerToGlobal - This returns the address of the specified global
   /// value. This may involve code generation if it's a function.
+  ///
+  /// This function is deprecated for the MCJIT execution engine.  Use
+  /// getGlobalValueAddress instead.
   void *getPointerToGlobal(const GlobalValue *GV);
 
   /// getPointerToFunction - The different EE's represent function bodies in
@@ -312,20 +343,46 @@ public:
   /// pointer should look like.  When F is destroyed, the ExecutionEngine will
   /// remove its global mapping and free any machine code.  Be sure no threads
   /// are running inside F when that happens.
+  ///
+  /// This function is deprecated for the MCJIT execution engine.  Use
+  /// getFunctionAddress instead.
   virtual void *getPointerToFunction(Function *F) = 0;
 
   /// getPointerToBasicBlock - The different EE's represent basic blocks in
   /// different ways.  Return the representation for a blockaddress of the
   /// specified block.
+  ///
+  /// This function will not be implemented for the MCJIT execution engine.
   virtual void *getPointerToBasicBlock(BasicBlock *BB) = 0;
 
   /// getPointerToFunctionOrStub - If the specified function has been
   /// code-gen'd, return a pointer to the function.  If not, compile it, or use
   /// a stub to implement lazy compilation if available.  See
   /// getPointerToFunction for the requirements on destroying F.
+  ///
+  /// This function is deprecated for the MCJIT execution engine.  Use
+  /// getFunctionAddress instead.
   virtual void *getPointerToFunctionOrStub(Function *F) {
     // Default implementation, just codegen the function.
     return getPointerToFunction(F);
+  }
+
+  /// getGlobalValueAddress - Return the address of the specified global
+  /// value. This may involve code generation.
+  ///
+  /// This function should not be called with the JIT or interpreter engines.
+  virtual uint64_t getGlobalValueAddress(const std::string &Name) {
+    // Default implementation for JIT and interpreter.  MCJIT will override this.
+    // JIT and interpreter clients should use getPointerToGlobal instead.
+    return 0;
+  }
+
+  /// getFunctionAddress - Return the address of the specified function.
+  /// This may involve code generation.
+  virtual uint64_t getFunctionAddress(const std::string &Name) {
+    // Default implementation for JIT and interpreter.  MCJIT will override this.
+    // JIT and interpreter clients should use getPointerToFunction instead.
+    return 0;
   }
 
   // The JIT overrides a version that actually does this.
@@ -360,6 +417,9 @@ public:
   /// getOrEmitGlobalVariable - Return the address of the specified global
   /// variable, possibly emitting it to memory if needed.  This is used by the
   /// Emitter.
+  ///
+  /// This function is deprecated for the MCJIT execution engine.  Use
+  /// getGlobalValueAddress instead.
   virtual void *getOrEmitGlobalVariable(const GlobalVariable *GV) {
     return getPointerToGlobal((const GlobalValue *)GV);
   }
@@ -370,6 +430,12 @@ public:
   /// which case these functions do nothing.
   virtual void RegisterJITEventListener(JITEventListener *) {}
   virtual void UnregisterJITEventListener(JITEventListener *) {}
+
+  /// Sets the pre-compiled object cache.  The ownership of the ObjectCache is
+  /// not changed.  Supported by MCJIT but not JIT.
+  virtual void setObjectCache(ObjectCache *) {
+    llvm_unreachable("No support for an object cache");
+  }
 
   /// DisableLazyCompilation - When lazy compilation is off (the default), the
   /// JIT will eagerly compile every function reachable from the argument to
@@ -488,6 +554,7 @@ private:
   EngineKind::Kind WhichEngine;
   std::string *ErrorStr;
   CodeGenOpt::Level OptLevel;
+  RTDyldMemoryManager *MCJMM;
   JITMemoryManager *JMM;
   bool AllocateGVsWithCode;
   TargetOptions Options;
@@ -503,6 +570,7 @@ private:
     WhichEngine = EngineKind::Either;
     ErrorStr = NULL;
     OptLevel = CodeGenOpt::Default;
+    MCJMM = NULL;
     JMM = NULL;
     Options = TargetOptions();
     AllocateGVsWithCode = false;
@@ -524,12 +592,29 @@ public:
     WhichEngine = w;
     return *this;
   }
+  
+  /// setMCJITMemoryManager - Sets the MCJIT memory manager to use. This allows
+  /// clients to customize their memory allocation policies for the MCJIT. This
+  /// is only appropriate for the MCJIT; setting this and configuring the builder
+  /// to create anything other than MCJIT will cause a runtime error. If create()
+  /// is called and is successful, the created engine takes ownership of the
+  /// memory manager. This option defaults to NULL. Using this option nullifies
+  /// the setJITMemoryManager() option.
+  EngineBuilder &setMCJITMemoryManager(RTDyldMemoryManager *mcjmm) {
+    MCJMM = mcjmm;
+    JMM = NULL;
+    return *this;
+  }
 
-  /// setJITMemoryManager - Sets the memory manager to use.  This allows
-  /// clients to customize their memory allocation policies.  If create() is
-  /// called and is successful, the created engine takes ownership of the
-  /// memory manager.  This option defaults to NULL.
+  /// setJITMemoryManager - Sets the JIT memory manager to use.  This allows
+  /// clients to customize their memory allocation policies.  This is only
+  /// appropriate for either JIT or MCJIT; setting this and configuring the
+  /// builder to create an interpreter will cause a runtime error. If create()
+  /// is called and is successful, the created engine takes ownership of the
+  /// memory manager.  This option defaults to NULL. This option overrides
+  /// setMCJITMemoryManager() as well.
   EngineBuilder &setJITMemoryManager(JITMemoryManager *jmm) {
+    MCJMM = NULL;
     JMM = jmm;
     return *this;
   }
@@ -624,6 +709,9 @@ public:
 
   ExecutionEngine *create(TargetMachine *TM);
 };
+
+// Create wrappers for C Binding types (see CBindingWrapping.h).
+DEFINE_SIMPLE_CONVERSION_FUNCTIONS(ExecutionEngine, LLVMExecutionEngineRef)
 
 } // End llvm namespace
 

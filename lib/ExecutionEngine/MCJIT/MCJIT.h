@@ -10,14 +10,59 @@
 #ifndef LLVM_LIB_EXECUTIONENGINE_MCJIT_H
 #define LLVM_LIB_EXECUTIONENGINE_MCJIT_H
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ExecutionEngine/ExecutionEngine.h"
+#include "llvm/ExecutionEngine/ObjectCache.h"
+#include "llvm/ExecutionEngine/ObjectImage.h"
 #include "llvm/ExecutionEngine/RuntimeDyld.h"
 #include "llvm/PassManager.h"
 
 namespace llvm {
 
-class ObjectImage;
+class MCJIT;
+
+// This is a helper class that the MCJIT execution engine uses for linking
+// functions across modules that it owns.  It aggregates the memory manager
+// that is passed in to the MCJIT constructor and defers most functionality
+// to that object.
+class LinkingMemoryManager : public RTDyldMemoryManager {
+public:
+  LinkingMemoryManager(MCJIT *Parent, RTDyldMemoryManager *MM)
+    : ParentEngine(Parent), ClientMM(MM) {}
+
+  virtual uint64_t getSymbolAddress(const std::string &Name);
+
+  // Functions deferred to client memory manager
+  virtual uint8_t *allocateCodeSection(uintptr_t Size, unsigned Alignment,
+                                       unsigned SectionID, StringRef SectionName) {
+    return ClientMM->allocateCodeSection(Size, Alignment, SectionID, SectionName);
+  }
+
+  virtual uint8_t *allocateDataSection(uintptr_t Size, unsigned Alignment,
+                                       unsigned SectionID, StringRef SectionName,
+                                       bool IsReadOnly) {
+    return ClientMM->allocateDataSection(Size, Alignment,
+                                         SectionID, SectionName, IsReadOnly);
+  }
+
+  virtual void notifyObjectLoaded(ExecutionEngine *EE,
+                                  const ObjectImage *Obj) {
+    ClientMM->notifyObjectLoaded(EE, Obj);
+  }
+
+  virtual void registerEHFrames(StringRef SectionData) {
+    ClientMM->registerEHFrames(SectionData);
+  }
+
+  virtual bool finalizeMemory(std::string *ErrMsg = 0) {
+    return ClientMM->finalizeMemory(ErrMsg);
+  }
+
+private:
+  MCJIT *ParentEngine;
+  OwningPtr<RTDyldMemoryManager> ClientMM;
+};
 
 // FIXME: This makes all kinds of horrible assumptions for the time being,
 // like only having one module, not needing to worry about multi-threading,
@@ -27,24 +72,68 @@ class MCJIT : public ExecutionEngine {
   MCJIT(Module *M, TargetMachine *tm, RTDyldMemoryManager *MemMgr,
         bool AllocateGVsWithCode);
 
+  enum ModuleState {
+    ModuleAdded,
+    ModuleEmitted,
+    ModuleLoading,
+    ModuleLoaded,
+    ModuleFinalizing,
+    ModuleFinalized
+  };
+
+  class MCJITModuleState {
+  public:
+    MCJITModuleState() : State(ModuleAdded) {}
+
+    MCJITModuleState & operator=(ModuleState s) { State = s; return *this; }
+    bool hasBeenEmitted() { return State != ModuleAdded; }
+    bool hasBeenLoaded() { return State != ModuleAdded &&
+                                  State != ModuleEmitted; }
+    bool hasBeenFinalized() { return State == ModuleFinalized; }
+
+  private:
+    ModuleState State;
+  };
+
   TargetMachine *TM;
   MCContext *Ctx;
-  RTDyldMemoryManager *MemMgr;
+  LinkingMemoryManager MemMgr;
   RuntimeDyld Dyld;
   SmallVector<JITEventListener*, 2> EventListeners;
 
-  // FIXME: Add support for multiple modules
-  bool isCompiled;
-  Module *M;
-  OwningPtr<ObjectImage> LoadedObject;
+  typedef DenseMap<Module *, MCJITModuleState> ModuleStateMap;
+  ModuleStateMap  ModuleStates;
+
+  typedef DenseMap<Module *, ObjectImage *> LoadedObjectMap;
+  LoadedObjectMap  LoadedObjects;
+
+  // An optional ObjectCache to be notified of compiled objects and used to
+  // perform lookup of pre-compiled code to avoid re-compilation.
+  ObjectCache *ObjCache;
 
 public:
   ~MCJIT();
 
   /// @name ExecutionEngine interface implementation
   /// @{
+  virtual void addModule(Module *M);
 
+  /// Sets the object manager that MCJIT should use to avoid compilation.
+  virtual void setObjectCache(ObjectCache *manager);
+
+  virtual void generateCodeForModule(Module *M);
+
+  /// finalizeObject - ensure the module is fully processed and is usable.
+  ///
+  /// It is the user-level function for completing the process of making the
+  /// object usable for execution. It should be called after sections within an
+  /// object have been relocated using mapSectionAddress.  When this method is
+  /// called the MCJIT execution engine will reapply relocations for a loaded
+  /// object.
+  /// FIXME: Do we really need both of these?
   virtual void finalizeObject();
+  virtual void finalizeModule(Module *);
+  void finalizeLoadedModules();
 
   virtual void *getPointerToBasicBlock(BasicBlock *BB);
 
@@ -76,9 +165,14 @@ public:
                                  uint64_t TargetAddress) {
     Dyld.mapSectionAddress(LocalAddress, TargetAddress);
   }
-
   virtual void RegisterJITEventListener(JITEventListener *L);
   virtual void UnregisterJITEventListener(JITEventListener *L);
+
+  // If successful, these function will implicitly finalize all loaded objects.
+  // To get a function address within MCJIT without causing a finalize, use
+  // getSymbolAddress.
+  virtual uint64_t getGlobalValueAddress(const std::string &Name);
+  virtual uint64_t getFunctionAddress(const std::string &Name);
 
   /// @}
   /// @name (Private) Registration Interfaces
@@ -90,11 +184,16 @@ public:
 
   static ExecutionEngine *createJIT(Module *M,
                                     std::string *ErrorStr,
-                                    JITMemoryManager *JMM,
+                                    RTDyldMemoryManager *MemMgr,
                                     bool GVsWithCode,
                                     TargetMachine *TM);
 
   // @}
+
+  // This is not directly exposed via the ExecutionEngine API, but it is
+  // used by the LinkingMemoryManager.
+  uint64_t getSymbolAddress(const std::string &Name,
+                          bool CheckFunctionsOnly);
 
 protected:
   /// emitObject -- Generate a JITed object in memory from the specified module
@@ -102,10 +201,14 @@ protected:
   /// this function call is expected to be the contained module.  The module
   /// is passed as a parameter here to prepare for multiple module support in 
   /// the future.
-  void emitObject(Module *M);
+  ObjectBufferStream* emitObject(Module *M);
 
   void NotifyObjectEmitted(const ObjectImage& Obj);
   void NotifyFreeingObject(const ObjectImage& Obj);
+
+  uint64_t getExistingSymbolAddress(const std::string &Name);
+  Module *findModuleForSymbol(const std::string &Name,
+                              bool CheckFunctionsOnly);
 };
 
 } // End llvm namespace

@@ -130,12 +130,15 @@ namespace opts {
     cl::desc("Expand each shown relocation to multiple lines"));
 } // namespace opts
 
+static int ReturnValue = EXIT_SUCCESS;
+
 namespace llvm {
 
 bool error(error_code EC) {
   if (!EC)
     return false;
 
+  ReturnValue = EXIT_FAILURE;
   outs() << "\nError reading file: " << EC.message() << ".\n";
   outs().flush();
   return true;
@@ -143,8 +146,8 @@ bool error(error_code EC) {
 
 bool relocAddressLess(RelocationRef a, RelocationRef b) {
   uint64_t a_addr, b_addr;
-  if (error(a.getAddress(a_addr))) return false;
-  if (error(b.getAddress(b_addr))) return false;
+  if (error(a.getOffset(a_addr))) return false;
+  if (error(b.getOffset(b_addr))) return false;
   return a_addr < b_addr;
 }
 
@@ -157,6 +160,7 @@ static void reportError(StringRef Input, error_code EC) {
 
   errs() << Input << ": " << EC.message() << "\n";
   errs().flush();
+  ReturnValue = EXIT_FAILURE;
 }
 
 static void reportError(StringRef Input, StringRef Message) {
@@ -164,6 +168,7 @@ static void reportError(StringRef Input, StringRef Message) {
     Input = "<stdin>";
 
   errs() << Input << ": " << Message << "\n";
+  ReturnValue = EXIT_FAILURE;
 }
 
 /// @brief Creates an format-specific object file dumper.
@@ -289,5 +294,5 @@ int main(int argc, const char *argv[]) {
   std::for_each(opts::InputFilenames.begin(), opts::InputFilenames.end(),
                 dumpInput);
 
-  return 0;
+  return ReturnValue;
 }
