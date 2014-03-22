@@ -83,3 +83,10 @@ def AMDGPUregister_store : SDNode<"AMDGPUISD::REGISTER_STORE",
 def AMDGPUstore_mskor : SDNode<"AMDGPUISD::STORE_MSKOR",
                         SDTypeProfile<0, 2, []>,
                         [SDNPHasChain, SDNPMayStore, SDNPMemOperand]>;
+
+def AMDGPUround : SDNode<"ISD::FROUND",
+                         SDTypeProfile<1, 1, [SDTCisFP<0>, SDTCisSameAs<0,1>]>>;
+
+def AMDGPUbfe_u32 : SDNode<"AMDGPUISD::BFE_U32", AMDGPUDTIntTernaryOp>;
+def AMDGPUbfe_i32 : SDNode<"AMDGPUISD::BFE_I32", AMDGPUDTIntTernaryOp>;
+

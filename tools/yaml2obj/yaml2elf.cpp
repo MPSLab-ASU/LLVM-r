@@ -13,6 +13,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "yaml2obj.h"
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/Object/ELFObjectFile.h"
 #include "llvm/Object/ELFYAML.h"
 #include "llvm/Support/ELF.h"
@@ -119,13 +120,13 @@ public:
 } // end anonymous namespace
 
 template <class T>
-static size_t vectorDataSize(const std::vector<T> &Vec) {
-  return Vec.size() * sizeof(T);
+static size_t arrayDataSize(ArrayRef<T> A) {
+  return A.size() * sizeof(T);
 }
 
 template <class T>
-static void writeVectorData(raw_ostream &OS, const std::vector<T> &Vec) {
-  OS.write((const char *)Vec.data(), vectorDataSize(Vec));
+static void writeArrayData(raw_ostream &OS, ArrayRef<T> A) {
+  OS.write((const char *)A.data(), arrayDataSize(A));
 }
 
 template <class T>
@@ -158,17 +159,14 @@ class ELFState {
   /// \brief The accumulated contents of all sections so far.
   ContiguousBlobAccumulator &SectionContentAccum;
   typedef typename object::ELFFile<ELFT>::Elf_Ehdr Elf_Ehdr;
-  /// \brief The ELF file header.
-  Elf_Ehdr &Header;
 
   SectionNameToIdxMap &SN2I;
 
 public:
-
-  ELFState(Elf_Ehdr &Header_, ContiguousBlobAccumulator &Accum,
-           unsigned DotStrtabSecNo_, SectionNameToIdxMap &SN2I_)
+  ELFState(ContiguousBlobAccumulator &Accum, unsigned DotStrtabSecNo_,
+           SectionNameToIdxMap &SN2I_)
       : DotStrtab(), DotStrtabSecNo(DotStrtabSecNo_),
-        SectionContentAccum(Accum), Header(Header_), SN2I(SN2I_) {}
+        SectionContentAccum(Accum), SN2I(SN2I_) {}
 
   unsigned getDotStrTabSecNo() const { return DotStrtabSecNo; }
   StringTableBuilder &getStringTable() { return DotStrtab; }
@@ -188,8 +186,7 @@ addSymbols(const std::vector<ELFYAML::Symbol> &Symbols, ELFState<ELFT> &State,
            std::vector<typename object::ELFFile<ELFT>::Elf_Sym> &Syms,
            unsigned SymbolBinding) {
   typedef typename object::ELFFile<ELFT>::Elf_Sym Elf_Sym;
-  for (unsigned i = 0, e = Symbols.size(); i != e; ++i) {
-    const ELFYAML::Symbol &Sym = Symbols[i];
+  for (const auto &Sym : Symbols) {
     Elf_Sym Symbol;
     zero(Symbol);
     if (!Sym.Name.empty())
@@ -235,8 +232,9 @@ handleSymtabSectionHeader(const ELFYAML::LocalGlobalWeakSymbols &Symbols,
   addSymbols(Symbols.Weak, State, Syms, ELF::STB_WEAK);
 
   ContiguousBlobAccumulator &CBA = State.getSectionContentAccum();
-  writeVectorData(CBA.getOSAndAlignedOffset(SHeader.sh_offset), Syms);
-  SHeader.sh_size = vectorDataSize(Syms);
+  writeArrayData(CBA.getOSAndAlignedOffset(SHeader.sh_offset),
+                 makeArrayRef(Syms));
+  SHeader.sh_size = arrayDataSize(makeArrayRef(Syms));
 }
 
 template <class ELFT>
@@ -300,7 +298,7 @@ static int writeELF(raw_ostream &OS, const ELFYAML::Object &Doc) {
     }
   }
 
-  ELFState<ELFT> State(Header, CBA, DotStrtabSecNo, SN2I);
+  ELFState<ELFT> State(CBA, DotStrtabSecNo, SN2I);
 
   StringTableBuilder SHStrTab;
   std::vector<Elf_Shdr> SHeaders;
@@ -311,8 +309,7 @@ static int writeELF(raw_ostream &OS, const ELFYAML::Object &Doc) {
     zero(SHdr);
     SHeaders.push_back(SHdr);
   }
-  for (unsigned i = 0, e = Sections.size(); i != e; ++i) {
-    const ELFYAML::Section &Sec = Sections[i];
+  for (const auto &Sec : Sections) {
     Elf_Shdr SHeader;
     zero(SHeader);
     SHeader.sh_name = SHStrTab.addString(Sec.Name);
@@ -327,7 +324,7 @@ static int writeELF(raw_ostream &OS, const ELFYAML::Object &Doc) {
       unsigned Index;
       if (SN2I.lookupSection(Sec.Link, Index)) {
         errs() << "error: Unknown section referenced: '" << Sec.Link
-               << "' at YAML section number " << i << ".\n";
+               << "' at YAML section '" << Sec.Name << "'.\n";
         return 1;
       }
       SHeader.sh_link = Index;
@@ -355,11 +352,12 @@ static int writeELF(raw_ostream &OS, const ELFYAML::Object &Doc) {
   // Section header string table header.
   Elf_Shdr SHStrTabSHeader;
   zero(SHStrTabSHeader);
+  SHStrTabSHeader.sh_name = SHStrTab.addString(StringRef(".shstrtab"));
   createStringTableSectionHeader(SHStrTabSHeader, SHStrTab, CBA);
   SHeaders.push_back(SHStrTabSHeader);
 
   OS.write((const char *)&Header, sizeof(Header));
-  writeVectorData(OS, SHeaders);
+  writeArrayData(OS, makeArrayRef(SHeaders));
   CBA.writeBlobToStream(OS);
   return 0;
 }

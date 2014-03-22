@@ -15,19 +15,22 @@
 #define LLVM_ARMTARGETASMINFO_H
 
 #include "llvm/MC/MCAsmInfoDarwin.h"
+#include "llvm/MC/MCAsmInfoELF.h"
 
 namespace llvm {
 
   class ARMMCAsmInfoDarwin : public MCAsmInfoDarwin {
-    virtual void anchor();
+    void anchor() override;
   public:
     explicit ARMMCAsmInfoDarwin();
   };
 
-  class ARMELFMCAsmInfo : public MCAsmInfo {
-    virtual void anchor();
+  class ARMELFMCAsmInfo : public MCAsmInfoELF {
+    void anchor() override;
   public:
     explicit ARMELFMCAsmInfo();
+
+    void setUseIntegratedAssembler(bool Value) override;
   };
 
 } // namespace llvm

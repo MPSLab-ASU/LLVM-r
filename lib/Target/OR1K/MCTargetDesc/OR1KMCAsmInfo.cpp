@@ -14,10 +14,13 @@
 #include "OR1KMCAsmInfo.h"
 using namespace llvm;
 
+void OR1KMCAsmInfo::anchor() { }
+
 OR1KMCAsmInfo::OR1KMCAsmInfo(StringRef TT) {
   IsLittleEndian = false;
   PrivateGlobalPrefix         = ".L";
   WeakRefDirective            = "\t.weak\t";
+  ExceptionsType = ExceptionHandling::DwarfCFI;
 
   // OR1K assembly requires ".section" before ".bss"
   UsesELFSectionDirectiveForBSS = true;

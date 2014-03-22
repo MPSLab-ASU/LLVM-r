@@ -75,7 +75,6 @@ def ADDRDWord : ComplexPattern<i32, 1, "SelectADDRDWord", [], []>;
 def ADDRVTX_READ : ComplexPattern<i32, 2, "SelectADDRVTX_READ", [], []>;
 def ADDRGA_CONST_OFFSET : ComplexPattern<i32, 1, "SelectGlobalValueConstantOffset", [], []>;
 def ADDRGA_VAR_OFFSET : ComplexPattern<i32, 2, "SelectGlobalValueVariableOffset", [], []>;
-def ADDRIndirect : ComplexPattern<iPTR, 2, "SelectADDRIndirect", [], []>;
 
 
 def R600_Pred : PredicateOperand<i32, (ops R600_Predicate),
@@ -418,7 +417,7 @@ def INTERP_VEC_LOAD :  AMDGPUShaderInst <
   (outs R600_Reg128:$dst),
   (ins i32imm:$src0),
   "INTERP_LOAD $src0 : $dst",
-  []>;
+  [(set R600_Reg128:$dst, (int_R600_interp_const imm:$src0))]>;
 
 def INTERP_XY : R600_2OP <0xD6, "INTERP_XY", []> {
   let bank_swizzle = 5;
@@ -643,6 +642,9 @@ ins, AsmPrint, [] >, CF_WORD0_EG, CF_WORD1_EG {
 def CF_ALU : ALU_CLAUSE<8, "ALU">;
 def CF_ALU_PUSH_BEFORE : ALU_CLAUSE<9, "ALU_PUSH_BEFORE">;
 def CF_ALU_POP_AFTER : ALU_CLAUSE<10, "ALU_POP_AFTER">;
+def CF_ALU_CONTINUE : ALU_CLAUSE<13, "ALU_CONTINUE">;
+def CF_ALU_BREAK : ALU_CLAUSE<14, "ALU_BREAK">;
+def CF_ALU_ELSE_AFTER : ALU_CLAUSE<15, "ALU_ELSE_AFTER">;
 
 def FETCH_CLAUSE : AMDGPUInst <(outs),
 (ins i32imm:$addr), "Fetch clause starting at $addr:", [] > {
@@ -734,6 +736,9 @@ def CEIL : R600_1OP_Helper <0x12, "CEIL", fceil>;
 def RNDNE : R600_1OP_Helper <0x13, "RNDNE", frint>;
 def FLOOR : R600_1OP_Helper <0x14, "FLOOR", ffloor>;
 
+// Add also ftrunc intrinsic pattern
+def : Pat<(ftrunc f32:$src0), (TRUNC $src0)>;
+
 def MOV : R600_1OP <0x19, "MOV", []>;
 
 let isPseudo = 1, isCodeGenOnly = 1, usesCustomInserter = 1 in {
@@ -823,12 +828,12 @@ def CNDE_INT : R600_3OP <
 
 def CNDGE_INT : R600_3OP <
   0x1E, "CNDGE_INT",
-  [(set i32:$dst, (selectcc i32:$src0, 0, i32:$src1, i32:$src2, COND_GE))]
+  [(set i32:$dst, (selectcc i32:$src0, 0, i32:$src1, i32:$src2, COND_SGE))]
 >;
 
 def CNDGT_INT : R600_3OP <
   0x1D, "CNDGT_INT",
-  [(set i32:$dst, (selectcc i32:$src0, 0, i32:$src1, i32:$src2, COND_GT))]
+  [(set i32:$dst, (selectcc i32:$src0, 0, i32:$src1, i32:$src2, COND_SGT))]
 >;
 
 //===----------------------------------------------------------------------===//
@@ -1111,6 +1116,10 @@ class COS_Common <bits<11> inst> : R600_1OP <
   let Itinerary = TransALU;
 }
 
+def CLAMP_R600 :  CLAMP <R600_Reg32>;
+def FABS_R600 : FABS<R600_Reg32>;
+def FNEG_R600 : FNEG<R600_Reg32>;
+
 //===----------------------------------------------------------------------===//
 // Helper patterns for complex intrinsics
 //===----------------------------------------------------------------------===//
@@ -1132,6 +1141,13 @@ class TGSI_LIT_Z_Common <InstR600 mul_lit, InstR600 log_clamped, InstR600 exp_ie
   (int_TGSI_lit_z f32:$src_x, f32:$src_y, f32:$src_w),
   (exp_ieee (mul_lit (log_clamped (MAX $src_y, (f32 ZERO))), $src_w, $src_x))
 >;
+
+// FROUND pattern
+class FROUNDPat<Instruction CNDGE> : Pat <
+  (AMDGPUround f32:$x),
+  (CNDGE (ADD (FNEG_R600 (f32 HALF)), (FRACT $x)), (CEIL $x), (FLOOR $x))
+>;
+
 
 //===----------------------------------------------------------------------===//
 // R600 / R700 Instructions
@@ -1174,11 +1190,12 @@ let Predicates = [isR600] in {
   def TGSI_LIT_Z_r600 : TGSI_LIT_Z_Common<MUL_LIT_r600, LOG_CLAMPED_r600, EXP_IEEE_r600>;
 
   def : Pat<(fsqrt f32:$src), (MUL $src, (RECIPSQRT_CLAMPED_r600 $src))>;
+  def : FROUNDPat <CNDGE_r600>;
 
   def R600_ExportSwz : ExportSwzInst {
     let Word1{20-17} = 0; // BURST_COUNT
     let Word1{21} = eop;
-    let Word1{22} = 1; // VALID_PIXEL_MODE
+    let Word1{22} = 0; // VALID_PIXEL_MODE
     let Word1{30-23} = inst;
     let Word1{31} = 1; // BARRIER
   }
@@ -1187,7 +1204,7 @@ let Predicates = [isR600] in {
   def R600_ExportBuf : ExportBufInst {
     let Word1{20-17} = 0; // BURST_COUNT
     let Word1{21} = eop;
-    let Word1{22} = 1; // VALID_PIXEL_MODE
+    let Word1{22} = 0; // VALID_PIXEL_MODE
     let Word1{30-23} = inst;
     let Word1{31} = 1; // BARRIER
   }
@@ -1222,6 +1239,10 @@ let Predicates = [isR600] in {
   }
   def CF_JUMP_R600 : CF_CLAUSE_R600<10, (ins i32imm:$ADDR, i32imm:$POP_COUNT),
   "JUMP @$ADDR POP:$POP_COUNT"> {
+    let CNT = 0;
+  }
+  def CF_PUSH_ELSE_R600 : CF_CLAUSE_R600<12, (ins i32imm:$ADDR),
+  "PUSH_ELSE @$ADDR"> {
     let CNT = 0;
   }
   def CF_ELSE_R600 : CF_CLAUSE_R600<13, (ins i32imm:$ADDR, i32imm:$POP_COUNT),
@@ -1496,16 +1517,23 @@ let Predicates = [isEGorCayman] in {
   // Example Usage:
   // (Offset, Width)
   //
-  // (0, 8)           = (Input << 24) >> 24  = (Input &  0xff)       >> 0
-  // (8, 8)           = (Input << 16) >> 24  = (Input &  0xffff)     >> 8
-  // (16,8)           = (Input <<  8) >> 24  = (Input &  0xffffff)   >> 16
-  // (24,8)           = (Input <<  0) >> 24  = (Input &  0xffffffff) >> 24
+  // (0, 8)  = (Input << 24) >> 24 = (Input &  0xff)       >> 0
+  // (8, 8)  = (Input << 16) >> 24 = (Input &  0xffff)     >> 8
+  // (16, 8) = (Input <<  8) >> 24 = (Input &  0xffffff)   >> 16
+  // (24, 8) = (Input <<  0) >> 24 = (Input &  0xffffffff) >> 24
   def BFE_UINT_eg : R600_3OP <0x4, "BFE_UINT",
-    [(set i32:$dst, (int_AMDIL_bit_extract_u32 i32:$src0, i32:$src1,
-                                               i32:$src2))],
+    [(set i32:$dst, (AMDGPUbfe_u32 i32:$src0, i32:$src1, i32:$src2))],
     VecALU
   >;
-  def : BFEPattern <BFE_UINT_eg>;
+
+  def BFE_INT_eg : R600_3OP <0x4, "BFE_INT",
+    [(set i32:$dst, (AMDGPUbfe_i32 i32:$src0, i32:$src1, i32:$src2))],
+    VecALU
+  >;
+
+// XXX: This pattern is broken, disabling for now.  See comment in
+// AMDGPUInstructions.td for more info.
+//  def : BFEPattern <BFE_UINT_eg>;
 
   def BFI_INT_eg : R600_3OP <0x06, "BFI_INT", [], VecALU>;
   defm : BFIPatterns <BFI_INT_eg>;
@@ -1533,7 +1561,7 @@ let Predicates = [isEGorCayman] in {
   defm CUBE_eg : CUBE_Common<0xC0>;
 
 let hasSideEffects = 1 in {
-  def MOVA_INT_eg : R600_1OP <0xCC, "MOVA_INT", []>;
+  def MOVA_INT_eg : R600_1OP <0xCC, "MOVA_INT", [], VecALU>;
 }
 
   def TGSI_LIT_Z_eg : TGSI_LIT_Z_Common<MUL_LIT_eg, LOG_CLAMPED_eg, EXP_IEEE_eg>;
@@ -1625,7 +1653,6 @@ class R600_LDS_1A <bits<6> lds_op, string name, list<dag> pattern> : R600_LDS <
   let src2 = 0;
   let src2_rel = 0;
 
-  let Defs = [OQAP];
   let usesCustomInserter = 1;
   let LDS_1A = 1;
   let DisableEncoding = "$dst";
@@ -1661,7 +1688,6 @@ class R600_LDS_1A1D_RET <bits<6> lds_op, string name, list<dag> pattern> :
   let BaseOp = name;
   let usesCustomInserter = 1;
   let DisableEncoding = "$dst";
-  let Defs = [OQAP];
 }
 
 class R600_LDS_1A2D <bits<6> lds_op, string name, list<dag> pattern> :
@@ -1727,9 +1753,11 @@ def LDS_USHORT_READ_RET : R600_LDS_1A <0x39, "LDS_USHORT_READ_RET",
   // SHA-256 Patterns
   def : SHA256MaPattern <BFI_INT_eg, XOR_INT>;
 
+  def : FROUNDPat <CNDGE_eg>;
+
   def EG_ExportSwz : ExportSwzInst {
     let Word1{19-16} = 0; // BURST_COUNT
-    let Word1{20} = 1; // VALID_PIXEL_MODE
+    let Word1{20} = 0; // VALID_PIXEL_MODE
     let Word1{21} = eop;
     let Word1{29-22} = inst;
     let Word1{30} = 0; // MARK
@@ -1739,7 +1767,7 @@ def LDS_USHORT_READ_RET : R600_LDS_1A <0x39, "LDS_USHORT_READ_RET",
 
   def EG_ExportBuf : ExportBufInst {
     let Word1{19-16} = 0; // BURST_COUNT
-    let Word1{20} = 1; // VALID_PIXEL_MODE
+    let Word1{20} = 0; // VALID_PIXEL_MODE
     let Word1{21} = eop;
     let Word1{29-22} = inst;
     let Word1{30} = 0; // MARK
@@ -1776,6 +1804,10 @@ def LDS_USHORT_READ_RET : R600_LDS_1A <0x39, "LDS_USHORT_READ_RET",
   }
   def CF_JUMP_EG : CF_CLAUSE_EG<10, (ins i32imm:$ADDR, i32imm:$POP_COUNT),
   "JUMP @$ADDR POP:$POP_COUNT"> {
+    let COUNT = 0;
+  }
+  def CF_PUSH_EG : CF_CLAUSE_EG<11, (ins i32imm:$ADDR, i32imm:$POP_COUNT),
+                                "PUSH @$ADDR POP:$POP_COUNT"> {
     let COUNT = 0;
   }
   def CF_ELSE_EG : CF_CLAUSE_EG<13, (ins i32imm:$ADDR, i32imm:$POP_COUNT),
@@ -1853,6 +1885,7 @@ def : Pat <
     let POP_COUNT = 0;
     let COUNT = 0;
   }
+
 
 def : Pat<(fsqrt f32:$src), (MUL R600_Reg32:$src, (RECIPSQRT_CLAMPED_cm $src))>;
 
@@ -2091,10 +2124,6 @@ def TXD_SHADOW: InstR600 <
 } // End isPseudo = 1
 } // End usesCustomInserter = 1
 
-def CLAMP_R600 :  CLAMP <R600_Reg32>;
-def FABS_R600 : FABS<R600_Reg32>;
-def FNEG_R600 : FNEG<R600_Reg32>;
-
 //===---------------------------------------------------------------------===//
 // Return instruction
 //===---------------------------------------------------------------------===//
@@ -2237,7 +2266,7 @@ let Inst{63-32} = Word1;
 //===--------------------------------------------------------------------===//
 //===---------------------------------------------------------------------===//
 // Custom Inserter for Branches and returns, this eventually will be a
-// seperate pass
+// separate pass
 //===---------------------------------------------------------------------===//
 let isTerminator = 1, usesCustomInserter = 1, isBranch = 1, isBarrier = 1 in {
   def BRANCH : ILFormat<(outs), (ins brtarget:$target),
@@ -2314,7 +2343,7 @@ def : CND_INT_f32 <CNDGE_INT, SETGE>;
 
 //CNDGE_INT extra pattern
 def : Pat <
-  (selectcc i32:$src0, -1, i32:$src1, i32:$src2, COND_GT),
+  (selectcc i32:$src0, -1, i32:$src1, i32:$src2, COND_SGT),
   (CNDGE_INT $src0, $src1, $src2)
 >;
 
@@ -2348,9 +2377,6 @@ def : Insert_Element <i32, v4i32, 0, sub0>;
 def : Insert_Element <i32, v4i32, 1, sub1>;
 def : Insert_Element <i32, v4i32, 2, sub2>;
 def : Insert_Element <i32, v4i32, 3, sub3>;
-
-def : Vector4_Build <v4f32, f32>;
-def : Vector4_Build <v4i32, i32>;
 
 def : Extract_Element <f32, v2f32, 0, sub0>;
 def : Extract_Element <f32, v2f32, 1, sub1>;

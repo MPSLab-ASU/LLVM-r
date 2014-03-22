@@ -47,15 +47,18 @@ public:
   // getBinaryCodeForInstr - TableGen'erated function for getting the
   // binary encoding for an instruction.
   uint64_t getBinaryCodeForInstr(const MCInst &MI,
-                                 SmallVectorImpl<MCFixup> &Fixups) const;
+                                 SmallVectorImpl<MCFixup> &Fixups,
+                                 const MCSubtargetInfo &STI) const;
 
    // getMachineOpValue - Return binary encoding of operand. If the machin
    // operand requires relocation, record the relocation and return zero.
   unsigned getMachineOpValue(const MCInst &MI,const MCOperand &MO,
-                             SmallVectorImpl<MCFixup> &Fixups) const;
+                             SmallVectorImpl<MCFixup> &Fixups,
+                             const MCSubtargetInfo &STI) const;
 
   unsigned getMemoryOpValue(const MCInst &MI, unsigned Op,
-                            SmallVectorImpl<MCFixup> &Fixups) const;
+                            SmallVectorImpl<MCFixup> &Fixups,
+                            const MCSubtargetInfo &STI) const;
 
   // Emit one byte through output stream (from MCBlazeMCCodeEmitter)
   void EmitByte(unsigned char C, unsigned &CurByte, raw_ostream &OS) const {
@@ -84,7 +87,8 @@ public:
   }
 
   void EncodeInstruction(const MCInst &MI, raw_ostream &OS,
-                         SmallVectorImpl<MCFixup> &Fixups) const;
+                         SmallVectorImpl<MCFixup> &Fixups,
+                         const MCSubtargetInfo &STI) const;
 };
 } // end anonymous namepsace
 
@@ -99,7 +103,8 @@ MCCodeEmitter *llvm::createOR1KMCCodeEmitter(const MCInstrInfo &MCII,
 /// operand requires relocation, record the relocation and return zero.
 unsigned OR1KMCCodeEmitter::
 getMachineOpValue(const MCInst &MI, const MCOperand &MO,
-                  SmallVectorImpl<MCFixup> &Fixups) const {
+                  SmallVectorImpl<MCFixup> &Fixups,
+                  const MCSubtargetInfo &STI) const {
   if (MO.isReg())
     return getOR1KRegisterNumbering(MO.getReg());
   if (MO.isImm())
@@ -161,22 +166,22 @@ getMachineOpValue(const MCInst &MI, const MCOperand &MO,
 
 void OR1KMCCodeEmitter::
 EncodeInstruction(const MCInst &MI, raw_ostream &OS,
-                         SmallVectorImpl<MCFixup> &Fixups) const {
-  unsigned Opcode = MI.getOpcode();
-  const MCInstrDesc &Desc = MCII.get(Opcode);
+                  SmallVectorImpl<MCFixup> &Fixups,
+                  const MCSubtargetInfo &STI) const {
   // Keep track of the current byte being emitted
   unsigned CurByte = 0;
 
   // Get instruction encoding and emit it
   ++MCNumEmitted;       // Keep track of the number of emitted insns.
-  unsigned Value = getBinaryCodeForInstr(MI, Fixups);
+  unsigned Value = getBinaryCodeForInstr(MI, Fixups, STI);
   EmitBEConstant(Value, 4, CurByte, OS);
 }
 
 // Encode OR1K Memory Operand
 unsigned OR1KMCCodeEmitter::
 getMemoryOpValue(const MCInst &MI, unsigned Op,
-  SmallVectorImpl<MCFixup> &Fixups) const {
+                 SmallVectorImpl<MCFixup> &Fixups,
+                 const MCSubtargetInfo &STI) const {
   unsigned encoding;
   const MCOperand op1 = MI.getOperand(1);
   assert(op1.isReg() && "First operand is not register.");

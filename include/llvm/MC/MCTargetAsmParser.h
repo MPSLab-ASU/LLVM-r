@@ -10,8 +10,8 @@
 #ifndef LLVM_MC_TARGETPARSER_H
 #define LLVM_MC_TARGETPARSER_H
 
-#include "llvm/MC/MCParser/MCAsmParserExtension.h"
 #include "llvm/MC/MCExpr.h"
+#include "llvm/MC/MCParser/MCAsmParserExtension.h"
 
 namespace llvm {
 class MCStreamer;
@@ -176,16 +176,13 @@ public:
   virtual void convertToMapAndConstraints(unsigned Kind,
                       const SmallVectorImpl<MCParsedAsmOperand*> &Operands) = 0;
 
-  /// End of assembly processing.
-  /// This gets called when all assembly has been read and gives the local
-  /// Target AsmParsers an opportunity for any final data processing, etc..
-  virtual void emitEndOfAsmFile(MCStreamer &Out) {}
-
   virtual const MCExpr *applyModifierToExpr(const MCExpr *E,
                                             MCSymbolRefExpr::VariantKind,
                                             MCContext &Ctx) {
     return 0;
   }
+
+  virtual void onLabelParsed(MCSymbol *Symbol) { };
 };
 
 } // End llvm namespace

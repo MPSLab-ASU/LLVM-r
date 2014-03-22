@@ -122,7 +122,7 @@ uint64_t MCAsmLayout::getSymbolOffset(const MCSymbolData *SD) const {
   // If this is a variable, then recursively evaluate now.
   if (S.isVariable()) {
     MCValue Target;
-    if (!S.getVariableValue()->EvaluateAsRelocatable(Target, *this))
+    if (!S.getVariableValue()->EvaluateAsRelocatable(Target, this))
       report_fatal_error("unable to evaluate offset for variable '" +
                          S.getName() + "'");
 
@@ -296,6 +296,7 @@ MCAssembler::MCAssembler(MCContext &Context_, MCAsmBackend &Backend_,
   : Context(Context_), Backend(Backend_), Emitter(Emitter_), Writer(Writer_),
     OS(OS_), BundleAlignSize(0), RelaxAll(false), NoExecStack(false),
     SubsectionsViaSymbols(false), ELFHeaderEFlags(0) {
+  VersionMinInfo.Major = 0; // Major version == 0 for "none specified"
 }
 
 MCAssembler::~MCAssembler() {
@@ -357,7 +358,7 @@ bool MCAssembler::evaluateFixup(const MCAsmLayout &Layout,
                                 MCValue &Target, uint64_t &Value) const {
   ++stats::evaluateFixup;
 
-  if (!Fixup.getValue()->EvaluateAsRelocatable(Target, Layout))
+  if (!Fixup.getValue()->EvaluateAsRelocatable(Target, &Layout))
     getContext().FatalError(Fixup.getLoc(), "expected relocatable expression");
 
   bool IsPCRel = Backend.getFixupKindInfo(
@@ -738,17 +739,17 @@ void MCAssembler::writeSectionData(const MCSectionData *SD,
 uint64_t MCAssembler::handleFixup(const MCAsmLayout &Layout,
                                   MCFragment &F,
                                   const MCFixup &Fixup) {
-   // Evaluate the fixup.
-   MCValue Target;
-   uint64_t FixedValue;
-   if (!evaluateFixup(Layout, Fixup, &F, Target, FixedValue)) {
-     // The fixup was unresolved, we need a relocation. Inform the object
-     // writer of the relocation, and give it an opportunity to adjust the
-     // fixup value if need be.
-     getWriter().RecordRelocation(*this, Layout, &F, Fixup, Target, FixedValue);
-   }
-   return FixedValue;
- }
+  // Evaluate the fixup.
+  MCValue Target;
+  uint64_t FixedValue;
+  if (!evaluateFixup(Layout, Fixup, &F, Target, FixedValue)) {
+    // The fixup was unresolved, we need a relocation. Inform the object
+    // writer of the relocation, and give it an opportunity to adjust the
+    // fixup value if need be.
+    getWriter().RecordRelocation(*this, Layout, &F, Fixup, Target, FixedValue);
+  }
+  return FixedValue;
+}
 
 void MCAssembler::Finish() {
   DEBUG_WITH_TYPE("mc-dump", {
@@ -875,7 +876,7 @@ bool MCAssembler::relaxInstruction(MCAsmLayout &Layout,
   SmallVector<MCFixup, 4> Fixups;
   SmallString<256> Code;
   raw_svector_ostream VecOS(Code);
-  getEmitter().EncodeInstruction(Relaxed, VecOS, Fixups);
+  getEmitter().EncodeInstruction(Relaxed, VecOS, Fixups, F.getSubtargetInfo());
   VecOS.flush();
 
   // Update the fragment.

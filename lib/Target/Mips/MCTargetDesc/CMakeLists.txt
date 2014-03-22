@@ -1,11 +1,10 @@
 add_llvm_library(LLVMMipsDesc
   MipsAsmBackend.cpp
+  MipsELFObjectWriter.cpp
   MipsMCAsmInfo.cpp
   MipsMCCodeEmitter.cpp
+  MipsMCExpr.cpp
   MipsMCTargetDesc.cpp
-  MipsELFObjectWriter.cpp
-  MipsReginfo.cpp
-  MipsELFStreamer.cpp
+  MipsNaClELFStreamer.cpp
+  MipsTargetStreamer.cpp
   )
-
-add_dependencies(LLVMMipsDesc MipsCommonTableGen)

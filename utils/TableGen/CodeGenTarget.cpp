@@ -143,6 +143,7 @@ CodeGenTarget::CodeGenTarget(RecordKeeper &records)
 }
 
 CodeGenTarget::~CodeGenTarget() {
+  DeleteContainerSeconds(Instructions);
   delete RegBank;
   delete SchedModels;
 }
@@ -288,41 +289,16 @@ GetInstByName(const char *Name,
   return I->second;
 }
 
-namespace {
-/// SortInstByName - Sorting predicate to sort instructions by name.
-///
-struct SortInstByName {
-  bool operator()(const CodeGenInstruction *Rec1,
-                  const CodeGenInstruction *Rec2) const {
-    return Rec1->TheDef->getName() < Rec2->TheDef->getName();
-  }
-};
-}
-
-/// getInstructionsByEnumValue - Return all of the instructions defined by the
-/// target, ordered by their enum value.
+/// \brief Return all of the instructions defined by the target, ordered by
+/// their enum value.
 void CodeGenTarget::ComputeInstrsByEnum() const {
   // The ordering here must match the ordering in TargetOpcodes.h.
   static const char *const FixedInstrs[] = {
-    "PHI",
-    "INLINEASM",
-    "PROLOG_LABEL",
-    "EH_LABEL",
-    "GC_LABEL",
-    "KILL",
-    "EXTRACT_SUBREG",
-    "INSERT_SUBREG",
-    "IMPLICIT_DEF",
-    "SUBREG_TO_REG",
-    "COPY_TO_REGCLASS",
-    "DBG_VALUE",
-    "REG_SEQUENCE",
-    "COPY",
-    "BUNDLE",
-    "LIFETIME_START",
-    "LIFETIME_END",
-    0
-  };
+      "PHI",          "INLINEASM",     "CFI_INSTRUCTION",  "EH_LABEL",
+      "GC_LABEL",     "KILL",          "EXTRACT_SUBREG",   "INSERT_SUBREG",
+      "IMPLICIT_DEF", "SUBREG_TO_REG", "COPY_TO_REGCLASS", "DBG_VALUE",
+      "REG_SEQUENCE", "COPY",          "BUNDLE",           "LIFETIME_START",
+      "LIFETIME_END", "STACKMAP",      "PATCHPOINT",       0};
   const DenseMap<const Record*, CodeGenInstruction*> &Insts = getInstructions();
   for (const char *const *p = FixedInstrs; *p; ++p) {
     const CodeGenInstruction *Instr = GetInstByName(*p, Insts, Records);
@@ -343,8 +319,10 @@ void CodeGenTarget::ComputeInstrsByEnum() const {
 
   // All of the instructions are now in random order based on the map iteration.
   // Sort them by name.
-  std::sort(InstrsByEnum.begin()+EndOfPredefines, InstrsByEnum.end(),
-            SortInstByName());
+  std::sort(InstrsByEnum.begin() + EndOfPredefines, InstrsByEnum.end(),
+            [](const CodeGenInstruction *Rec1, const CodeGenInstruction *Rec2) {
+    return Rec1->TheDef->getName() < Rec2->TheDef->getName();
+  });
 }
 
 
@@ -353,6 +331,46 @@ void CodeGenTarget::ComputeInstrsByEnum() const {
 ///
 bool CodeGenTarget::isLittleEndianEncoding() const {
   return getInstructionSet()->getValueAsBit("isLittleEndianEncoding");
+}
+
+/// reverseBitsForLittleEndianEncoding - For little-endian instruction bit
+/// encodings, reverse the bit order of all instructions.
+void CodeGenTarget::reverseBitsForLittleEndianEncoding() {
+  if (!isLittleEndianEncoding())
+    return;
+
+  std::vector<Record*> Insts = Records.getAllDerivedDefinitions("Instruction");
+  for (std::vector<Record*>::iterator I = Insts.begin(), E = Insts.end();
+       I != E; ++I) {
+    Record *R = *I;
+    if (R->getValueAsString("Namespace") == "TargetOpcode" ||
+        R->getValueAsBit("isPseudo"))
+      continue;
+
+    BitsInit *BI = R->getValueAsBitsInit("Inst");
+
+    unsigned numBits = BI->getNumBits();
+ 
+    SmallVector<Init *, 16> NewBits(numBits);
+ 
+    for (unsigned bit = 0, end = numBits / 2; bit != end; ++bit) {
+      unsigned bitSwapIdx = numBits - bit - 1;
+      Init *OrigBit = BI->getBit(bit);
+      Init *BitSwap = BI->getBit(bitSwapIdx);
+      NewBits[bit]        = BitSwap;
+      NewBits[bitSwapIdx] = OrigBit;
+    }
+    if (numBits % 2) {
+      unsigned middle = (numBits + 1) / 2;
+      NewBits[middle] = BI->getBit(middle);
+    }
+
+    BitsInit *NewBI = BitsInit::get(NewBits);
+
+    // Update the bits in reversed order so that emitInstrOpBits will get the
+    // correct endianness.
+    R->getValue("Inst")->setValue(NewBI);
+  }
 }
 
 /// guessInstructionProperties - Return true if it's OK to guess instruction
@@ -428,6 +446,7 @@ CodeGenIntrinsic::CodeGenIntrinsic(Record *R) {
   isCommutative = false;
   canThrow = false;
   isNoReturn = false;
+  isNoDuplicate = false;
 
   if (DefName.size() <= 4 ||
       std::string(DefName.begin(), DefName.begin() + 4) != "int_")
@@ -486,7 +505,7 @@ CodeGenIntrinsic::CodeGenIntrinsic(Record *R) {
     } else {
       VT = getValueType(TyEl->getValueAsDef("VT"));
     }
-    if (EVT(VT).isOverloaded()) {
+    if (MVT(VT).isOverloaded()) {
       OverloadedVTs.push_back(VT);
       isOverloaded = true;
     }
@@ -520,7 +539,7 @@ CodeGenIntrinsic::CodeGenIntrinsic(Record *R) {
     } else
       VT = getValueType(TyEl->getValueAsDef("VT"));
 
-    if (EVT(VT).isOverloaded()) {
+    if (MVT(VT).isOverloaded()) {
       OverloadedVTs.push_back(VT);
       isOverloaded = true;
     }
@@ -552,6 +571,8 @@ CodeGenIntrinsic::CodeGenIntrinsic(Record *R) {
       isCommutative = true;
     else if (Property->getName() == "Throws")
       canThrow = true;
+    else if (Property->getName() == "IntrNoDuplicate")
+      isNoDuplicate = true;
     else if (Property->getName() == "IntrNoReturn")
       isNoReturn = true;
     else if (Property->isSubClassOf("NoCapture")) {

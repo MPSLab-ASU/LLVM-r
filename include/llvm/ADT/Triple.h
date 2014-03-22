@@ -46,33 +46,34 @@ public:
   enum ArchType {
     UnknownArch,
 
-    arm,     // ARM: arm, armv.*, xscale
-    aarch64, // AArch64: aarch64
-    hexagon, // Hexagon: hexagon
-    mips,    // MIPS: mips, mipsallegrex
-    mipsel,  // MIPSEL: mipsel, mipsallegrexel
-    mips64,  // MIPS64: mips64
-    mips64el,// MIPS64EL: mips64el
-    msp430,  // MSP430: msp430
-    or1k,    // OR1K: or1k
-    ppc,     // PPC: powerpc
-    ppc64,   // PPC64: powerpc64, ppu
-    ppc64le, // PPC64LE: powerpc64le
-    r600,    // R600: AMD GPUs HD2XXX - HD6XXX
-    sparc,   // Sparc: sparc
-    sparcv9, // Sparcv9: Sparcv9
-    systemz, // SystemZ: s390x
-    tce,     // TCE (http://tce.cs.tut.fi/): tce
-    thumb,   // Thumb: thumb, thumbv.*
-    x86,     // X86: i[3-9]86
-    x86_64,  // X86-64: amd64, x86_64
-    xcore,   // XCore: xcore
-    nvptx,   // NVPTX: 32-bit
-    nvptx64, // NVPTX: 64-bit
-    le32,    // le32: generic little-endian 32-bit CPU (PNaCl / Emscripten)
-    amdil,   // amdil: amd IL
-    spir,    // SPIR: standard portable IR for OpenCL 32-bit version
-    spir64   // SPIR: standard portable IR for OpenCL 64-bit version
+    arm,        // ARM: arm, armv.*, xscale
+    aarch64,    // AArch64 (little endian): aarch64
+    aarch64_be, // AArch64 (big endian): aarch64_be
+    hexagon,    // Hexagon: hexagon
+    mips,       // MIPS: mips, mipsallegrex
+    mipsel,     // MIPSEL: mipsel, mipsallegrexel
+    mips64,     // MIPS64: mips64
+    mips64el,   // MIPS64EL: mips64el
+    msp430,     // MSP430: msp430
+    or1k,       // OR1K: or1ks
+    ppc,        // PPC: powerpc
+    ppc64,      // PPC64: powerpc64, ppu
+    ppc64le,    // PPC64LE: powerpc64le
+    r600,       // R600: AMD GPUs HD2XXX - HD6XXX
+    sparc,      // Sparc: sparc
+    sparcv9,    // Sparcv9: Sparcv9
+    systemz,    // SystemZ: s390x
+    tce,        // TCE (http://tce.cs.tut.fi/): tce
+    thumb,      // Thumb: thumb, thumbv.*
+    x86,        // X86: i[3-9]86
+    x86_64,     // X86-64: amd64, x86_64
+    xcore,      // XCore: xcore
+    nvptx,      // NVPTX: 32-bit
+    nvptx64,    // NVPTX: 64-bit
+    le32,       // le32: generic little-endian 32-bit CPU (PNaCl / Emscripten)
+    amdil,      // amdil: amd IL
+    spir,       // SPIR: standard portable IR for OpenCL 32-bit version
+    spir64      // SPIR: standard portable IR for OpenCL 64-bit version
   };
   enum VendorType {
     UnknownVendor,
@@ -121,10 +122,17 @@ public:
     GNUEABI,
     GNUEABIHF,
     GNUX32,
+    CODE16,
     EABI,
-    MachO,
+    EABIHF,
     Android,
-    ELF
+  };
+  enum ObjectFormatType {
+    UnknownObjectFormat,
+
+    COFF,
+    ELF,
+    MachO,
   };
 
 private:
@@ -142,13 +150,16 @@ private:
   /// The parsed Environment type.
   EnvironmentType Environment;
 
+  /// The object format type.
+  ObjectFormatType ObjectFormat;
+
 public:
   /// @name Constructors
   /// @{
 
   /// \brief Default constructor is the same as an empty string and leaves all
   /// triple fields unknown.
-  Triple() : Data(), Arch(), Vendor(), OS(), Environment() {}
+  Triple() : Data(), Arch(), Vendor(), OS(), Environment(), ObjectFormat() {}
 
   explicit Triple(const Twine &Str);
   Triple(const Twine &ArchStr, const Twine &VendorStr, const Twine &OSStr);
@@ -186,6 +197,9 @@ public:
 
   /// getEnvironment - Get the parsed environment type of this triple.
   EnvironmentType getEnvironment() const { return Environment; }
+
+  /// getFormat - Get the object format for this triple.
+  ObjectFormatType getObjectFormat() const { return ObjectFormat; }
 
   /// getOSVersion - Parse the version number from the OS name component of the
   /// triple, if present.
@@ -342,18 +356,17 @@ public:
 
   /// \brief Tests whether the OS uses the ELF binary format.
   bool isOSBinFormatELF() const {
-    return !isOSDarwin() && !isOSWindows();
+    return getObjectFormat() == Triple::ELF;
   }
 
   /// \brief Tests whether the OS uses the COFF binary format.
   bool isOSBinFormatCOFF() const {
-    return isOSWindows();
+    return getObjectFormat() == Triple::COFF;
   }
 
   /// \brief Tests whether the environment is MachO.
-  // FIXME: Should this be an OSBinFormat predicate?
-  bool isEnvironmentMachO() const {
-    return getEnvironment() == Triple::MachO || isOSDarwin();
+  bool isOSBinFormatMachO() const {
+    return getObjectFormat() == Triple::MachO;
   }
 
   /// @}
@@ -375,6 +388,9 @@ public:
   /// setEnvironment - Set the environment (fourth) component of the triple
   /// to a known type.
   void setEnvironment(EnvironmentType Kind);
+
+  /// setObjectFormat - Set the object file format
+  void setObjectFormat(ObjectFormatType Kind);
 
   /// setTriple - Set all components to the new triple \p Str.
   void setTriple(const Twine &Str);

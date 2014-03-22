@@ -15,19 +15,19 @@
 using namespace llvm;
 
 void DWARFDebugLoc::dump(raw_ostream &OS) const {
-  for (LocationLists::const_iterator I = Locations.begin(), E = Locations.end(); I != E; ++I) {
-    OS << format("0x%8.8x: ", I->Offset);
+  for (const LocationList &L : Locations) {
+    OS << format("0x%8.8x: ", L.Offset);
     const unsigned Indent = 12;
-    for (SmallVectorImpl<Entry>::const_iterator I2 = I->Entries.begin(), E2 = I->Entries.end(); I2 != E2; ++I2) {
-      if (I2 != I->Entries.begin())
+    for (const Entry &E : L.Entries) {
+      if (&E != L.Entries.begin())
         OS.indent(Indent);
-      OS << "Beginning address offset: " << format("0x%016" PRIx64, I2->Begin)
+      OS << "Beginning address offset: " << format("0x%016" PRIx64, E.Begin)
          << '\n';
       OS.indent(Indent) << "   Ending address offset: "
-                        << format("0x%016" PRIx64, I2->End) << '\n';
+                        << format("0x%016" PRIx64, E.End) << '\n';
       OS.indent(Indent) << "    Location description: ";
-      for (SmallVectorImpl<unsigned char>::const_iterator I3 = I2->Loc.begin(), E3 = I2->Loc.end(); I3 != E3; ++I3) {
-        OS << format("%2.2x ", *I3);
+      for (unsigned char Loc : E.Loc) {
+        OS << format("%2.2x ", Loc);
       }
       OS << "\n\n";
     }
@@ -36,7 +36,7 @@ void DWARFDebugLoc::dump(raw_ostream &OS) const {
 
 void DWARFDebugLoc::parse(DataExtractor data, unsigned AddressSize) {
   uint32_t Offset = 0;
-  while (data.isValidOffset(Offset)) {
+  while (data.isValidOffset(Offset+AddressSize-1)) {
     Locations.resize(Locations.size() + 1);
     LocationList &Loc = Locations.back();
     Loc.Offset = Offset;
@@ -68,7 +68,9 @@ void DWARFDebugLoc::parse(DataExtractor data, unsigned AddressSize) {
       Offset += Bytes;
       E.Loc.reserve(str.size());
       std::copy(str.begin(), str.end(), std::back_inserter(E.Loc));
-      Loc.Entries.push_back(llvm_move(E));
+      Loc.Entries.push_back(std::move(E));
     }
   }
+  if (data.isValidOffset(Offset))
+    llvm::errs() << "error: failed to consume entire .debug_loc section\n";
 }

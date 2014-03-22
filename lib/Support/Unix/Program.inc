@@ -36,6 +36,9 @@
 #include <unistd.h>
 #endif
 #ifdef HAVE_POSIX_SPAWN
+#ifdef __sun__
+#define  _RESTRICT_KYWD
+#endif
 #include <spawn.h>
 #if !defined(__APPLE__)
   extern char **environ;
@@ -415,6 +418,7 @@ ProcessInfo sys::Wait(const ProcessInfo &PI, unsigned SecondsToWait,
 #else
   if (ErrMsg)
     *ErrMsg = "Program::Wait is not implemented on this platform yet!";
+  ProcessInfo WaitResult;
   WaitResult.ReturnCode = -2;
 #endif
   return WaitResult;
@@ -426,11 +430,6 @@ error_code sys::ChangeStdinToBinary(){
 }
 
 error_code sys::ChangeStdoutToBinary(){
-  // Do nothing, as Unix doesn't differentiate between text and binary.
-  return make_error_code(errc::success);
-}
-
-error_code sys::ChangeStderrToBinary(){
   // Do nothing, as Unix doesn't differentiate between text and binary.
   return make_error_code(errc::success);
 }

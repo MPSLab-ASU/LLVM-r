@@ -167,9 +167,7 @@ bool LiveRangeEdit::foldAsLoad(LiveInterval *LI,
   MachineInstr *DefMI = 0, *UseMI = 0;
 
   // Check that there is a single def and a single use.
-  for (MachineRegisterInfo::reg_nodbg_iterator I = MRI.reg_nodbg_begin(LI->reg),
-       E = MRI.reg_nodbg_end(); I != E; ++I) {
-    MachineOperand &MO = I.getOperand();
+  for (MachineOperand &MO : MRI.reg_nodbg_operands(LI->reg)) {
     MachineInstr *MI = MO.getParent();
     if (MO.isDef()) {
       if (DefMI && DefMI != MI)
@@ -262,9 +260,9 @@ void LiveRangeEdit::eliminateDeadDef(MachineInstr *MI, ToShrinkSet &ToShrink) {
       else if (MOI->isDef()) {
         for (MCRegUnitIterator Units(Reg, MRI.getTargetRegisterInfo());
              Units.isValid(); ++Units) {
-          if (LiveInterval *LI = LIS.getCachedRegUnit(*Units)) {
-            if (VNInfo *VNI = LI->getVNInfoAt(Idx))
-              LI->removeValNo(VNI);
+          if (LiveRange *LR = LIS.getCachedRegUnit(*Units)) {
+            if (VNInfo *VNI = LR->getVNInfoAt(Idx))
+              LR->removeValNo(VNI);
           }
         }
       }
@@ -278,7 +276,7 @@ void LiveRangeEdit::eliminateDeadDef(MachineInstr *MI, ToShrinkSet &ToShrink) {
     // Always shrink COPY uses that probably come from live range splitting.
     if (MI->readsVirtualRegister(Reg) &&
         (MI->isCopy() || MOI->isDef() || MRI.hasOneNonDBGUse(Reg) ||
-         LiveRangeQuery(LI, Idx).isKill()))
+         LI.Query(Idx).isKill()))
       ToShrink.insert(&LI);
 
     // Remove defined value.
@@ -414,6 +412,6 @@ LiveRangeEdit::calculateRegClassAndHint(MachineFunction &MF,
     if (MRI.recomputeRegClass(LI.reg, MF.getTarget()))
       DEBUG(dbgs() << "Inflated " << PrintReg(LI.reg) << " to "
                    << MRI.getRegClass(LI.reg)->getName() << '\n');
-    VRAI.CalculateWeightAndHint(LI);
+    VRAI.calculateSpillWeightAndHint(LI);
   }
 }

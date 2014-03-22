@@ -1,7 +1,4 @@
-; We use a temporary file so that the test fails when opt crashes.
-
-; RUN: opt < %s -globalopt -S > %t
-; RUN: FileCheck %s < %t
+; RUN: opt < %s -globalopt -S | FileCheck %s
 
 @foo1 = alias void ()* @foo2
 ; CHECK: @foo1 = alias void ()* @foo2
@@ -12,8 +9,10 @@
 @bar1  = alias void ()* @bar2
 ; CHECK: @bar1 = alias void ()* @bar2
 
-declare void @bar2()
-; CHECK: declare void @bar2()
+define void @bar2() {
+  ret void
+}
+; CHECK: define void @bar2()
 
 define void @baz() {
 entry:

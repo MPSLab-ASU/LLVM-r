@@ -109,7 +109,7 @@ void RemoteMemoryManager::notifyObjectLoaded(ExecutionEngine *EE,
       CurOffset += Size;
     }
   }
-  // Adjust to keep code and data aligned on seperate pages.
+  // Adjust to keep code and data aligned on separate pages.
   CurOffset = (CurOffset + MaxAlign - 1) / MaxAlign * MaxAlign;
   for (size_t i = 0, e = NumSections; i != e; ++i) {
     Allocation &Section = UnmappedSections[i];
@@ -129,7 +129,7 @@ void RemoteMemoryManager::notifyObjectLoaded(ExecutionEngine *EE,
 
   // Allocate space in the remote target.
   uint64_t RemoteAddr;
-  if (Target->allocateSpace(CurOffset, MaxAlign, RemoteAddr))
+  if (!Target->allocateSpace(CurOffset, MaxAlign, RemoteAddr))
     report_fatal_error(Target->getErrorMsg());
 
   // Map the section addresses so relocations will get updated in the local
@@ -155,13 +155,13 @@ bool RemoteMemoryManager::finalizeMemory(std::string *ErrMsg) {
     uint64_t RemoteAddr = I->first;
     const Allocation &Section = I->second;
     if (Section.IsCode) {
-      Target->loadCode(RemoteAddr, Section.MB.base(), Section.MB.size());
-
+      if (!Target->loadCode(RemoteAddr, Section.MB.base(), Section.MB.size()))
+        report_fatal_error(Target->getErrorMsg());
       DEBUG(dbgs() << "  loading code: " << Section.MB.base()
             << " to remote: 0x" << format("%llx", RemoteAddr) << "\n");
     } else {
-      Target->loadData(RemoteAddr, Section.MB.base(), Section.MB.size());
-
+      if (!Target->loadData(RemoteAddr, Section.MB.base(), Section.MB.size()))
+        report_fatal_error(Target->getErrorMsg());
       DEBUG(dbgs() << "  loading data: " << Section.MB.base()
             << " to remote: 0x" << format("%llx", RemoteAddr) << "\n");
     }
@@ -203,28 +203,4 @@ uint8_t *RemoteMemoryManager::allocateGlobal(uintptr_t Size, unsigned Alignment)
 }
 void RemoteMemoryManager::deallocateFunctionBody(void *Body) {
   llvm_unreachable("Unexpected!");
-}
-
-static int jit_noop() {
-  return 0;
-}
-
-void *RemoteMemoryManager::getPointerToNamedFunction(const std::string &Name,
-                                                        bool AbortOnFailure) {
-  // We should not invoke parent's ctors/dtors from generated main()!
-  // On Mingw and Cygwin, the symbol __main is resolved to
-  // callee's(eg. tools/lli) one, to invoke wrong duplicated ctors
-  // (and register wrong callee's dtors with atexit(3)).
-  // We expect ExecutionEngine::runStaticConstructorsDestructors()
-  // is called before ExecutionEngine::runFunctionAsMain() is called.
-  if (Name == "__main") return (void*)(intptr_t)&jit_noop;
-
-  // FIXME: Would it be responsible to provide GOT?
-  if (AbortOnFailure) {
-    if (Name == "_GLOBAL_OFFSET_TABLE_")
-      report_fatal_error("Program used external function '" + Name +
-                         "' which could not be resolved!");
-  }
-
-  return NULL;
 }

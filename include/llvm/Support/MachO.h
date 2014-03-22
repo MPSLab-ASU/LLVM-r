@@ -21,7 +21,7 @@
 namespace llvm {
   namespace MachO {
     // Enums from <mach-o/loader.h>
-    enum LLVM_ENUM_INT_TYPE(uint32_t) {
+    enum : uint32_t {
       // Constants for the "magic" field in llvm::MachO::mach_header and
       // llvm::MachO::mach_header_64
       MH_MAGIC    = 0xFEEDFACEu,
@@ -76,12 +76,12 @@ namespace llvm {
       MH_DEAD_STRIPPABLE_DYLIB   = 0x00400000u
     };
 
-    enum LLVM_ENUM_INT_TYPE(uint32_t) {
+    enum : uint32_t {
       // Flags for the "cmd" field in llvm::MachO::load_command
       LC_REQ_DYLD    = 0x80000000u
     };
 
-    enum LoadCommandType LLVM_ENUM_INT_TYPE(uint32_t) {
+    enum LoadCommandType : uint32_t {
       // Constants for the "cmd" field in llvm::MachO::load_command
       LC_SEGMENT              = 0x00000001u,
       LC_SYMTAB               = 0x00000002u,
@@ -131,7 +131,7 @@ namespace llvm {
       LC_LINKER_OPTIONS       = 0x0000002Du
     };
 
-    enum LLVM_ENUM_INT_TYPE(uint32_t) {
+    enum : uint32_t {
       // Constant bits for the "flags" field in llvm::MachO::segment_command
       SG_HIGHVM              = 0x1u,
       SG_FVMLIB              = 0x2u,
@@ -147,7 +147,9 @@ namespace llvm {
       SECTION_ATTRIBUTES_SYS = 0x00ffff00u  // SECTION_ATTRIBUTES_SYS
     };
 
-    enum SectionType {
+    /// These are the section type and attributes fields.  A MachO section can
+    /// have only one Type, but can have any of the attributes specified.
+    enum SectionType : uint32_t {
       // Constant masks for the "flags[7:0]" field in llvm::MachO::section and
       // llvm::MachO::section_64 (mask "flags" with SECTION_TYPE)
       S_REGULAR                             = 0x00u,
@@ -171,10 +173,12 @@ namespace llvm {
       S_THREAD_LOCAL_ZEROFILL               = 0x12u,
       S_THREAD_LOCAL_VARIABLES              = 0x13u,
       S_THREAD_LOCAL_VARIABLE_POINTERS      = 0x14u,
-      S_THREAD_LOCAL_INIT_FUNCTION_POINTERS = 0x15u
+      S_THREAD_LOCAL_INIT_FUNCTION_POINTERS = 0x15u,
+
+      LAST_KNOWN_SECTION_TYPE = S_THREAD_LOCAL_INIT_FUNCTION_POINTERS
     };
 
-    enum LLVM_ENUM_INT_TYPE(uint32_t) {
+    enum : uint32_t {
       // Constant masks for the "flags[31:24]" field in llvm::MachO::section and
       // llvm::MachO::section_64 (mask "flags" with SECTION_ATTRIBUTES_USR)
       S_ATTR_PURE_INSTRUCTIONS   = 0x80000000u,
@@ -268,8 +272,8 @@ namespace llvm {
     enum {
       EXPORT_SYMBOL_FLAGS_KIND_MASK           = 0x03u,
       EXPORT_SYMBOL_FLAGS_WEAK_DEFINITION     = 0x04u,
-      EXPORT_SYMBOL_FLAGS_INDIRECT_DEFINITION = 0x08u,
-      EXPORT_SYMBOL_FLAGS_HAS_SPECIALIZATIONS = 0x10u
+      EXPORT_SYMBOL_FLAGS_REEXPORT            = 0x08u,
+      EXPORT_SYMBOL_FLAGS_STUB_AND_RESOLVER   = 0x10u
     };
 
     enum ExportSymbolKind {
@@ -348,7 +352,7 @@ namespace llvm {
       N_LENG    = 0xFEu
     };
 
-    enum LLVM_ENUM_INT_TYPE(uint32_t) {
+    enum : uint32_t {
       // Constant values for the r_symbolnum field in an
       // llvm::MachO::relocation_info structure when r_extern is 0.
       R_ABS = 0,
@@ -739,9 +743,10 @@ namespace llvm {
     };
 
     struct version_min_command {
-      uint32_t cmd;
-      uint32_t cmdsize;
-      uint32_t version;
+      uint32_t cmd;       // LC_VERSION_MIN_MACOSX or
+                          // LC_VERSION_MIN_IPHONEOS
+      uint32_t cmdsize;   // sizeof(struct version_min_command)
+      uint32_t version;   // X.Y.Z is encoded in nibbles xxxx.yy.zz
       uint32_t reserved;
     };
 
@@ -893,7 +898,7 @@ namespace llvm {
     }
 
     // Enums from <mach/machine.h>
-    enum LLVM_ENUM_INT_TYPE(uint32_t) {
+    enum : uint32_t {
       // Capability bits used in the definition of cpu_type.
       CPU_ARCH_MASK  = 0xff000000,   // Mask for architecture bits
       CPU_ARCH_ABI64 = 0x01000000    // 64 bit ABI
@@ -913,7 +918,7 @@ namespace llvm {
       CPU_TYPE_POWERPC64 = CPU_TYPE_POWERPC | CPU_ARCH_ABI64
     };
 
-    enum LLVM_ENUM_INT_TYPE(uint32_t) {
+    enum : uint32_t {
       // Capability bits used in the definition of cpusubtype.
       CPU_SUB_TYPE_MASK  = 0xff000000,   // Mask for architecture bits
       CPU_SUB_TYPE_LIB64 = 0x80000000,   // 64 bit libraries
@@ -948,7 +953,8 @@ namespace llvm {
 
       CPU_SUBTYPE_X86_ALL     = 3,
       CPU_SUBTYPE_X86_64_ALL  = 3,
-      CPU_SUBTYPE_X86_ARCH1   = 4
+      CPU_SUBTYPE_X86_ARCH1   = 4,
+      CPU_SUBTYPE_X86_64_H    = 8
     };
     static inline int CPU_SUBTYPE_INTEL(int Family, int Model) {
       return Family | (Model << 4);
@@ -972,7 +978,7 @@ namespace llvm {
       CPU_SUBTYPE_ARM_V5TEJ   = 7,
       CPU_SUBTYPE_ARM_XSCALE  = 8,
       CPU_SUBTYPE_ARM_V7      = 9,
-      CPU_SUBTYPE_ARM_V7F     = 10,
+      //  unused  ARM_V7F     = 10,
       CPU_SUBTYPE_ARM_V7S     = 11,
       CPU_SUBTYPE_ARM_V7K     = 12,
       CPU_SUBTYPE_ARM_V6M     = 14,

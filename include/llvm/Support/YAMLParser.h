@@ -38,12 +38,12 @@
 #ifndef LLVM_SUPPORT_YAMLPARSER_H
 #define LLVM_SUPPORT_YAMLPARSER_H
 
-#include "llvm/ADT/OwningPtr.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Allocator.h"
 #include "llvm/Support/SMLoc.h"
 #include <limits>
+#include <map>
 #include <utility>
 
 namespace llvm {
@@ -95,17 +95,15 @@ public:
   void printError(Node *N, const Twine &Msg);
 
 private:
-  OwningPtr<Scanner> scanner;
-  OwningPtr<Document> CurrentDoc;
+  std::unique_ptr<Scanner> scanner;
+  std::unique_ptr<Document> CurrentDoc;
 
   friend class Document;
-
-  /// @brief Validate a %YAML x.x directive.
-  void handleYAMLDirective(const Token &);
 };
 
 /// @brief Abstract base class for all Nodes.
 class Node {
+   virtual void anchor();
 public:
   enum NodeKind {
     NK_Null,
@@ -116,11 +114,20 @@ public:
     NK_Alias
   };
 
-  Node(unsigned int Type, OwningPtr<Document>&, StringRef Anchor);
+  Node(unsigned int Type, std::unique_ptr<Document> &, StringRef Anchor,
+       StringRef Tag);
 
   /// @brief Get the value of the anchor attached to this node. If it does not
   ///        have one, getAnchor().size() will be 0.
   StringRef getAnchor() const { return Anchor; }
+
+  /// \brief Get the tag as it was written in the document. This does not
+  ///   perform tag resolution.
+  StringRef getRawTag() const { return Tag; }
+
+  /// \brief Get the verbatium tag for a given Node. This performs tag resoluton
+  ///   and substitution.
+  std::string getVerbatimTag() const;
 
   SMRange getSourceRange() const { return SourceRange; }
   void setSourceRange(SMRange SR) { SourceRange = SR; }
@@ -148,7 +155,7 @@ public:
   }
 
 protected:
-  OwningPtr<Document> &Doc;
+  std::unique_ptr<Document> &Doc;
   SMRange SourceRange;
 
   void operator delete(void *) throw() {}
@@ -158,6 +165,8 @@ protected:
 private:
   unsigned int TypeID;
   StringRef Anchor;
+  /// \brief The tag as typed in the document.
+  StringRef Tag;
 };
 
 /// @brief A null value.
@@ -165,8 +174,10 @@ private:
 /// Example:
 ///   !!null null
 class NullNode : public Node {
+  void anchor() override;
 public:
-  NullNode(OwningPtr<Document> &D) : Node(NK_Null, D, StringRef()) {}
+  NullNode(std::unique_ptr<Document> &D)
+      : Node(NK_Null, D, StringRef(), StringRef()) {}
 
   static inline bool classof(const Node *N) {
     return N->getType() == NK_Null;
@@ -179,10 +190,11 @@ public:
 /// Example:
 ///   Adena
 class ScalarNode : public Node {
+  void anchor() override;
 public:
-  ScalarNode(OwningPtr<Document> &D, StringRef Anchor, StringRef Val)
-    : Node(NK_Scalar, D, Anchor)
-    , Value(Val) {
+  ScalarNode(std::unique_ptr<Document> &D, StringRef Anchor, StringRef Tag,
+             StringRef Val)
+      : Node(NK_Scalar, D, Anchor, Tag), Value(Val) {
     SMLoc Start = SMLoc::getFromPointer(Val.begin());
     SMLoc End = SMLoc::getFromPointer(Val.end());
     SourceRange = SMRange(Start, End);
@@ -220,12 +232,10 @@ private:
 /// Example:
 ///   Section: .text
 class KeyValueNode : public Node {
+  void anchor() override;
 public:
-  KeyValueNode(OwningPtr<Document> &D)
-    : Node(NK_KeyValue, D, StringRef())
-    , Key(0)
-    , Value(0)
-  {}
+  KeyValueNode(std::unique_ptr<Document> &D)
+      : Node(NK_KeyValue, D, StringRef(), StringRef()), Key(0), Value(0) {}
 
   /// @brief Parse and return the key.
   ///
@@ -241,7 +251,7 @@ public:
   /// @returns The value, or nullptr if failed() == true.
   Node *getValue();
 
-  virtual void skip() LLVM_OVERRIDE {
+  void skip() override {
     getKey()->skip();
     getValue()->skip();
   }
@@ -331,6 +341,7 @@ void skip(CollectionType &C) {
 ///   Name: _main
 ///   Scope: Global
 class MappingNode : public Node {
+  void anchor() override;
 public:
   enum MappingType {
     MT_Block,
@@ -338,13 +349,10 @@ public:
     MT_Inline ///< An inline mapping node is used for "[key: value]".
   };
 
-  MappingNode(OwningPtr<Document> &D, StringRef Anchor, MappingType MT)
-    : Node(NK_Mapping, D, Anchor)
-    , Type(MT)
-    , IsAtBeginning(true)
-    , IsAtEnd(false)
-    , CurrentEntry(0)
-  {}
+  MappingNode(std::unique_ptr<Document> &D, StringRef Anchor, StringRef Tag,
+              MappingType MT)
+      : Node(NK_Mapping, D, Anchor, Tag), Type(MT), IsAtBeginning(true),
+        IsAtEnd(false), CurrentEntry(0) {}
 
   friend class basic_collection_iterator<MappingNode, KeyValueNode>;
   typedef basic_collection_iterator<MappingNode, KeyValueNode> iterator;
@@ -357,7 +365,7 @@ public:
 
   iterator end() { return iterator(); }
 
-  virtual void skip() LLVM_OVERRIDE {
+  void skip() override {
     yaml::skip(*this);
   }
 
@@ -383,6 +391,7 @@ private:
 ///   - Hello
 ///   - World
 class SequenceNode : public Node {
+  void anchor() override;
 public:
   enum SequenceType {
     ST_Block,
@@ -397,14 +406,12 @@ public:
     ST_Indentless
   };
 
-  SequenceNode(OwningPtr<Document> &D, StringRef Anchor, SequenceType ST)
-    : Node(NK_Sequence, D, Anchor)
-    , SeqType(ST)
-    , IsAtBeginning(true)
-    , IsAtEnd(false)
-    , WasPreviousTokenFlowEntry(true) // Start with an imaginary ','.
-    , CurrentEntry(0)
-  {}
+  SequenceNode(std::unique_ptr<Document> &D, StringRef Anchor, StringRef Tag,
+               SequenceType ST)
+      : Node(NK_Sequence, D, Anchor, Tag), SeqType(ST), IsAtBeginning(true),
+        IsAtEnd(false),
+        WasPreviousTokenFlowEntry(true), // Start with an imaginary ','.
+        CurrentEntry(0) {}
 
   friend class basic_collection_iterator<SequenceNode, Node>;
   typedef basic_collection_iterator<SequenceNode, Node> iterator;
@@ -419,7 +426,7 @@ public:
 
   iterator end() { return iterator(); }
 
-  virtual void skip() LLVM_OVERRIDE {
+  void skip() override {
     yaml::skip(*this);
   }
 
@@ -440,9 +447,10 @@ private:
 /// Example:
 ///   *AnchorName
 class AliasNode : public Node {
+  void anchor() override;
 public:
-  AliasNode(OwningPtr<Document> &D, StringRef Val)
-    : Node(NK_Alias, D, StringRef()), Name(Val) {}
+  AliasNode(std::unique_ptr<Document> &D, StringRef Val)
+      : Node(NK_Alias, D, StringRef(), StringRef()), Name(Val) {}
 
   StringRef getName() const { return Name; }
   Node *getTarget();
@@ -475,6 +483,10 @@ public:
     return Root = parseBlockNode();
   }
 
+  const std::map<StringRef, StringRef> &getTagMap() const {
+    return TagMap;
+  }
+
 private:
   friend class Node;
   friend class document_iterator;
@@ -490,17 +502,22 @@ private:
   ///        document.
   Node *Root;
 
+  /// \brief Maps tag prefixes to their expansion.
+  std::map<StringRef, StringRef> TagMap;
+
   Token &peekNext();
   Token getNext();
   void setError(const Twine &Message, Token &Location) const;
   bool failed() const;
 
-  void handleTagDirective(const Token &Tag) {
-    // TODO: Track tags.
-  }
-
   /// @brief Parse %BLAH directives and return true if any were encountered.
   bool parseDirectives();
+
+  /// \brief Parse %YAML
+  void parseYAMLDirective();
+
+  /// \brief Parse %TAG
+  void parseTAGDirective();
 
   /// @brief Consume the next token and error if it is not \a TK.
   bool expectToken(int TK);
@@ -510,7 +527,7 @@ private:
 class document_iterator {
 public:
   document_iterator() : Doc(0) {}
-  document_iterator(OwningPtr<Document> &D) : Doc(&D) {}
+  document_iterator(std::unique_ptr<Document> &D) : Doc(&D) {}
 
   bool operator ==(const document_iterator &Other) {
     if (isAtEnd() || Other.isAtEnd())
@@ -537,16 +554,14 @@ public:
     return *Doc->get();
   }
 
-  OwningPtr<Document> &operator ->() {
-    return *Doc;
-  }
+  std::unique_ptr<Document> &operator->() { return *Doc; }
 
 private:
   bool isAtEnd() const {
     return !Doc || !*Doc;
   }
 
-  OwningPtr<Document> *Doc;
+  std::unique_ptr<Document> *Doc;
 };
 
 }

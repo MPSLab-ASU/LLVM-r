@@ -16,6 +16,7 @@
 #include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCInst.h"
 #include "llvm/MC/MCMachOSymbolFlags.h"
+#include "llvm/MC/MCObjectFileInfo.h"
 #include "llvm/MC/MCObjectStreamer.h"
 #include "llvm/MC/MCSection.h"
 #include "llvm/MC/MCSectionMachO.h"
@@ -30,82 +31,68 @@ namespace {
 
 class MCMachOStreamer : public MCObjectStreamer {
 private:
-  virtual void EmitInstToData(const MCInst &Inst);
+  void EmitInstToData(const MCInst &Inst, const MCSubtargetInfo &STI) override;
 
   void EmitDataRegion(DataRegionData::KindTy Kind);
   void EmitDataRegionEnd();
 public:
   MCMachOStreamer(MCContext &Context, MCAsmBackend &MAB, raw_ostream &OS,
                   MCCodeEmitter *Emitter)
-      : MCObjectStreamer(SK_MachOStreamer, Context, MAB, OS, Emitter) {}
+      : MCObjectStreamer(Context, MAB, OS, Emitter) {}
 
   /// @name MCStreamer Interface
   /// @{
 
-  virtual void InitSections();
-  virtual void InitToTextSection();
-  virtual void EmitLabel(MCSymbol *Symbol);
-  virtual void EmitDebugLabel(MCSymbol *Symbol);
-  virtual void EmitEHSymAttributes(const MCSymbol *Symbol,
-                                   MCSymbol *EHSymbol);
-  virtual void EmitAssemblerFlag(MCAssemblerFlag Flag);
-  virtual void EmitLinkerOptions(ArrayRef<std::string> Options);
-  virtual void EmitDataRegion(MCDataRegionType Kind);
-  virtual void EmitThumbFunc(MCSymbol *Func);
-  virtual bool EmitSymbolAttribute(MCSymbol *Symbol, MCSymbolAttr Attribute);
-  virtual void EmitSymbolDesc(MCSymbol *Symbol, unsigned DescValue);
-  virtual void EmitCommonSymbol(MCSymbol *Symbol, uint64_t Size,
-                                unsigned ByteAlignment);
-  virtual void BeginCOFFSymbolDef(const MCSymbol *Symbol) {
+  void EmitLabel(MCSymbol *Symbol) override;
+  void EmitDebugLabel(MCSymbol *Symbol) override;
+  void EmitEHSymAttributes(const MCSymbol *Symbol, MCSymbol *EHSymbol) override;
+  void EmitAssemblerFlag(MCAssemblerFlag Flag) override;
+  void EmitLinkerOptions(ArrayRef<std::string> Options) override;
+  void EmitDataRegion(MCDataRegionType Kind) override;
+  void EmitVersionMin(MCVersionMinType Kind, unsigned Major,
+                      unsigned Minor, unsigned Update) override;
+  void EmitThumbFunc(MCSymbol *Func) override;
+  bool EmitSymbolAttribute(MCSymbol *Symbol, MCSymbolAttr Attribute) override;
+  void EmitSymbolDesc(MCSymbol *Symbol, unsigned DescValue) override;
+  void EmitCommonSymbol(MCSymbol *Symbol, uint64_t Size,
+                        unsigned ByteAlignment) override;
+  void BeginCOFFSymbolDef(const MCSymbol *Symbol) override {
     llvm_unreachable("macho doesn't support this directive");
   }
-  virtual void EmitCOFFSymbolStorageClass(int StorageClass) {
+  void EmitCOFFSymbolStorageClass(int StorageClass) override {
     llvm_unreachable("macho doesn't support this directive");
   }
-  virtual void EmitCOFFSymbolType(int Type) {
+  void EmitCOFFSymbolType(int Type) override {
     llvm_unreachable("macho doesn't support this directive");
   }
-  virtual void EndCOFFSymbolDef() {
+  void EndCOFFSymbolDef() override {
     llvm_unreachable("macho doesn't support this directive");
   }
-  virtual void EmitELFSize(MCSymbol *Symbol, const MCExpr *Value) {
+  void EmitELFSize(MCSymbol *Symbol, const MCExpr *Value) override {
     llvm_unreachable("macho doesn't support this directive");
   }
-  virtual void EmitLocalCommonSymbol(MCSymbol *Symbol, uint64_t Size,
-                                     unsigned ByteAlignment);
-  virtual void EmitZerofill(const MCSection *Section, MCSymbol *Symbol = 0,
-                            uint64_t Size = 0, unsigned ByteAlignment = 0);
+  void EmitLocalCommonSymbol(MCSymbol *Symbol, uint64_t Size,
+                             unsigned ByteAlignment) override;
+  void EmitZerofill(const MCSection *Section, MCSymbol *Symbol = 0,
+                    uint64_t Size = 0, unsigned ByteAlignment = 0) override;
   virtual void EmitTBSSSymbol(const MCSection *Section, MCSymbol *Symbol,
-                              uint64_t Size, unsigned ByteAlignment = 0);
+                      uint64_t Size, unsigned ByteAlignment = 0) override;
 
-  virtual void EmitFileDirective(StringRef Filename) {
+  void EmitFileDirective(StringRef Filename) override {
     // FIXME: Just ignore the .file; it isn't important enough to fail the
     // entire assembly.
 
-    //report_fatal_error("unsupported directive: '.file'");
+    // report_fatal_error("unsupported directive: '.file'");
   }
 
-  virtual void FinishImpl();
-
-  /// @}
-
-  static bool classof(const MCStreamer *S) {
-    return S->getKind() == SK_MachOStreamer;
+  void EmitIdent(StringRef IdentString) override {
+    llvm_unreachable("macho doesn't support this directive");
   }
+
+  void FinishImpl() override;
 };
 
 } // end anonymous namespace.
-
-void MCMachOStreamer::InitSections() {
-  InitToTextSection();
-}
-
-void MCMachOStreamer::InitToTextSection() {
-  SwitchSection(getContext().getMachOSection(
-                                    "__TEXT", "__text",
-                                    MCSectionMachO::S_ATTR_PURE_INSTRUCTIONS, 0,
-                                    SectionKind::getText()));
-}
 
 void MCMachOStreamer::EmitEHSymAttributes(const MCSymbol *Symbol,
                                           MCSymbol *EHSymbol) {
@@ -206,6 +193,11 @@ void MCMachOStreamer::EmitDataRegion(MCDataRegionType Kind) {
     EmitDataRegionEnd();
     return;
   }
+}
+
+void MCMachOStreamer::EmitVersionMin(MCVersionMinType Kind, unsigned Major,
+                                     unsigned Minor, unsigned Update) {
+  getAssembler().setVersionMinInfo(Kind, Major, Minor, Update);
 }
 
 void MCMachOStreamer::EmitThumbFunc(MCSymbol *Symbol) {
@@ -337,9 +329,7 @@ void MCMachOStreamer::EmitCommonSymbol(MCSymbol *Symbol, uint64_t Size,
 void MCMachOStreamer::EmitLocalCommonSymbol(MCSymbol *Symbol, uint64_t Size,
                                             unsigned ByteAlignment) {
   // '.lcomm' is equivalent to '.zerofill'.
-  return EmitZerofill(getContext().getMachOSection("__DATA", "__bss",
-                                                   MCSectionMachO::S_ZEROFILL,
-                                                   0, SectionKind::getBSS()),
+  return EmitZerofill(getContext().getObjectFileInfo()->getDataBSSSection(),
                       Symbol, Size, ByteAlignment);
 }
 
@@ -380,13 +370,14 @@ void MCMachOStreamer::EmitTBSSSymbol(const MCSection *Section, MCSymbol *Symbol,
   return;
 }
 
-void MCMachOStreamer::EmitInstToData(const MCInst &Inst) {
+void MCMachOStreamer::EmitInstToData(const MCInst &Inst,
+                                     const MCSubtargetInfo &STI) {
   MCDataFragment *DF = getOrCreateDataFragment();
 
   SmallVector<MCFixup, 4> Fixups;
   SmallString<256> Code;
   raw_svector_ostream VecOS(Code);
-  getAssembler().getEmitter().EncodeInstruction(Inst, VecOS, Fixups);
+  getAssembler().getEmitter().EncodeInstruction(Inst, VecOS, Fixups, STI);
   VecOS.flush();
 
   // Add the fixups and data.

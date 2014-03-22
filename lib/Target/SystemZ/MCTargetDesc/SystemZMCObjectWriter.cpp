@@ -24,16 +24,14 @@ public:
 
 protected:
   // Override MCELFObjectTargetWriter.
-  virtual unsigned GetRelocType(const MCValue &Target, const MCFixup &Fixup,
-                                bool IsPCRel, bool IsRelocWithSymbol,
-                                int64_t Addend) const LLVM_OVERRIDE;
-  virtual const MCSymbol *ExplicitRelSym(const MCAssembler &Asm,
-                                         const MCValue &Target,
-                                         const MCFragment &F,
-                                         const MCFixup &Fixup,
-                                         bool IsPCRel) const LLVM_OVERRIDE;
+  unsigned GetRelocType(const MCValue &Target, const MCFixup &Fixup,
+                        bool IsPCRel, bool IsRelocWithSymbol,
+                        int64_t Addend) const override;
+  const MCSymbol *ExplicitRelSym(const MCAssembler &Asm, const MCValue &Target,
+                                 const MCFragment &F, const MCFixup &Fixup,
+                                 bool IsPCRel) const override;
 };
-} // end anonymouse namespace
+} // end anonymous namespace
 
 SystemZObjectWriter::SystemZObjectWriter(uint8_t OSABI)
   : MCELFObjectTargetWriter(/*Is64Bit=*/true, OSABI, ELF::EM_S390,
@@ -90,9 +88,7 @@ unsigned SystemZObjectWriter::GetRelocType(const MCValue &Target,
                                            bool IsPCRel,
                                            bool IsRelocWithSymbol,
                                            int64_t Addend) const {
-  MCSymbolRefExpr::VariantKind Modifier = (Target.isAbsolute() ?
-                                           MCSymbolRefExpr::VK_None :
-                                           Target.getSymA()->getKind());
+  MCSymbolRefExpr::VariantKind Modifier = Fixup.getAccessVariant();
   unsigned Kind = Fixup.getKind();
   switch (Modifier) {
   case MCSymbolRefExpr::VK_None:

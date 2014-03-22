@@ -21,13 +21,22 @@
 namespace llvm {
 
 class AMDGPUMachineFunction;
+class AMDGPUSubtarget;
 class MachineRegisterInfo;
 
 class AMDGPUTargetLowering : public TargetLowering {
+protected:
+  const AMDGPUSubtarget *Subtarget;
+
 private:
   void ExtractVectorElements(SDValue Op, SelectionDAG &DAG,
                              SmallVectorImpl<SDValue> &Args,
                              unsigned Start, unsigned Count) const;
+  SDValue LowerConstantInitializer(const Constant* Init, const GlobalValue *GV,
+                                   const SDValue &InitPtr,
+                                   SDValue Chain,
+                                   SelectionDAG &DAG) const;
+  SDValue LowerFrameIndex(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerEXTRACT_SUBVECTOR(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerCONCAT_VECTORS(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerINTRINSIC_WO_CHAIN(SDValue Op, SelectionDAG &DAG) const;
@@ -36,8 +45,8 @@ private:
   SDValue MergeVectorStore(const SDValue &Op, SelectionDAG &DAG) const;
   /// \brief Split a vector store into multiple scalar stores.
   /// \returns The resulting chain. 
-  SDValue SplitVectorStore(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerUDIVREM(SDValue Op, SelectionDAG &DAG) const;
+  SDValue LowerUINT_TO_FP(SDValue Op, SelectionDAG &DAG) const;
 
 protected:
 
@@ -52,19 +61,34 @@ protected:
                              SelectionDAG &DAG) const;
   /// \brief Split a vector load into multiple scalar loads.
   SDValue SplitVectorLoad(const SDValue &Op, SelectionDAG &DAG) const;
+  SDValue SplitVectorStore(SDValue Op, SelectionDAG &DAG) const;
+  SDValue LowerLOAD(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerSTORE(SDValue Op, SelectionDAG &DAG) const;
   bool isHWTrueValue(SDValue Op) const;
   bool isHWFalseValue(SDValue Op) const;
 
+  /// The SelectionDAGBuilder will automatically promote function arguments
+  /// with illegal types.  However, this does not work for the AMDGPU targets
+  /// since the function arguments are stored in memory as these illegal types.
+  /// In order to handle this properly we need to get the origianl types sizes
+  /// from the LLVM IR Function and fixup the ISD:InputArg values before
+  /// passing them to AnalyzeFormalArguments()
+  void getOriginalFunctionArgs(SelectionDAG &DAG,
+                               const Function *F,
+                               const SmallVectorImpl<ISD::InputArg> &Ins,
+                               SmallVectorImpl<ISD::InputArg> &OrigIns) const;
   void AnalyzeFormalArguments(CCState &State,
                               const SmallVectorImpl<ISD::InputArg> &Ins) const;
 
 public:
   AMDGPUTargetLowering(TargetMachine &TM);
 
-  virtual bool isFAbsFree(EVT VT) const;
-  virtual bool isFNegFree(EVT VT) const;
-  virtual MVT getVectorIdxTy() const;
+  virtual bool isFAbsFree(EVT VT) const override;
+  virtual bool isFNegFree(EVT VT) const override;
+  virtual bool isTruncateFree(EVT Src, EVT Dest) const override;
+  virtual bool isTruncateFree(Type *Src, Type *Dest) const override;
+  virtual MVT getVectorIdxTy() const override;
+  virtual bool isLoadBitCastBeneficial(EVT, EVT) const override;
   virtual SDValue LowerReturn(SDValue Chain, CallingConv::ID CallConv,
                               bool isVarArg,
                               const SmallVectorImpl<ISD::OutputArg> &Outs,
@@ -118,6 +142,10 @@ private:
   SDValue LowerSDIV24(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerSDIV32(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerSDIV64(SDValue Op, SelectionDAG &DAG) const;
+
+  SDValue ExpandSIGN_EXTEND_INREG(SDValue Op,
+                                  unsigned BitsDiff,
+                                  SelectionDAG &DAG) const;
   SDValue LowerSIGN_EXTEND_INREG(SDValue Op, SelectionDAG &DAG) const;
   EVT genIntType(uint32_t size = 32, uint32_t numEle = 1) const;
   SDValue LowerBRCOND(SDValue Op, SelectionDAG &DAG) const;
@@ -147,6 +175,8 @@ enum {
   UMIN,
   URECIP,
   DOT4,
+  BFE_U32, // Extract range of bits with zero extension to 32-bits.
+  BFE_I32, // Extract range of bits with sign extension to 32-bits.
   TEXTURE_FETCH,
   EXPORT,
   CONST_ADDRESS,

@@ -16,14 +16,15 @@
 #include "SymbolTableListTraitsImpl.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringMap.h"
+#include "llvm/IR/ConstantRange.h"
 #include "llvm/IR/Instruction.h"
 #include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/LeakDetector.h"
 #include "llvm/IR/Module.h"
-#include "llvm/Support/ConstantRange.h"
-#include "llvm/Support/LeakDetector.h"
-#include "llvm/Support/ValueHandle.h"
+#include "llvm/IR/ValueHandle.h"
 using namespace llvm;
 
 //===----------------------------------------------------------------------===//
@@ -65,7 +66,7 @@ class MDNodeOperand : public CallbackVH {
 
 public:
   MDNodeOperand(Value *V) : CallbackVH(V) {}
-  ~MDNodeOperand() {}
+  virtual ~MDNodeOperand();
 
   void set(Value *V) {
     unsigned IsFirst = this->getValPtrInt();
@@ -77,11 +78,13 @@ public:
   /// the list.
   void setAsFirstOperand(unsigned V) { this->setValPtrInt(V); }
 
-  virtual void deleted();
-  virtual void allUsesReplacedWith(Value *NV);
+  void deleted() override;
+  void allUsesReplacedWith(Value *NV) override;
 };
 } // end namespace llvm.
 
+// Provide out-of-line definition to prevent weak vtable.
+MDNodeOperand::~MDNodeOperand() {}
 
 void MDNodeOperand::deleted() {
   getParent()->replaceOperand(this, 0);
@@ -221,8 +224,8 @@ MDNode *MDNode::getMDNode(LLVMContext &Context, ArrayRef<Value*> Vals,
   // Note that if the operands are later nulled out, the node will be
   // removed from the uniquing map.
   FoldingSetNodeID ID;
-  for (unsigned i = 0; i != Vals.size(); ++i)
-    ID.AddPointer(Vals[i]);
+  for (Value *V : Vals)
+    ID.AddPointer(V);
 
   void *InsertPoint;
   MDNode *N = pImpl->MDNodeSet.FindNodeOrInsertPos(ID, InsertPoint);
@@ -233,8 +236,7 @@ MDNode *MDNode::getMDNode(LLVMContext &Context, ArrayRef<Value*> Vals,
   bool isFunctionLocal = false;
   switch (FL) {
   case FL_Unknown:
-    for (unsigned i = 0; i != Vals.size(); ++i) {
-      Value *V = Vals[i];
+    for (Value *V : Vals) {
       if (!V) continue;
       if (isFunctionLocalValue(V)) {
         isFunctionLocal = true;
@@ -581,6 +583,50 @@ MDNode *Instruction::getMetadataImpl(StringRef Kind) const {
   return getMetadataImpl(getContext().getMDKindID(Kind));
 }
 
+void Instruction::dropUnknownMetadata(ArrayRef<unsigned> KnownIDs) {
+  SmallSet<unsigned, 5> KnownSet;
+  KnownSet.insert(KnownIDs.begin(), KnownIDs.end());
+
+  // Drop debug if needed
+  if (KnownSet.erase(LLVMContext::MD_dbg))
+    DbgLoc = DebugLoc();
+
+  if (!hasMetadataHashEntry())
+    return; // Nothing to remove!
+
+  DenseMap<const Instruction *, LLVMContextImpl::MDMapTy> &MetadataStore =
+      getContext().pImpl->MetadataStore;
+
+  if (KnownSet.empty()) {
+    // Just drop our entry at the store.
+    MetadataStore.erase(this);
+    setHasMetadataHashEntry(false);
+    return;
+  }
+
+  LLVMContextImpl::MDMapTy &Info = MetadataStore[this];
+  unsigned I;
+  unsigned E;
+  // Walk the array and drop any metadata we don't know.
+  for (I = 0, E = Info.size(); I != E;) {
+    if (KnownSet.count(Info[I].first)) {
+      ++I;
+      continue;
+    }
+
+    Info[I] = Info.back();
+    Info.pop_back();
+    --E;
+  }
+  assert(E == Info.size());
+
+  if (E == 0) {
+    // Drop our entry at the store.
+    MetadataStore.erase(this);
+    setHasMetadataHashEntry(false);
+  }
+}
+
 /// setMetadata - Set the metadata of of the specified kind to the specified
 /// node.  This updates/replaces metadata if already present, or removes it if
 /// Node is null.
@@ -602,9 +648,9 @@ void Instruction::setMetadata(unsigned KindID, MDNode *Node) {
       setHasMetadataHashEntry(true);
     } else {
       // Handle replacement of an existing value.
-      for (unsigned i = 0, e = Info.size(); i != e; ++i)
-        if (Info[i].first == KindID) {
-          Info[i].second = Node;
+      for (auto &P : Info)
+        if (P.first == KindID) {
+          P.second = Node;
           return;
         }
     }
@@ -650,10 +696,9 @@ MDNode *Instruction::getMetadataImpl(unsigned KindID) const {
   LLVMContextImpl::MDMapTy &Info = getContext().pImpl->MetadataStore[this];
   assert(!Info.empty() && "bit out of sync with hash table");
 
-  for (LLVMContextImpl::MDMapTy::iterator I = Info.begin(), E = Info.end();
-       I != E; ++I)
-    if (I->first == KindID)
-      return I->second;
+  for (const auto &I : Info)
+    if (I.first == KindID)
+      return I.second;
   return 0;
 }
 

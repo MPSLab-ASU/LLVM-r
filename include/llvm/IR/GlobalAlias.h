@@ -49,12 +49,12 @@ public:
   /// removeFromParent - This method unlinks 'this' from the containing module,
   /// but does not delete it.
   ///
-  virtual void removeFromParent();
+  void removeFromParent() override;
 
   /// eraseFromParent - This method unlinks 'this' from the containing module
   /// and deletes it.
   ///
-  virtual void eraseFromParent();
+  void eraseFromParent() override;
 
   /// set/getAliasee - These methods retrive and set alias target.
   void setAliasee(Constant *GV);
@@ -79,6 +79,11 @@ public:
   GlobalValue *resolveAliasedGlobal(bool stopOnWeak = true);
   const GlobalValue *resolveAliasedGlobal(bool stopOnWeak = true) const {
     return const_cast<GlobalAlias *>(this)->resolveAliasedGlobal(stopOnWeak);
+  }
+
+  static bool isValidLinkage(LinkageTypes L) {
+    return isExternalLinkage(L) || isLocalLinkage(L) ||
+      isWeakLinkage(L) || isLinkOnceLinkage(L);
   }
 
   // Methods for support type inquiry through isa, cast, and dyn_cast:

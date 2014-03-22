@@ -24,10 +24,13 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 
-#define GET_INSTRINFO_CTOR
+#define GET_INSTRINFO_CTOR_DTOR
 #include "OR1KGenInstrInfo.inc"
 
 using namespace llvm;
+
+// Pin the vtable to this file.
+void OR1KInstrInfo::anchor() {}
 
 OR1KInstrInfo::OR1KInstrInfo()
   : OR1KGenInstrInfo(OR1K::ADJCALLSTACKDOWN, OR1K::ADJCALLSTACKUP),
@@ -110,8 +113,8 @@ bool OR1KInstrInfo::AnalyzeBranch(MachineBasicBlock &MBB,
       }
 
       // If the block has any instructions after a J, delete them.
-      while (llvm::next(I) != MBB.end())
-        llvm::next(I)->eraseFromParent();
+      while (std::next(I) != MBB.end())
+        std::next(I)->eraseFromParent();
       Cond.clear();
       FBB = 0;
 

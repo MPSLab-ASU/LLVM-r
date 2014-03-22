@@ -60,10 +60,11 @@ static MCCodeGenInfo *createOR1KMCCodeGenInfo(StringRef TT, Reloc::Model RM,
   return X;
 }
 
-static MCStreamer *createOR1KMCStreamer(const Target &T, StringRef TT,
+static MCStreamer *createMCStreamer(const Target &T, StringRef TT,
                                     MCContext &Ctx, MCAsmBackend &MAB,
                                     raw_ostream &_OS,
                                     MCCodeEmitter *_Emitter,
+                                    const MCSubtargetInfo &STI,
                                     bool RelaxAll,
                                     bool NoExecStack) {
   Triple TheTriple(TT);
@@ -118,7 +119,7 @@ extern "C" void LLVMInitializeOR1KTargetMC() {
 
   // Register the object streamer
   TargetRegistry::RegisterMCObjectStreamer(TheOR1KTarget,
-                                           createOR1KMCStreamer);
+                                           createMCStreamer);
 
 
   // Register the MCInstPrinter.

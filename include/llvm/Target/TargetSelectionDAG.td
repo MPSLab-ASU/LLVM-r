@@ -492,6 +492,12 @@ def intrinsic_wo_chain : SDNode<"ISD::INTRINSIC_WO_CHAIN",
 // Do not use cvt directly. Use cvt forms below
 def cvt : SDNode<"ISD::CONVERT_RNDSAT", SDTConvertOp>;
 
+def SDT_assertext : SDTypeProfile<1, 1,
+  [SDTCisInt<0>, SDTCisInt<1>, SDTCisSameAs<1, 0>]>;
+def assertsext : SDNode<"ISD::AssertSext", SDT_assertext>;
+def assertzext : SDNode<"ISD::AssertZext", SDT_assertext>;
+
+
 //===----------------------------------------------------------------------===//
 // Selection DAG Condition Codes
 
@@ -553,6 +559,12 @@ class PatFrag<dag ops, dag frag, code pred = [{}],
   code ImmediateCode = [{}];
   SDNodeXForm OperandTransform = xform;
 }
+
+// OutPatFrag is a pattern fragment that is used as part of an output pattern
+// (not an input pattern). These do not have predicates or transforms, but are
+// used to avoid repeated subexpressions in output patterns.
+class OutPatFrag<dag ops, dag frag>
+ : PatFrag<ops, frag, [{}], NOOP_SDNodeXForm>;
 
 // PatLeaf's are pattern fragments that have no operands.  This is just a helper
 // to define immediates and other common things concisely.

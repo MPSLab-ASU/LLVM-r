@@ -45,7 +45,7 @@ using namespace llvm;
 
 ARMBaseRegisterInfo::ARMBaseRegisterInfo(const ARMSubtarget &sti)
   : ARMGenRegisterInfo(ARM::LR, 0, 0, ARM::PC), STI(sti),
-    FramePtr((STI.isTargetDarwin() || STI.isThumb()) ? ARM::R7 : ARM::R11),
+    FramePtr((STI.isTargetMachO() || STI.isThumb()) ? ARM::R7 : ARM::R11),
     BasePtr(ARM::R6) {
 }
 
@@ -385,14 +385,6 @@ ARMBaseRegisterInfo::getFrameRegister(const MachineFunction &MF) const {
   return ARM::SP;
 }
 
-unsigned ARMBaseRegisterInfo::getEHExceptionRegister() const {
-  llvm_unreachable("What is the exception register");
-}
-
-unsigned ARMBaseRegisterInfo::getEHHandlerRegister() const {
-  llvm_unreachable("What is the exception handler register");
-}
-
 /// emitLoadConstPool - Emits a load from constpool to materialize the
 /// specified immediate.
 void ARMBaseRegisterInfo::
@@ -414,6 +406,11 @@ emitLoadConstPool(MachineBasicBlock &MBB,
     .addConstantPoolIndex(Idx)
     .addImm(0).addImm(Pred).addReg(PredReg)
     .setMIFlags(MIFlags);
+}
+
+bool ARMBaseRegisterInfo::mayOverrideLocalAssignment() const {
+  // The native linux build hits a downstream codegen bug when this is enabled.
+  return STI.isTargetDarwin();
 }
 
 bool ARMBaseRegisterInfo::

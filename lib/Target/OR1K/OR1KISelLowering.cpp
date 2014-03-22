@@ -1156,7 +1156,7 @@ OR1KTargetLowering::EmitInstrWithCustomInserter(MachineInstr *MI,
   // Update machine-CFG edges by transferring all successors of the current
   // block to the new block which will contain the Phi node for the select.
   copy1MBB->splice(copy1MBB->begin(), BB,
-                   llvm::next(MachineBasicBlock::iterator(MI)),
+                   std::next(MachineBasicBlock::iterator(MI)),
                    BB->end());
   copy1MBB->transferSuccessorsAndUpdatePHIs(BB);
   // Next, add the true and fallthrough blocks as its successors.

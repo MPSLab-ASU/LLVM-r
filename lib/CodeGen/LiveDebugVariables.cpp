@@ -31,8 +31,8 @@
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/Passes.h"
 #include "llvm/CodeGen/VirtRegMap.h"
-#include "llvm/DebugInfo.h"
 #include "llvm/IR/Constants.h"
+#include "llvm/IR/DebugInfo.h"
 #include "llvm/IR/Metadata.h"
 #include "llvm/IR/Value.h"
 #include "llvm/Support/CommandLine.h"
@@ -72,7 +72,7 @@ LiveDebugVariables::LiveDebugVariables() : MachineFunctionPass(ID), pImpl(0) {
 typedef IntervalMap<SlotIndex, unsigned, 4> LocMap;
 
 namespace {
-/// UserValueScopes - Keeps track of lexical scopes associated with an
+/// UserValueScopes - Keeps track of lexical scopes associated with a
 /// user value's source location.
 class UserValueScopes {
   DebugLoc DL;
@@ -220,13 +220,13 @@ public:
   /// End points where VNI is no longer live are added to Kills.
   /// @param Idx   Starting point for the definition.
   /// @param LocNo Location number to propagate.
-  /// @param LI    Restrict liveness to where LI has the value VNI. May be null.
-  /// @param VNI   When LI is not null, this is the value to restrict to.
+  /// @param LR    Restrict liveness to where LR has the value VNI. May be null.
+  /// @param VNI   When LR is not null, this is the value to restrict to.
   /// @param Kills Append end points of VNI's live range to Kills.
   /// @param LIS   Live intervals analysis.
   /// @param MDT   Dominator tree.
   void extendDef(SlotIndex Idx, unsigned LocNo,
-                 LiveInterval *LI, const VNInfo *VNI,
+                 LiveRange *LR, const VNInfo *VNI,
                  SmallVectorImpl<SlotIndex> *Kills,
                  LiveIntervals &LIS, MachineDominatorTree &MDT,
                  UserValueScopes &UVS);
@@ -480,7 +480,7 @@ bool LDVImpl::collectDebugValues(MachineFunction &mf) {
       // DBG_VALUE has no slot index, use the previous instruction instead.
       SlotIndex Idx = MBBI == MBB->begin() ?
         LIS->getMBBStartIdx(MBB) :
-        LIS->getInstructionIndex(llvm::prior(MBBI)).getRegSlot();
+        LIS->getInstructionIndex(std::prev(MBBI)).getRegSlot();
       // Handle consecutive DBG_VALUE instructions with the same slot index.
       do {
         if (handleDebugValue(MBBI, Idx)) {
@@ -495,7 +495,7 @@ bool LDVImpl::collectDebugValues(MachineFunction &mf) {
 }
 
 void UserValue::extendDef(SlotIndex Idx, unsigned LocNo,
-                          LiveInterval *LI, const VNInfo *VNI,
+                          LiveRange *LR, const VNInfo *VNI,
                           SmallVectorImpl<SlotIndex> *Kills,
                           LiveIntervals &LIS, MachineDominatorTree &MDT,
                           UserValueScopes &UVS) {
@@ -509,15 +509,15 @@ void UserValue::extendDef(SlotIndex Idx, unsigned LocNo,
 
     // Limit to VNI's live range.
     bool ToEnd = true;
-    if (LI && VNI) {
-      LiveRange *Range = LI->getLiveRangeContaining(Start);
-      if (!Range || Range->valno != VNI) {
+    if (LR && VNI) {
+      LiveInterval::Segment *Segment = LR->getSegmentContaining(Start);
+      if (!Segment || Segment->valno != VNI) {
         if (Kills)
           Kills->push_back(Start);
         continue;
       }
-      if (Range->end < Stop)
-        Stop = Range->end, ToEnd = false;
+      if (Segment->end < Stop)
+        Stop = Segment->end, ToEnd = false;
     }
 
     // There could already be a short def at Start.
@@ -568,13 +568,11 @@ UserValue::addDefsFromCopies(LiveInterval *LI, unsigned LocNo,
 
   // Collect all the (vreg, valno) pairs that are copies of LI.
   SmallVector<std::pair<LiveInterval*, const VNInfo*>, 8> CopyValues;
-  for (MachineRegisterInfo::use_nodbg_iterator
-         UI = MRI.use_nodbg_begin(LI->reg),
-         UE = MRI.use_nodbg_end(); UI != UE; ++UI) {
+  for (MachineOperand &MO : MRI.use_nodbg_operands(LI->reg)) {
+    MachineInstr *MI = MO.getParent();
     // Copies of the full value.
-    if (UI.getOperand().getSubReg() || !UI->isCopy())
+    if (MO.getSubReg() || !MI->isCopy())
       continue;
-    MachineInstr *MI = &*UI;
     unsigned DstReg = MI->getOperand(0).getReg();
 
     // Don't follow copies to physregs. These are usually setting up call
@@ -669,10 +667,10 @@ UserValue::computeIntervals(MachineRegisterInfo &MRI,
 
     // For physregs, use the live range of the first regunit as a guide.
     unsigned Unit = *MCRegUnitIterator(Loc.getReg(), &TRI);
-    LiveInterval *LI = &LIS.getRegUnit(Unit);
-    const VNInfo *VNI = LI->getVNInfoAt(Idx);
+    LiveRange *LR = &LIS.getRegUnit(Unit);
+    const VNInfo *VNI = LR->getVNInfoAt(Idx);
     // Don't track copies from physregs, it is too expensive.
-    extendDef(Idx, LocNo, LI, VNI, 0, LIS, MDT, UVS);
+    extendDef(Idx, LocNo, LR, VNI, 0, LIS, MDT, UVS);
   }
 
   // Finally, erase all the undefs.
@@ -704,7 +702,6 @@ bool LDVImpl::runOnMachineFunction(MachineFunction &mf) {
   bool Changed = collectDebugValues(mf);
   computeIntervals();
   DEBUG(print(dbgs()));
-  LS.releaseMemory();
   ModifiedMF = Changed;
   return Changed;
 }
@@ -915,7 +912,7 @@ findInsertLocation(MachineBasicBlock *MBB, SlotIndex Idx,
 
   // Don't insert anything after the first terminator, though.
   return MI->isTerminator() ? MBB->getFirstTerminator() :
-                              llvm::next(MachineBasicBlock::iterator(MI));
+                              std::next(MachineBasicBlock::iterator(MI));
 }
 
 DebugLoc UserValue::findDebugLoc() {

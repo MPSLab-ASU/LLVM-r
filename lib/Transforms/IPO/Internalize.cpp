@@ -11,6 +11,12 @@
 // If the function or variable is not in the list of external names given to
 // the pass it is marked as internal.
 //
+// This transformation would not be legal in a regular compilation, but it gets
+// extra information from the linker about what is safe.
+//
+// For example: Internalizing a function with external linkage. Only if we are
+// told it is only used from within this module, it is safe to do it.
+//
 //===----------------------------------------------------------------------===//
 
 #define DEBUG_TYPE "internalize"
@@ -23,6 +29,7 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Transforms/Utils/GlobalStatus.h"
 #include "llvm/Transforms/Utils/ModuleUtils.h"
 #include <fstream>
 #include <set>
@@ -44,26 +51,20 @@ APIList("internalize-public-api-list", cl::value_desc("list"),
         cl::desc("A list of symbol names to preserve"),
         cl::CommaSeparated);
 
-static cl::list<std::string>
-DSOList("internalize-dso-list", cl::value_desc("list"),
-        cl::desc("A list of symbol names need for a dso symbol table"),
-        cl::CommaSeparated);
-
 namespace {
   class InternalizePass : public ModulePass {
     std::set<std::string> ExternalNames;
-    std::set<std::string> DSONames;
+    bool OnlyHidden;
   public:
     static char ID; // Pass identification, replacement for typeid
-    explicit InternalizePass();
-    explicit InternalizePass(ArrayRef<const char *> ExportList,
-                             ArrayRef<const char *> DSOList);
+    explicit InternalizePass(bool OnlyHidden = false);
+    explicit InternalizePass(ArrayRef<const char *> ExportList, bool OnlyHidden);
     void LoadFile(const char *Filename);
-    virtual bool runOnModule(Module &M);
+    bool runOnModule(Module &M) override;
 
-    virtual void getAnalysisUsage(AnalysisUsage &AU) const {
+    void getAnalysisUsage(AnalysisUsage &AU) const override {
       AU.setPreservesCFG();
-      AU.addPreserved<CallGraph>();
+      AU.addPreserved<CallGraphWrapperPass>();
     }
   };
 } // end anonymous namespace
@@ -72,26 +73,21 @@ char InternalizePass::ID = 0;
 INITIALIZE_PASS(InternalizePass, "internalize",
                 "Internalize Global Symbols", false, false)
 
-InternalizePass::InternalizePass()
-  : ModulePass(ID) {
+InternalizePass::InternalizePass(bool OnlyHidden)
+  : ModulePass(ID), OnlyHidden(OnlyHidden) {
   initializeInternalizePassPass(*PassRegistry::getPassRegistry());
   if (!APIFile.empty())           // If a filename is specified, use it.
     LoadFile(APIFile.c_str());
   ExternalNames.insert(APIList.begin(), APIList.end());
-  DSONames.insert(DSOList.begin(), DSOList.end());
 }
 
 InternalizePass::InternalizePass(ArrayRef<const char *> ExportList,
-                                 ArrayRef<const char *> DSOList)
-  : ModulePass(ID){
+                                 bool OnlyHidden)
+  : ModulePass(ID), OnlyHidden(OnlyHidden) {
   initializeInternalizePassPass(*PassRegistry::getPassRegistry());
   for(ArrayRef<const char *>::const_iterator itr = ExportList.begin();
         itr != ExportList.end(); itr++) {
     ExternalNames.insert(*itr);
-  }
-  for(ArrayRef<const char *>::const_iterator itr = DSOList.begin();
-        itr != DSOList.end(); itr++) {
-    DSONames.insert(*itr);
   }
 }
 
@@ -113,13 +109,20 @@ void InternalizePass::LoadFile(const char *Filename) {
 
 static bool shouldInternalize(const GlobalValue &GV,
                               const std::set<std::string> &ExternalNames,
-                              const std::set<std::string> &DSONames) {
+                              bool OnlyHidden) {
+  if (OnlyHidden && !GV.hasHiddenVisibility())
+    return false;
+
   // Function must be defined here
   if (GV.isDeclaration())
     return false;
 
   // Available externally is really just a "declaration with a body".
   if (GV.hasAvailableExternallyLinkage())
+    return false;
+
+  // Assume that dllexported symbols are referenced elsewhere
+  if (GV.hasDLLExportStorageClass())
     return false;
 
   // Already has internal linkage
@@ -130,24 +133,12 @@ static bool shouldInternalize(const GlobalValue &GV,
   if (ExternalNames.count(GV.getName()))
     return false;
 
-  // Not needed for the symbol table?
-  if (!DSONames.count(GV.getName()))
-    return true;
-
-  // Not a linkonce. Someone can depend on it being on the symbol table.
-  if (!GV.hasLinkOnceLinkage())
-    return false;
-
-  // The address is not important, we can hide it.
-  if (GV.hasUnnamedAddr())
-    return true;
-
-  // FIXME: Check if the address is used.
-  return false;
+  return true;
 }
 
 bool InternalizePass::runOnModule(Module &M) {
-  CallGraph *CG = getAnalysisIfAvailable<CallGraph>();
+  CallGraphWrapperPass *CGPass = getAnalysisIfAvailable<CallGraphWrapperPass>();
+  CallGraph *CG = CGPass ? &CGPass->getCallGraph() : 0;
   CallGraphNode *ExternalNode = CG ? CG->getExternalCallingNode() : 0;
   bool Changed = false;
 
@@ -170,9 +161,8 @@ bool InternalizePass::runOnModule(Module &M) {
   }
 
   // Mark all functions not in the api as internal.
-  // FIXME: maybe use private linkage?
   for (Module::iterator I = M.begin(), E = M.end(); I != E; ++I) {
-    if (!shouldInternalize(*I, ExternalNames, DSONames))
+    if (!shouldInternalize(*I, ExternalNames, OnlyHidden))
       continue;
 
     I->setLinkage(GlobalValue::InternalLinkage);
@@ -206,10 +196,9 @@ bool InternalizePass::runOnModule(Module &M) {
 
   // Mark all global variables with initializers that are not in the api as
   // internal as well.
-  // FIXME: maybe use private linkage?
   for (Module::global_iterator I = M.global_begin(), E = M.global_end();
        I != E; ++I) {
-    if (!shouldInternalize(*I, ExternalNames, DSONames))
+    if (!shouldInternalize(*I, ExternalNames, OnlyHidden))
       continue;
 
     I->setLinkage(GlobalValue::InternalLinkage);
@@ -221,7 +210,7 @@ bool InternalizePass::runOnModule(Module &M) {
   // Mark all aliases that are not in the api as internal as well.
   for (Module::alias_iterator I = M.alias_begin(), E = M.alias_end();
        I != E; ++I) {
-    if (!shouldInternalize(*I, ExternalNames, DSONames))
+    if (!shouldInternalize(*I, ExternalNames, OnlyHidden))
       continue;
 
     I->setLinkage(GlobalValue::InternalLinkage);
@@ -233,11 +222,15 @@ bool InternalizePass::runOnModule(Module &M) {
   return Changed;
 }
 
-ModulePass *llvm::createInternalizePass() {
-  return new InternalizePass();
+ModulePass *llvm::createInternalizePass(bool OnlyHidden) {
+  return new InternalizePass(OnlyHidden);
 }
 
 ModulePass *llvm::createInternalizePass(ArrayRef<const char *> ExportList,
-                                        ArrayRef<const char *> DSOList) {
-  return new InternalizePass(ExportList, DSOList);
+                                        bool OnlyHidden) {
+  return new InternalizePass(ExportList, OnlyHidden);
+}
+
+ModulePass *llvm::createInternalizePass(const char *SingleExport) {
+  return createInternalizePass(ArrayRef<const char *>(SingleExport));
 }

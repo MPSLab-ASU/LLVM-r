@@ -156,15 +156,15 @@ namespace {
         Subtarget(&tm.getSubtarget<X86Subtarget>()),
         OptForSize(false) {}
 
-    virtual const char *getPassName() const {
+    const char *getPassName() const override {
       return "X86 DAG->DAG Instruction Selection";
     }
 
-    virtual void EmitFunctionEntryCode();
+    void EmitFunctionEntryCode() override;
 
-    virtual bool IsProfitableToFold(SDValue N, SDNode *U, SDNode *Root) const;
+    bool IsProfitableToFold(SDValue N, SDNode *U, SDNode *Root) const override;
 
-    virtual void PreprocessISelDAG();
+    void PreprocessISelDAG() override;
 
     inline bool immSext8(SDNode *N) const {
       return isInt<8>(cast<ConstantSDNode>(N)->getSExtValue());
@@ -181,7 +181,7 @@ namespace {
 #include "X86GenDAGISel.inc"
 
   private:
-    SDNode *Select(SDNode *N);
+    SDNode *Select(SDNode *N) override;
     SDNode *SelectGather(SDNode *N, unsigned Opc);
     SDNode *SelectAtomic64(SDNode *Node, unsigned Opc);
     SDNode *SelectAtomicLoadArith(SDNode *Node, MVT NVT);
@@ -219,9 +219,9 @@ namespace {
 
     /// SelectInlineAsmMemoryOperand - Implement addressing mode selection for
     /// inline asm expressions.
-    virtual bool SelectInlineAsmMemoryOperand(const SDValue &Op,
-                                              char ConstraintCode,
-                                              std::vector<SDValue> &OutOps);
+    bool SelectInlineAsmMemoryOperand(const SDValue &Op,
+                                      char ConstraintCode,
+                                      std::vector<SDValue> &OutOps) override;
 
     void EmitSpecialCodeForMain(MachineBasicBlock *BB, MachineFrameInfo *MFI);
 
@@ -344,7 +344,7 @@ X86DAGToDAGISel::IsProfitableToFold(SDValue N, SDNode *U, SDNode *Root) const {
       // addl    %gs:0, %eax
       // if the block also has an access to a second TLS address this will save
       // a load.
-      // FIXME: This is probably also true for non TLS addresses.
+      // FIXME: This is probably also true for non-TLS addresses.
       if (Op1.getOpcode() == X86ISD::Wrapper) {
         SDValue Val = Op1.getOperand(0);
         if (Val.getOpcode() == ISD::TargetGlobalTLSAddress)

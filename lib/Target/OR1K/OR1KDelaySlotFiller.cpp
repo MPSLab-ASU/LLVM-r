@@ -108,9 +108,9 @@ bool Filler::runOnMachineBasicBlock(MachineBasicBlock &MBB) {
       MachineBasicBlock::instr_iterator J = I;
 
       if (!CompatDelaySlotFiller && findDelayInstr(MBB, I, J))
-        MBB.splice(llvm::next(I), &MBB, J);
+        MBB.splice(std::next(I), &MBB, J);
       else
-        BuildMI(MBB, llvm::next(I), DebugLoc(), TII->get(OR1K::NOP)).addImm(0);
+        BuildMI(MBB, std::next(I), DebugLoc(), TII->get(OR1K::NOP)).addImm(0);
 
       ++FilledSlots;
       Changed = true;
@@ -120,7 +120,7 @@ bool Filler::runOnMachineBasicBlock(MachineBasicBlock &MBB) {
 
       // Bundle the delay slot filler to InstrWithSlot so that the machine
       // verifier doesn't expect this instruction to be a terminator.
-      MIBundleBuilder(MBB, InstrWithSlot, llvm::next(LastFiller));
+      MIBundleBuilder(MBB, InstrWithSlot, std::next(LastFiller));
     }
   return Changed;
 }
@@ -144,7 +144,7 @@ bool Filler::findDelayInstr(MachineBasicBlock &MBB,
       continue;
 
     // Convert to forward iterator.
-    MachineBasicBlock::instr_iterator FI(llvm::next(I).base());
+    MachineBasicBlock::instr_iterator FI(std::next(I).base());
 
     if (I->hasUnmodeledSideEffects() ||
         I->isInlineAsm()             ||

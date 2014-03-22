@@ -25,6 +25,7 @@ namespace llvm {
 
 class OR1KInstrInfo : public OR1KGenInstrInfo {
   const OR1KRegisterInfo RI;
+    virtual void anchor();
 public:
   OR1KInstrInfo();
 

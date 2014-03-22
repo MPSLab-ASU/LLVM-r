@@ -15,9 +15,9 @@
 #ifndef MipsISELLOWERING_H
 #define MipsISELLOWERING_H
 
+#include "MCTargetDesc/MipsBaseInfo.h"
 #include "Mips.h"
 #include "MipsSubtarget.h"
-#include "MCTargetDesc/MipsBaseInfo.h"
 #include "llvm/CodeGen/CallingConvLower.h"
 #include "llvm/CodeGen/SelectionDAG.h"
 #include "llvm/IR/Function.h"
@@ -33,6 +33,9 @@ namespace llvm {
 
       // Jump and link (call)
       JmpLink,
+
+      // MicroMIPS Jump and link (call)
+      JmpLinkMM,
 
       // Tail call
       TailCall,
@@ -70,10 +73,11 @@ namespace llvm {
       EH_RETURN,
 
       // Node used to extract integer from accumulator.
-      ExtractLOHI,
+      MFHI,
+      MFLO,
 
       // Node used to insert integers to accumulator.
-      InsertLOHI,
+      MTLOHI,
 
       // Mult nodes.
       Mult,
@@ -208,6 +212,7 @@ namespace llvm {
   class MipsFunctionInfo;
 
   class MipsTargetLowering : public TargetLowering  {
+    bool isMicroMips;
   public:
     explicit MipsTargetLowering(MipsTargetMachine &TM);
 

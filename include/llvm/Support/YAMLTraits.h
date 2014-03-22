@@ -1,4 +1,4 @@
-//===- llvm/Supporrt/YAMLTraits.h -------------------------------*- C++ -*-===//
+//===- llvm/Support/YAMLTraits.h --------------------------------*- C++ -*-===//
 //
 //                             The LLVM Linker
 //
@@ -13,6 +13,7 @@
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseMapInfo.h"
+#include "llvm/ADT/Optional.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
@@ -23,8 +24,6 @@
 #include "llvm/Support/YAMLParser.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/system_error.h"
-#include "llvm/Support/type_traits.h"
-
 
 namespace llvm {
 namespace yaml {
@@ -44,6 +43,8 @@ template<class T>
 struct MappingTraits {
   // Must provide:
   // static void mapping(IO &io, T &fields);
+  // Optionally may provide:
+  // static StringRef validate(IO &io, T &fields);
 };
 
 
@@ -226,6 +227,23 @@ public:
   static bool const value = (sizeof(test<MappingTraits<T> >(0)) == 1);
 };
 
+// Test if MappingTraits<T>::validate() is defined on type T.
+template <class T>
+struct has_MappingValidateTraits
+{
+  typedef StringRef (*Signature_validate)(class IO&, T&);
+
+  template <typename U>
+  static char test(SameType<Signature_validate, &U::validate>*);
+
+  template <typename U>
+  static double test(...);
+
+public:
+  static bool const value = (sizeof(test<MappingTraits<T> >(0)) == 1);
+};
+
+
 
 // Test if SequenceTraits<T> is defined on type T.
 template <class T>
@@ -247,7 +265,7 @@ public:
 // has_FlowTraits<int> will cause an error with some compilers because
 // it subclasses int.  Using this wrapper only instantiates the
 // real has_FlowTraits only if the template type is a class.
-template <typename T, bool Enabled = llvm::is_class<T>::value>
+template <typename T, bool Enabled = std::is_class<T>::value>
 class has_FlowTraits
 {
 public:
@@ -277,7 +295,7 @@ public:
 
 // Test if SequenceTraits<T> is defined on type T
 template<typename T>
-struct has_SequenceTraits : public  llvm::integral_constant<bool,
+struct has_SequenceTraits : public std::integral_constant<bool,
                                       has_SequenceMethodTraits<T>::value > { };
 
 
@@ -301,7 +319,7 @@ public:
 
 
 template<typename T>
-struct missingTraits : public  llvm::integral_constant<bool,
+struct missingTraits : public std::integral_constant<bool,
                                          !has_ScalarEnumerationTraits<T>::value
                                       && !has_ScalarBitSetTraits<T>::value
                                       && !has_ScalarTraits<T>::value
@@ -309,7 +327,15 @@ struct missingTraits : public  llvm::integral_constant<bool,
                                       && !has_SequenceTraits<T>::value
                                       && !has_DocumentListTraits<T>::value >  {};
 
+template<typename T>
+struct validatedMappingTraits : public std::integral_constant<bool,
+                                       has_MappingTraits<T>::value
+                                    && has_MappingValidateTraits<T>::value> {};
 
+template<typename T>
+struct unvalidatedMappingTraits : public std::integral_constant<bool,
+                                        has_MappingTraits<T>::value
+                                    && !has_MappingValidateTraits<T>::value> {};
 // Base class for Input and Output.
 class IO {
 public:
@@ -330,6 +356,7 @@ public:
   virtual void postflightFlowElement(void*) = 0;
   virtual void endFlowSequence() = 0;
 
+  virtual bool mapTag(StringRef Tag, bool Default=false) = 0;
   virtual void beginMapping() = 0;
   virtual void endMapping() = 0;
   virtual bool preflightKey(const char*, bool, bool, bool &, void *&) = 0;
@@ -386,7 +413,7 @@ public:
   }
 
   template <typename T>
-  typename llvm::enable_if_c<has_SequenceTraits<T>::value,void>::type
+  typename std::enable_if<has_SequenceTraits<T>::value,void>::type
   mapOptional(const char* Key, T& Val) {
     // omit key/value instead of outputting empty sequence
     if ( this->canElideEmptySequence() && !(Val.begin() != Val.end()) )
@@ -395,7 +422,12 @@ public:
   }
 
   template <typename T>
-  typename llvm::enable_if_c<!has_SequenceTraits<T>::value,void>::type
+  void mapOptional(const char* Key, Optional<T> &Val) {
+    processKeyWithDefault(Key, Val, Optional<T>(), /*Required=*/false);
+  }
+
+  template <typename T>
+  typename std::enable_if<!has_SequenceTraits<T>::value,void>::type
   mapOptional(const char* Key, T& Val) {
     this->processKey(Key, Val, false);
   }
@@ -404,9 +436,28 @@ public:
   void mapOptional(const char* Key, T& Val, const T& Default) {
     this->processKeyWithDefault(Key, Val, Default, false);
   }
-
-
+  
 private:
+  template <typename T>
+  void processKeyWithDefault(const char *Key, Optional<T> &Val,
+                             const Optional<T> &DefaultValue, bool Required) {
+    assert(DefaultValue.hasValue() == false &&
+           "Optional<T> shouldn't have a value!");
+    void *SaveInfo;
+    bool UseDefault;
+    const bool sameAsDefault = outputting() && !Val.hasValue();
+    if (!outputting() && !Val.hasValue())
+      Val = T();
+    if (this->preflightKey(Key, Required, sameAsDefault, UseDefault,
+                           SaveInfo)) {
+      yamlize(*this, Val.getValue(), Required);
+      this->postflightKey(SaveInfo);
+    } else {
+      if (UseDefault)
+        Val = DefaultValue;
+    }
+  }
+
   template <typename T>
   void processKeyWithDefault(const char *Key, T &Val, const T& DefaultValue,
                                                                 bool Required) {
@@ -441,7 +492,7 @@ private:
 
 
 template<typename T>
-typename llvm::enable_if_c<has_ScalarEnumerationTraits<T>::value,void>::type
+typename std::enable_if<has_ScalarEnumerationTraits<T>::value,void>::type
 yamlize(IO &io, T &Val, bool) {
   io.beginEnumScalar();
   ScalarEnumerationTraits<T>::enumeration(io, Val);
@@ -449,7 +500,7 @@ yamlize(IO &io, T &Val, bool) {
 }
 
 template<typename T>
-typename llvm::enable_if_c<has_ScalarBitSetTraits<T>::value,void>::type
+typename std::enable_if<has_ScalarBitSetTraits<T>::value,void>::type
 yamlize(IO &io, T &Val, bool) {
   bool DoClear;
   if ( io.beginBitSetScalar(DoClear) ) {
@@ -462,7 +513,7 @@ yamlize(IO &io, T &Val, bool) {
 
 
 template<typename T>
-typename llvm::enable_if_c<has_ScalarTraits<T>::value,void>::type
+typename std::enable_if<has_ScalarTraits<T>::value,void>::type
 yamlize(IO &io, T &Val, bool) {
   if ( io.outputting() ) {
     std::string Storage;
@@ -483,7 +534,27 @@ yamlize(IO &io, T &Val, bool) {
 
 
 template<typename T>
-typename llvm::enable_if_c<has_MappingTraits<T>::value, void>::type
+typename std::enable_if<validatedMappingTraits<T>::value, void>::type
+yamlize(IO &io, T &Val, bool) {
+  io.beginMapping();
+  if (io.outputting()) {
+    StringRef Err = MappingTraits<T>::validate(io, Val);
+    if (!Err.empty()) {
+      llvm::errs() << Err << "\n";
+      assert(Err.empty() && "invalid struct trying to be written as yaml");
+    }
+  }
+  MappingTraits<T>::mapping(io, Val);
+  if (!io.outputting()) {
+    StringRef Err = MappingTraits<T>::validate(io, Val);
+    if (!Err.empty())
+      io.setError(Err);
+  }
+  io.endMapping();
+}
+
+template<typename T>
+typename std::enable_if<unvalidatedMappingTraits<T>::value, void>::type
 yamlize(IO &io, T &Val, bool) {
   io.beginMapping();
   MappingTraits<T>::mapping(io, Val);
@@ -491,13 +562,13 @@ yamlize(IO &io, T &Val, bool) {
 }
 
 template<typename T>
-typename llvm::enable_if_c<missingTraits<T>::value, void>::type
+typename std::enable_if<missingTraits<T>::value, void>::type
 yamlize(IO &io, T &Val, bool) {
   char missing_yaml_trait_for_type[sizeof(MissingTrait<T>)];
 }
 
 template<typename T>
-typename llvm::enable_if_c<has_SequenceTraits<T>::value,void>::type
+typename std::enable_if<has_SequenceTraits<T>::value,void>::type
 yamlize(IO &io, T &Seq, bool) {
   if ( has_FlowTraits< SequenceTraits<T> >::value ) {
     unsigned incnt = io.beginFlowSequence();
@@ -536,6 +607,12 @@ template<>
 struct ScalarTraits<StringRef> {
   static void output(const StringRef &, void*, llvm::raw_ostream &);
   static StringRef input(StringRef, void*, StringRef &);
+};
+ 
+template<>
+struct ScalarTraits<std::string> {
+  static void output(const std::string &, void*, llvm::raw_ostream &);
+  static StringRef input(StringRef, void*, std::string &);
 };
 
 template<>
@@ -684,41 +761,45 @@ private:
 ///
 class Input : public IO {
 public:
-  // Construct a yaml Input object from a StringRef and optional user-data.
-  Input(StringRef InputContent, void *Ctxt=NULL);
+  // Construct a yaml Input object from a StringRef and optional
+  // user-data. The DiagHandler can be specified to provide
+  // alternative error reporting.
+  Input(StringRef InputContent,
+        void *Ctxt = NULL,
+        SourceMgr::DiagHandlerTy DiagHandler = NULL,
+        void *DiagHandlerCtxt = NULL);
   ~Input();
-  
+
   // Check if there was an syntax or semantic error during parsing.
   llvm::error_code error();
 
-  // To set alternate error reporting.
-  void setDiagHandler(llvm::SourceMgr::DiagHandlerTy Handler, void *Ctxt = 0);
-
 private:
-  virtual bool outputting();
-  virtual void beginMapping();
-  virtual void endMapping();
-  virtual bool preflightKey(const char *, bool, bool, bool &, void *&);
-  virtual void postflightKey(void *);
-  virtual unsigned beginSequence();
-  virtual void endSequence();
-  virtual bool preflightElement(unsigned index, void *&);
-  virtual void postflightElement(void *);
-  virtual unsigned beginFlowSequence();
-  virtual bool preflightFlowElement(unsigned , void *&);
-  virtual void postflightFlowElement(void *);
-  virtual void endFlowSequence();
-  virtual void beginEnumScalar();
-  virtual bool matchEnumScalar(const char*, bool);
-  virtual void endEnumScalar();
-  virtual bool beginBitSetScalar(bool &);
-  virtual bool bitSetMatch(const char *, bool );
-  virtual void endBitSetScalar();
-  virtual void scalarString(StringRef &);
-  virtual void setError(const Twine &message);
-  virtual bool canElideEmptySequence();
+  bool outputting() override;
+  bool mapTag(StringRef, bool) override;
+  void beginMapping() override;
+  void endMapping() override;
+  bool preflightKey(const char *, bool, bool, bool &, void *&) override;
+  void postflightKey(void *) override;
+  unsigned beginSequence() override;
+  void endSequence() override;
+  bool preflightElement(unsigned index, void *&) override;
+  void postflightElement(void *) override;
+  unsigned beginFlowSequence() override;
+  bool preflightFlowElement(unsigned , void *&) override;
+  void postflightFlowElement(void *) override;
+  void endFlowSequence() override;
+  void beginEnumScalar() override;
+  bool matchEnumScalar(const char*, bool) override;
+  void endEnumScalar() override;
+  bool beginBitSetScalar(bool &) override;
+  bool bitSetMatch(const char *, bool ) override;
+  void endBitSetScalar() override;
+  void scalarString(StringRef &) override;
+  void setError(const Twine &message) override;
+  bool canElideEmptySequence() override;
 
   class HNode {
+    virtual void anchor();
   public:
     HNode(Node *n) : _node(n) { }
     virtual ~HNode() { }
@@ -728,9 +809,9 @@ private:
   };
 
   class EmptyHNode : public HNode {
+    void anchor() override;
   public:
     EmptyHNode(Node *n) : HNode(n) { }
-    virtual ~EmptyHNode() {}
     static inline bool classof(const HNode *n) {
       return NullNode::classof(n->_node);
     }
@@ -738,9 +819,9 @@ private:
   };
 
   class ScalarHNode : public HNode {
+    void anchor() override;
   public:
     ScalarHNode(Node *n, StringRef s) : HNode(n), _value(s) { }
-    virtual ~ScalarHNode() { }
 
     StringRef value() const { return _value; }
 
@@ -795,15 +876,15 @@ public:
   void nextDocument();
 
 private:
-  llvm::SourceMgr                  SrcMgr; // must be before Strm
-  OwningPtr<llvm::yaml::Stream>    Strm;
-  OwningPtr<HNode>                 TopNode;
-  llvm::error_code                 EC;
-  llvm::BumpPtrAllocator           StringAllocator;
-  llvm::yaml::document_iterator    DocIterator;
-  std::vector<bool>                BitValuesUsed;
-  HNode                           *CurrentNode;
-  bool                             ScalarMatchFound;
+  llvm::SourceMgr                     SrcMgr; // must be before Strm
+  std::unique_ptr<llvm::yaml::Stream> Strm;
+  std::unique_ptr<HNode>              TopNode;
+  llvm::error_code                    EC;
+  llvm::BumpPtrAllocator              StringAllocator;
+  llvm::yaml::document_iterator       DocIterator;
+  std::vector<bool>                   BitValuesUsed;
+  HNode                              *CurrentNode;
+  bool                                ScalarMatchFound;
 };
 
 
@@ -818,28 +899,29 @@ public:
   Output(llvm::raw_ostream &, void *Ctxt=NULL);
   virtual ~Output();
 
-  virtual bool outputting();
-  virtual void beginMapping();
-  virtual void endMapping();
-  virtual bool preflightKey(const char *key, bool, bool, bool &, void *&);
-  virtual void postflightKey(void *);
-  virtual unsigned beginSequence();
-  virtual void endSequence();
-  virtual bool preflightElement(unsigned, void *&);
-  virtual void postflightElement(void *);
-  virtual unsigned beginFlowSequence();
-  virtual bool preflightFlowElement(unsigned, void *&);
-  virtual void postflightFlowElement(void *);
-  virtual void endFlowSequence();
-  virtual void beginEnumScalar();
-  virtual bool matchEnumScalar(const char*, bool);
-  virtual void endEnumScalar();
-  virtual bool beginBitSetScalar(bool &);
-  virtual bool bitSetMatch(const char *, bool );
-  virtual void endBitSetScalar();
-  virtual void scalarString(StringRef &);
-  virtual void setError(const Twine &message);
-  virtual bool canElideEmptySequence();
+  bool outputting() override;
+  bool mapTag(StringRef, bool) override;
+  void beginMapping() override;
+  void endMapping() override;
+  bool preflightKey(const char *key, bool, bool, bool &, void *&) override;
+  void postflightKey(void *) override;
+  unsigned beginSequence() override;
+  void endSequence() override;
+  bool preflightElement(unsigned, void *&) override;
+  void postflightElement(void *) override;
+  unsigned beginFlowSequence() override;
+  bool preflightFlowElement(unsigned, void *&) override;
+  void postflightFlowElement(void *) override;
+  void endFlowSequence() override;
+  void beginEnumScalar() override;
+  bool matchEnumScalar(const char*, bool) override;
+  void endEnumScalar() override;
+  bool beginBitSetScalar(bool &) override;
+  bool bitSetMatch(const char *, bool ) override;
+  void endBitSetScalar() override;
+  void scalarString(StringRef &) override;
+  void setError(const Twine &message) override;
+  bool canElideEmptySequence() override;
 public:
   // These are only used by operator<<. They could be private
   // if that templated operator could be made a friend.
@@ -932,7 +1014,7 @@ struct ScalarTraits<Hex64> {
 // Define non-member operator>> so that Input can stream in a document list.
 template <typename T>
 inline
-typename llvm::enable_if_c<has_DocumentListTraits<T>::value,Input &>::type
+typename std::enable_if<has_DocumentListTraits<T>::value, Input &>::type
 operator>>(Input &yin, T &docList) {
   int i = 0;
   while ( yin.setCurrentDocument() ) {
@@ -948,7 +1030,7 @@ operator>>(Input &yin, T &docList) {
 // Define non-member operator>> so that Input can stream in a map as a document.
 template <typename T>
 inline
-typename llvm::enable_if_c<has_MappingTraits<T>::value,Input &>::type
+typename std::enable_if<has_MappingTraits<T>::value, Input &>::type
 operator>>(Input &yin, T &docMap) {
   yin.setCurrentDocument();
   yamlize(yin, docMap, true);
@@ -959,17 +1041,17 @@ operator>>(Input &yin, T &docMap) {
 // a document.
 template <typename T>
 inline
-typename llvm::enable_if_c<has_SequenceTraits<T>::value,Input &>::type
+typename std::enable_if<has_SequenceTraits<T>::value, Input &>::type
 operator>>(Input &yin, T &docSeq) {
-  yin.setCurrentDocument();
-  yamlize(yin, docSeq, true);
+  if (yin.setCurrentDocument())
+    yamlize(yin, docSeq, true);
   return yin;
 }
 
 // Provide better error message about types missing a trait specialization
 template <typename T>
 inline
-typename llvm::enable_if_c<missingTraits<T>::value,Input &>::type
+typename std::enable_if<missingTraits<T>::value, Input &>::type
 operator>>(Input &yin, T &docSeq) {
   char missing_yaml_trait_for_type[sizeof(MissingTrait<T>)];
   return yin;
@@ -979,7 +1061,7 @@ operator>>(Input &yin, T &docSeq) {
 // Define non-member operator<< so that Output can stream out document list.
 template <typename T>
 inline
-typename llvm::enable_if_c<has_DocumentListTraits<T>::value,Output &>::type
+typename std::enable_if<has_DocumentListTraits<T>::value, Output &>::type
 operator<<(Output &yout, T &docList) {
   yout.beginDocuments();
   const size_t count = DocumentListTraits<T>::size(yout, docList);
@@ -996,7 +1078,7 @@ operator<<(Output &yout, T &docList) {
 // Define non-member operator<< so that Output can stream out a map.
 template <typename T>
 inline
-typename llvm::enable_if_c<has_MappingTraits<T>::value,Output &>::type
+typename std::enable_if<has_MappingTraits<T>::value, Output &>::type
 operator<<(Output &yout, T &map) {
   yout.beginDocuments();
   if ( yout.preflightDocument(0) ) {
@@ -1010,7 +1092,7 @@ operator<<(Output &yout, T &map) {
 // Define non-member operator<< so that Output can stream out a sequence.
 template <typename T>
 inline
-typename llvm::enable_if_c<has_SequenceTraits<T>::value,Output &>::type
+typename std::enable_if<has_SequenceTraits<T>::value, Output &>::type
 operator<<(Output &yout, T &seq) {
   yout.beginDocuments();
   if ( yout.preflightDocument(0) ) {
@@ -1024,7 +1106,7 @@ operator<<(Output &yout, T &seq) {
 // Provide better error message about types missing a trait specialization
 template <typename T>
 inline
-typename llvm::enable_if_c<missingTraits<T>::value,Output &>::type
+typename std::enable_if<missingTraits<T>::value, Output &>::type
 operator<<(Output &yout, T &seq) {
   char missing_yaml_trait_for_type[sizeof(MissingTrait<T>)];
   return yout;
@@ -1065,6 +1147,7 @@ operator<<(Output &yout, T &seq) {
         return seq.size();                                                  \
       }                                                                     \
       static _type& element(IO &io, std::vector<_type> &seq, size_t index) {\
+        (void)flow; /* Remove this workaround after PR17897 is fixed */     \
         if ( index >= seq.size() )                                          \
           seq.resize(index+1);                                              \
         return seq[index];                                                  \

@@ -2,7 +2,7 @@
 
 declare void @llvm.dbg.declare(metadata, metadata) nounwind readnone
 
-declare i64 @llvm.objectsize.i64(i8*, i1) nounwind readnone
+declare i64 @llvm.objectsize.i64.p0i8(i8*, i1) nounwind readnone
 
 declare i8* @foo(i8*, i32, i64, i64) nounwind
 
@@ -23,12 +23,13 @@ entry:
   %tmp1 = load i32* %__val.addr, align 4, !dbg !21
   %tmp2 = load i64* %__len.addr, align 8, !dbg !21
   %tmp3 = load i8** %__dest.addr, align 8, !dbg !21
-  %0 = call i64 @llvm.objectsize.i64(i8* %tmp3, i1 false), !dbg !21
+  %0 = call i64 @llvm.objectsize.i64.p0i8(i8* %tmp3, i1 false), !dbg !21
   %call = call i8* @foo(i8* %tmp, i32 %tmp1, i64 %tmp2, i64 %0), !dbg !21
   ret i8* %call, !dbg !21
 }
 
 !llvm.dbg.cu = !{!3}
+!llvm.module.flags = !{!30}
 
 !0 = metadata !{i32 786689, metadata !1, metadata !"__dest", metadata !2, i32 16777294, metadata !6, i32 0, null} ; [ DW_TAG_arg_variable ]
 !1 = metadata !{i32 786478, metadata !27, metadata !2, metadata !"foobar", metadata !"foobar", metadata !"", i32 79, metadata !4, i1 true, i1 true, i32 0, i32 0, null, i32 256, i1 true, i8* (i8*, i32, i64)* @foobar, null, null, metadata !25, i32 79} ; [ DW_TAG_subprogram ] [line 79] [local] [def] [foobar]
@@ -55,3 +56,4 @@ entry:
 !27 = metadata !{metadata !"string.h", metadata !"Game"}
 !28 = metadata !{metadata !"bits.c", metadata !"Game"}
 !29 = metadata !{i32 0}
+!30 = metadata !{i32 1, metadata !"Debug Info Version", i32 1}
