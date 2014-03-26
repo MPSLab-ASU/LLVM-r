@@ -73,22 +73,29 @@ struct OR1KOperand : public MCParsedAsmOperand {
 
   SMLoc StartLoc, EndLoc;
 
-  union {
-    struct {
-      const char *Data;
-      unsigned Length;
-    } Tok;
-    struct {
-      unsigned RegNum;
-    } Reg;
-    struct {
-      const MCExpr *Val;
-    } Imm;
+  struct Token {
+    const char *Data;
+    unsigned Length;
+  };
 
-    struct {
-      unsigned BaseReg;
-      const MCExpr *Off;
-    } Mem;
+  struct RegOp {
+    unsigned RegNum;
+  };
+
+  struct ImmOp {
+    const MCExpr *Val;
+  };
+
+  struct MemOp {
+    unsigned BaseReg;
+    const MCExpr *Off;
+  };
+
+  union {
+    struct Token Tok;
+    struct RegOp Reg;
+    struct ImmOp Imm;
+    struct MemOp Mem;
   };
 
   OR1KOperand(KindTy K) : MCParsedAsmOperand(), Kind(K) {}

@@ -27,12 +27,11 @@ namespace llvm {
   /// into an MCInst.
 class LLVM_LIBRARY_VISIBILITY OR1KMCInstLower {
   MCContext &Ctx;
-  Mangler &Mang;
 
   AsmPrinter &Printer;
 public:
   OR1KMCInstLower(MCContext &ctx, Mangler &mang, AsmPrinter &printer)
-    : Ctx(ctx), Mang(mang), Printer(printer) {}
+    : Ctx(ctx), Printer(printer) {}
   void Lower(const MachineInstr *MI, MCInst &OutMI) const;
 
   MCOperand LowerSymbolOperand(const MachineOperand &MO, MCSymbol *Sym) const;
