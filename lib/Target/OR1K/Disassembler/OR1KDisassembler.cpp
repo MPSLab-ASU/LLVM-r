@@ -111,9 +111,9 @@ DecodeStatus DecodeGPRRegisterClass(MCInst &Inst,
   if (RegNo > 31)
     return MCDisassembler::Fail;
 
-  // The internal representation of the registers counts r0: 1, r1: 2, etc.
+  // The internal representation of the registers counts r0: 2, r1: 3, etc.
   // FIXME: Use a more stable method of identifying registers
-  Inst.addOperand(MCOperand::CreateReg(RegNo+1));
+  Inst.addOperand(MCOperand::CreateReg(RegNo+2));
   return MCDisassembler::Success;
 }
 
@@ -122,7 +122,7 @@ static DecodeStatus DecodeMemoryValue(MCInst &Inst,
                                        uint64_t Address,
                                        const void *Decoder) {
   unsigned Register = (Insn >> 16) & 0x1f;
-  Inst.addOperand(MCOperand::CreateReg(Register+1));
+  Inst.addOperand(MCOperand::CreateReg(Register+2));
   unsigned Offset = (Insn & 0xffff);
   Inst.addOperand(MCOperand::CreateImm(SignExtend32<16>(Offset)));
   return MCDisassembler::Success;
