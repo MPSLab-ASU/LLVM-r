@@ -24,9 +24,18 @@ using namespace llvm;
 // Prepare value for the target space
 static unsigned adjustFixupValue(unsigned Kind, uint64_t Value) {
   switch (Kind) {
-    // FIXME: List all valid fixups instead
     default:
-      return 0;
+      llvm_unreachable("Unsupported fixup kind in adjustFixupValue");
+    case FK_Data_1:
+    case FK_Data_2:
+    case FK_Data_4:
+    case OR1K::fixup_OR1K_8:
+    case OR1K::fixup_OR1K_16:
+    case OR1K::fixup_OR1K_32:
+    case OR1K::fixup_OR1K_LO16_INSN:
+    case OR1K::fixup_OR1K_GOTPC_LO16:
+    case OR1K::fixup_OR1K_GOTOFF_LO16:
+      break;
     case OR1K::fixup_OR1K_REL26:
     case OR1K::fixup_OR1K_PLT26:
       // Currently this is used only for branches
@@ -61,10 +70,10 @@ public:
   MCObjectWriter *createObjectWriter(raw_ostream &OS) const;
 
   // No instruction requires relaxation
-  bool fixupNeedsRelaxation(const MCFixup &Fixup, uint64_t Value, 
+  bool fixupNeedsRelaxation(const MCFixup &Fixup, uint64_t Value,
                             const MCRelaxableFragment *DF,
                             const MCAsmLayout &Layout) const { return false; }
-  
+
   const MCFixupKindInfo &getFixupKindInfo(MCFixupKind Kind) const;
 
   unsigned getNumFixupKinds() const { return OR1K::NumTargetFixupKinds; }

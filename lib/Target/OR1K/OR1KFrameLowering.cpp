@@ -17,6 +17,7 @@
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
+#include "llvm/CodeGen/MachineModuleInfo.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/IR/Function.h"
 
@@ -115,20 +116,39 @@ void OR1KFrameLowering::emitPrologue(MachineFunction &MF) const {
   // No need to allocate space on the stack.
   if (StackSize == 0 && !HasRA) return;
 
+  MachineModuleInfo &MMI = MF.getMMI();
+  const MCRegisterInfo *MRI = MMI.getContext().getRegisterInfo();
+  unsigned CFIIndex;
+
   int Offset = -4;
 
-  // l.sw  stack_lock(r1), r9
   if (HasRA) {
+    // Save return address onto stack
+    // Emit "l.sw  stack_lock(r1), r9"
     BuildMI(MBB, MBBI, DL, TII.get(OR1K::SW))
       .addReg(OR1K::R9).addReg(OR1K::R1).addImm(Offset);
+
+    // Emit ".cfi_offset r9, Offset"
+    CFIIndex = MMI.addFrameInst(MCCFIInstruction::createOffset(
+        nullptr, MRI->getDwarfRegNum(OR1K::R9, true), Offset));
+    BuildMI(MBB, MBBI, DL, TII.get(TargetOpcode::CFI_INSTRUCTION))
+        .addCFIIndex(CFIIndex);
+
     Offset -= 4;
   }
 
   if (hasFP(MF)) {
     // Save frame pointer onto stack
-    // l.sw  stack_loc(r1), r2
+    // Emit "l.sw  stack_loc(r1), r2"
     BuildMI(MBB, MBBI, DL, TII.get(OR1K::SW))
       .addReg(OR1K::R2).addReg(OR1K::R1).addImm(Offset);
+
+    // Emit ".cfi_offset r9, Offset"
+    CFIIndex = MMI.addFrameInst(MCCFIInstruction::createOffset(
+        nullptr, MRI->getDwarfRegNum(OR1K::R2, true), Offset));
+    BuildMI(MBB, MBBI, DL, TII.get(TargetOpcode::CFI_INSTRUCTION))
+        .addCFIIndex(CFIIndex);
+
     Offset -= 4;
 
     // In case of a base pointer, it need to be saved here
@@ -137,12 +157,24 @@ void OR1KFrameLowering::emitPrologue(MachineFunction &MF) const {
     if (TRI->hasBasePointer(MF)) {
       BuildMI(MBB, MBBI, DL, TII.get(OR1K::SW))
         .addReg(TRI->getBaseRegister()).addReg(OR1K::R1).addImm(Offset);
+
+      // .cfi_offset BaseReg, Offset
+      CFIIndex = MMI.addFrameInst(MCCFIInstruction::createOffset(
+          nullptr, MRI->getDwarfRegNum(TRI->getBaseRegister(), true), Offset));
+      BuildMI(MBB, MBBI, DL, TII.get(TargetOpcode::CFI_INSTRUCTION))
+          .addCFIIndex(CFIIndex);
     }
 
     // Set frame pointer to stack pointer
-    // l.addi r2, r1, 0
+    // Emit "l.addi r2, r1, 0"
     BuildMI(MBB, MBBI, DL, TII.get(OR1K::ADDI), OR1K::R2)
       .addReg(OR1K::R1).addImm(0);
+
+    // Emit ".cfi_def_cfa_register r2"
+    CFIIndex = MMI.addFrameInst(MCCFIInstruction::createDefCfaRegister(
+        nullptr, MRI->getDwarfRegNum(OR1K::R2, true)));
+    BuildMI(MBB, MBBI, DL, TII.get(TargetOpcode::CFI_INSTRUCTION))
+        .addCFIIndex(CFIIndex);
   }
 
   // FIXME: Allocate a scratch register.
@@ -170,8 +202,8 @@ void OR1KFrameLowering::emitPrologue(MachineFunction &MF) const {
     BuildMI(MBB, MBBI, DL, TII.get(OR1K::SLL_ri), OR1K::R1)
       .addReg(ScratchReg).addImm(AlignLog);
   } else if (isInt<16>(StackSize)) {
-    // Adjust stack : l.addi r1, r1, -imm
     if (StackSize) {
+      // Adjust stack : l.addi r1, r1, -imm
       BuildMI(MBB, MBBI, DL, TII.get(OR1K::ADDI), OR1K::R1)
         .addReg(OR1K::R1).addImm(-StackSize);
     }
@@ -184,12 +216,38 @@ void OR1KFrameLowering::emitPrologue(MachineFunction &MF) const {
       .addReg(OR1K::R1).addReg(ScratchReg);
   }
 
+  if(!hasFP(MF)) {
+    // Emit ".cfi_def_cfa_offset StackSize"
+    CFIIndex = MMI.addFrameInst(
+        MCCFIInstruction::createDefCfaOffset(nullptr, -StackSize));
+    BuildMI(MBB, MBBI, DL, TII.get(TargetOpcode::CFI_INSTRUCTION))
+        .addCFIIndex(CFIIndex);
+  }
+
   // If a base pointer is needed, set it up here.
   // Any variable sized objects will be located after this,
   // so local objects can be adressed with the base pointer.
   if (TRI->hasBasePointer(MF)) {
     BuildMI(MBB, MBBI, DL, TII.get(OR1K::ORI), TRI->getBaseRegister())
       .addReg(OR1K::R1).addImm(0);
+  }
+
+  // Iterate over list of callee-saved registers and emit .cfi_offset
+  // directives.
+  const std::vector<CalleeSavedInfo> &CSI = MFI->getCalleeSavedInfo();
+  for (std::vector<CalleeSavedInfo>::const_iterator I = CSI.begin(),
+         E = CSI.end(); I != E; ++I) {
+    int64_t Offset = MFI->getObjectOffset(I->getFrameIdx());
+    unsigned Reg = I->getReg();
+
+    // Iterate over the instruction that spills the register.
+    ++MBBI;
+
+    // Emit ".cfi_offset Reg, Offset"
+    CFIIndex = MMI.addFrameInst(MCCFIInstruction::createOffset(
+        nullptr, MRI->getDwarfRegNum(Reg, true), Offset));
+    BuildMI(MBB, MBBI, DL, TII.get(TargetOpcode::CFI_INSTRUCTION))
+        .addCFIIndex(CFIIndex);
   }
 
   if (MFI->hasVarSizedObjects()) {

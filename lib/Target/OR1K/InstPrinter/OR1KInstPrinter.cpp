@@ -89,3 +89,7 @@ void OR1KInstPrinter::printS16ImmOperand(const MCInst *MI, unsigned OpNo,
   assert(Op.isImm() && "Immediate operand not an immediate");
   O << (int16_t)Op.getImm();
 }
+
+void OR1KInstPrinter::printRegName(raw_ostream &O, unsigned RegNo) const {
+  O << getRegisterName(RegNo);
+}

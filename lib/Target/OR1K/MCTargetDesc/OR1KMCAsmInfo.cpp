@@ -17,10 +17,12 @@ using namespace llvm;
 void OR1KMCAsmInfo::anchor() { }
 
 OR1KMCAsmInfo::OR1KMCAsmInfo(StringRef TT) {
-  IsLittleEndian = false;
+  IsLittleEndian              = false;
   PrivateGlobalPrefix         = ".L";
   WeakRefDirective            = "\t.weak\t";
-  ExceptionsType = ExceptionHandling::DwarfCFI;
+  ExceptionsType              = ExceptionHandling::DwarfCFI;
+  HasLEB128                   = true;
+  DwarfRegNumForCFI           = true;
 
   // OR1K assembly requires ".section" before ".bss"
   UsesELFSectionDirectiveForBSS = true;

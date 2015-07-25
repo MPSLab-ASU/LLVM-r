@@ -52,6 +52,16 @@ static MCSubtargetInfo *createOR1KMCSubtargetInfo(StringRef TT, StringRef CPU,
   return X;
 }
 
+static MCAsmInfo *createOR1KMCAsmInfo(const MCRegisterInfo &MRI, StringRef TT) {
+  MCAsmInfo *MAI = new OR1KMCAsmInfo(TT);
+
+  MCCFIInstruction Inst = MCCFIInstruction::createDefCfa(
+      0, MRI.getDwarfRegNum(OR1K::R1, true), 0);
+  MAI->addInitialFrameState(Inst);
+
+  return MAI;
+}
+
 static MCCodeGenInfo *createOR1KMCCodeGenInfo(StringRef TT, Reloc::Model RM,
                                                CodeModel::Model CM,
                                                CodeGenOpt::Level OL) {
@@ -93,7 +103,7 @@ static MCInstPrinter *createOR1KMCInstPrinter(const Target &T,
 
 extern "C" void LLVMInitializeOR1KTargetMC() {
   // Register the MC asm info.
-  RegisterMCAsmInfo<OR1KMCAsmInfo> X(TheOR1KTarget);
+  TargetRegistry::RegisterMCAsmInfo(TheOR1KTarget, createOR1KMCAsmInfo);
 
   // Register the MC codegen info.
   TargetRegistry::RegisterMCCodeGenInfo(TheOR1KTarget,
