@@ -109,9 +109,11 @@ OR1KRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
     BuildMI(*MI.getParent(), II, dl, TII.get(OR1K::ORI), Reg)
       .addReg(Reg).addImm(Offset & 0xffffU);
     // Reg = Reg + Sp
-    MI.setDesc(TII.get(OR1K::ADD));
-    MI.getOperand(FIOperandNum).ChangeToRegister(Reg, false, false, true);
-    MI.getOperand(FIOperandNum+1).ChangeToRegister(FrameReg, false);
+    BuildMI(*MI.getParent(), II, dl, TII.get(OR1K::ADD), Reg)
+      .addReg(Reg).addReg(FrameReg);
+
+    MI.getOperand(FIOperandNum).ChangeToRegister(Reg, false, false, /*isKill=*/true);
+    MI.getOperand(FIOperandNum+1).ChangeToImmediate(0);
 
     return;
   }
