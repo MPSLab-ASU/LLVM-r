@@ -393,7 +393,7 @@ class STORE<bits<4> subOp, string asmstring, list<dag> pattern>
           !strconcat(asmstring, "\t$dst, $rB"), pattern> {
   bits<21> dst;
   bits<5> rB;
-  
+
   let Inst{25-21} = dst{15-11};
   let Inst{20-16} = dst{20-16};
   let Inst{15-11} = rB;
@@ -536,6 +536,8 @@ class NOP_I<bits<2> op2Val, string asmstr>
 let neverHasSideEffects = 1 in
   def NOP : NOP_I<0x1, "l.nop">;
 
+def : InstAlias<"l.nop", (NOP 0)>;
+
 // FIXME: Do not use isCodeGenOnly = 1 to resolve conflicts
 let isReturn = 1, isTerminator = 1, hasDelaySlot=1, isBarrier = 1, isCodeGenOnly = 1, Inst = 0x44004800 in {
   def RET : InstBR<0x1, (outs), (ins),
@@ -578,7 +580,7 @@ let Uses = [SR], usesCustomInserter = 1, Predicates = [NoCmov] in {
 
 // PIC base construction.
 let neverHasSideEffects = 1, isNotDuplicable = 1, Defs = [R9] in
-  def GETPC : Pseudo<(outs), (ins i32imm:$label), 
+  def GETPC : Pseudo<(outs), (ins i32imm:$label),
   "#GETPC $label", []>;
 
 class MOVHI_I <dag outs, dag ins, list<dag> pattern>
