@@ -504,15 +504,36 @@ let isCall=1, hasDelaySlot=1,
   def JALR : BRANCHL_R<0x2, "l.jalr">;
 }
 
+class MFSPR_I
+  : InstRI<0xd, (outs GPR:$rD), (ins GPR:$rA, i16imm:$imm),
+           "l.mfspr\t$rD, $rA, $imm", []> {
+  bits<5> rD;
+  bits<5> rA;
+  bits<16> imm;
+
+  let Inst{25-21} = rD;
+  let Inst{20-16} = rA;
+  let Inst{15-0} = imm;
+}
+
+def MFSPR : MFSPR_I;
+
+class MTSPR_I
+  : InstRR<0x0, (outs), (ins GPR:$rA, GPR:$rB, i16imm:$imm),
+           "l.mtspr\t$rA, $rB, $imm", []> {
+  bits<5> rA;
+  bits<5> rB;
+  bits<16> imm;
+
+  let Inst{25-21} = imm{15-11};
+  let Inst{20-16} = rA;
+  let Inst{15-11} = rB;
+  let Inst{10-0} = imm{10-0};
+}
+
+def MTSPR : MTSPR_I;
+
 /*
-
-def MTSPR :
-
-def MFSPR :
-
-
-def NOP :
-
 
 def SYS :
 def TRAP :
