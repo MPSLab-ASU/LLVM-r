@@ -187,7 +187,7 @@ public:
     Op->EndLoc = E;
     return Op;
   }
-  
+
   static OR1KOperand *CreateImm(const MCExpr *Val, SMLoc S, SMLoc E) {
     OR1KOperand *Op = new OR1KOperand(Immediate);
     Op->Imm.Val = Val;
@@ -262,6 +262,7 @@ OR1KOperand *OR1KAsmParser::ParseImmediate() {
   const MCExpr *EVal;
   switch(getLexer().getKind()) {
     default: return 0;
+    case AsmToken::LParen:
     case AsmToken::Plus:
     case AsmToken::Minus:
     case AsmToken::Integer:
@@ -285,13 +286,13 @@ ParseOperand(SmallVectorImpl<MCParsedAsmOperand*> &Operands) {
   // Attempt to parse token as register
   unsigned RegNo;
   Op = ParseRegister(RegNo);
-  
+
   // Attempt to parse token as immediate
   if(!Op) {
     Op = ParseImmediate();
-    
+
     // If next token is left parenthesis, then memory operand, attempt to
-    // parse next token as base of 
+    // parse next token as base of
     // FIXME: There should be a better way of doing this.
     if(Op)
       if(getLexer().is(AsmToken::LParen)) {
