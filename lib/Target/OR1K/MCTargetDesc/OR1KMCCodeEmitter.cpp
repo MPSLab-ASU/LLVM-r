@@ -109,7 +109,7 @@ getMachineOpValue(const MCInst &MI, const MCOperand &MO,
     return getOR1KRegisterNumbering(MO.getReg());
   if (MO.isImm())
     return static_cast<unsigned>(MO.getImm());
-  
+
   // MO must be an expression
   assert(MO.isExpr());
 
@@ -183,12 +183,18 @@ getMemoryOpValue(const MCInst &MI, unsigned Op,
                  SmallVectorImpl<MCFixup> &Fixups,
                  const MCSubtargetInfo &STI) const {
   unsigned encoding;
+
   const MCOperand op1 = MI.getOperand(1);
   assert(op1.isReg() && "First operand is not register.");
   encoding = (getOR1KRegisterNumbering(op1.getReg()) << 16);
+
+  // The offset can be an immediate value or a relocation, e.g. got(x).
   MCOperand op2 = MI.getOperand(2);
-  assert(op2.isImm() && "Second operand is not immediate.");
-  encoding |= (static_cast<short>(op2.getImm()) & 0xffff);
+  assert((op2.isImm() || op2.isExpr()) &&
+         "Second operand is not immediate or expression.");
+  unsigned Value = getMachineOpValue(MI, op2, Fixups, STI);
+  encoding |= (static_cast<short>(Value) & 0xffff);
+
   return encoding;
 }
 

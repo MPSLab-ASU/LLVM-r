@@ -33,6 +33,7 @@ static unsigned adjustFixupValue(unsigned Kind, uint64_t Value) {
     case OR1K::fixup_OR1K_16:
     case OR1K::fixup_OR1K_32:
     case OR1K::fixup_OR1K_LO16_INSN:
+    case OR1K::fixup_OR1K_GOT16:
     case OR1K::fixup_OR1K_GOTPC_LO16:
     case OR1K::fixup_OR1K_GOTOFF_LO16:
       break;

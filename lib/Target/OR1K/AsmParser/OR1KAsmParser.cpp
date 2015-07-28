@@ -42,9 +42,10 @@ class OR1KAsmParser : public MCTargetAsmParser {
 
   OR1KOperand *ParseImmediate();
 
-  MCSymbolRefExpr::VariantKind getVariantKind(StringRef Symbol);
   const MCExpr *evaluateRelocExpr(const MCExpr *Expr, MCSymbolRefExpr::VariantKind VK);
-  OR1KOperand *ParseSymbolOrRelocExpr();
+
+  MCSymbolRefExpr::VariantKind getVariantKind(StringRef Symbol);
+  OR1KOperand *ParseMemoryOffset();
 
   bool ParseInstruction(ParseInstructionInfo &Info, StringRef Name,
                         SMLoc NameLoc,
@@ -342,22 +343,20 @@ const MCExpr *OR1KAsmParser::evaluateRelocExpr(const MCExpr *Expr,
   return 0;
 }
 
-OR1KOperand *OR1KAsmParser::ParseSymbolOrRelocExpr() {
+OR1KOperand *OR1KAsmParser::ParseMemoryOffset() {
+  // Parse an immediate
+  OR1KOperand *Op = ParseImmediate();
+  if(Op)
+    return Op;
+
   SMLoc S = Parser.getTok().getLoc();
   StringRef Identifier;
   if (Parser.parseIdentifier(Identifier))
     return 0;
   SMLoc E =
       SMLoc::getFromPointer(Parser.getTok().getLoc().getPointer() - 1);
-
   MCSymbolRefExpr::VariantKind VK = getVariantKind(Identifier);
-  if(VK == MCSymbolRefExpr::VK_None) {
-    // Create a symbol reference.
-    MCSymbol *Sym = getContext().GetOrCreateSymbol(Identifier);
-    const MCExpr *Res =
-        MCSymbolRefExpr::Create(Sym, MCSymbolRefExpr::VK_None, getContext());
-    return OR1KOperand::CreateImm(Res, S, E);
-  } else {
+  if(VK != MCSymbolRefExpr::VK_None) {
     // Parse a relocation expression.
     SMLoc ExprS = Parser.getTok().getLoc();
     if(getLexer().isNot(AsmToken::LParen)) {
@@ -372,7 +371,7 @@ OR1KOperand *OR1KAsmParser::ParseSymbolOrRelocExpr() {
 
     SMLoc ExprE = Parser.getTok().getLoc();
     if(getLexer().isNot(AsmToken::RParen)) {
-      Error(E, "Expected a closing parenthesis");
+      Error(ExprE, "Expected a closing parenthesis");
       return 0;
     }
     getLexer().Lex();
@@ -384,6 +383,12 @@ OR1KOperand *OR1KAsmParser::ParseSymbolOrRelocExpr() {
     }
 
     return OR1KOperand::CreateImm(Res, S, ExprE);
+  } else {
+    // Parse a symbol
+    MCSymbol *Sym = getContext().GetOrCreateSymbol(Identifier);
+    const MCExpr *Res =
+        MCSymbolRefExpr::Create(Sym, MCSymbolRefExpr::VK_None, getContext());
+    return OR1KOperand::CreateImm(Res, S, E);
   }
 }
 
@@ -399,9 +404,9 @@ ParseOperand(SmallVectorImpl<MCParsedAsmOperand*> &Operands) {
   unsigned RegNo;
   Op = ParseRegister(RegNo);
 
-  // Attempt to parse token as immediate
+  // Attempt to parse token as memory offset
   if(!Op) {
-    Op = ParseImmediate();
+    Op = ParseMemoryOffset();
 
     // If next token is left parenthesis, then memory operand, attempt to
     // parse next token as base of
@@ -419,12 +424,6 @@ ParseOperand(SmallVectorImpl<MCParsedAsmOperand*> &Operands) {
           return true;
         }
         getLexer().Lex();
-      }
-    } else {
-      // Attempt to parse token as symbol
-      Op = ParseSymbolOrRelocExpr();
-      if(!Op) {
-        return true;
       }
     }
   }
