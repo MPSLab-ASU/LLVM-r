@@ -41,6 +41,10 @@ def FeatureRor   : SubtargetFeature<"ror", "HasRor", "true",
                                    "Enable hardware rotate right">;
 def FeatureCmov  : SubtargetFeature<"cmov", "HasCmov", "true",
                                     "Enable conditional move instruction">;
+def FeatureAddc  : SubtargetFeature<"addc", "HasAddc", "true",
+                                    "Enable add with carry instruction">;
+def FeatureFfl1  : SubtargetFeature<"ffl1", "HasFfl1", "true",
+                                    "Enable find first/last one instructions">;
 
 //===----------------------------------------------------------------------===//
 // OR1K processors supported.

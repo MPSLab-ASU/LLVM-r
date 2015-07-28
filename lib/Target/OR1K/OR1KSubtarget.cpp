@@ -26,7 +26,9 @@ OR1KSubtarget::OR1KSubtarget(const std::string &TT,
     HasMul(false),
     HasDiv(false),
     HasRor(false),
-    HasCmov(false)
+    HasCmov(false),
+    HasAddc(false),
+    HasFfl1(false)
 {
   std::string CPUName = CPU;
   if (CPUName.empty())

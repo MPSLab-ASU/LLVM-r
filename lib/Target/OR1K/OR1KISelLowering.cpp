@@ -118,11 +118,19 @@ OR1KTargetLowering::OR1KTargetLowering(OR1KTargetMachine &tm) :
   setOperationAction(ISD::SRA_PARTS,         MVT::i32, Expand);
 
   setOperationAction(ISD::BSWAP,             MVT::i32, Expand);
-  setOperationAction(ISD::CTTZ,              MVT::i32, Custom);
-  setOperationAction(ISD::CTLZ,              MVT::i32, Custom);
-  setOperationAction(ISD::CTTZ_ZERO_UNDEF,   MVT::i32, Custom);
-  setOperationAction(ISD::CTLZ_ZERO_UNDEF,   MVT::i32, Custom);
   setOperationAction(ISD::CTPOP,             MVT::i32, Expand);
+
+  if (Subtarget.hasFfl1()) {
+    setOperationAction(ISD::CTTZ,              MVT::i32, Custom);
+    setOperationAction(ISD::CTLZ,              MVT::i32, Custom);
+    setOperationAction(ISD::CTTZ_ZERO_UNDEF,   MVT::i32, Custom);
+    setOperationAction(ISD::CTLZ_ZERO_UNDEF,   MVT::i32, Custom);
+  } else {
+    setOperationAction(ISD::CTTZ,              MVT::i32, Expand);
+    setOperationAction(ISD::CTLZ,              MVT::i32, Expand);
+    setOperationAction(ISD::CTTZ_ZERO_UNDEF,   MVT::i32, Expand);
+    setOperationAction(ISD::CTLZ_ZERO_UNDEF,   MVT::i32, Expand);
+  }
 
   setOperationAction(ISD::SIGN_EXTEND_INREG, MVT::i1,   Expand);
   setOperationAction(ISD::SIGN_EXTEND_INREG, MVT::i8,   Expand);
@@ -140,7 +148,7 @@ OR1KTargetLowering::OR1KTargetLowering(OR1KTargetMachine &tm) :
   setMinFunctionAlignment(2);
   setPrefFunctionAlignment(2);
 
-  MaxStoresPerMemcpy = 16; 
+  MaxStoresPerMemcpy = 16;
   MaxStoresPerMemcpyOptSize = 8;
   MaxStoresPerMemset = 16;
 }

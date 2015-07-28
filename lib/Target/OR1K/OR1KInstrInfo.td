@@ -163,6 +163,10 @@ def HasCmov      : Predicate<"Subtarget.hasCmov()">,
                    AssemblerPredicate<"FeatureCmov">;
 def NoCmov       : Predicate<"!Subtarget.hasCmov()">,
                    AssemblerPredicate<"!FeatureCmov">;
+def HasAddc      : Predicate<"Subtarget.hasAddc()">,
+                   AssemblerPredicate<"FeatureAddc">;
+def HasFfl1      : Predicate<"Subtarget.hasFfl1()">,
+                   AssemblerPredicate<"FeatureFfl1">;
 
 
 // -------------------------------------------------- //
@@ -281,7 +285,8 @@ class ALU1_RR<bits<4> subOp, string asmstr, SDNode OpNode>
 let isAsCheapAsAMove = 1 in {
   let isCommutable=1 in {
     def ADD  : ALU1_RR<0x0, "l.add", add>;
-    def ADDC : ALU1_RR<0x1, "l.addc", add>;
+    let Predicates = [HasAddc] in
+      def ADDC : ALU1_RR<0x1, "l.addc", add>;
   }
   def SUB  : ALU1_RR<0x2, "l.sub", sub>;
   let isCommutable=1 in {
@@ -322,8 +327,10 @@ class ALU2_RR<bits<2> subOp1, bits<4> subOp2, string asmstr, SDNode OpNode>
   let op3 = subOp2;
 }
 
-def FF1 : ALU2_RR<0x0, 0xf, "l.ff1", OR1Kff1>;
-def FL1 : ALU2_RR<0x1, 0xf, "l.fl1", OR1Kfl1>;
+let Predicates = [HasFfl1] in {
+  def FF1 : ALU2_RR<0x0, 0xf, "l.ff1", OR1Kff1>;
+  def FL1 : ALU2_RR<0x1, 0xf, "l.fl1", OR1Kfl1>;
+}
 
 // -------------------------------------------------- //
 // SHIFT instructions
