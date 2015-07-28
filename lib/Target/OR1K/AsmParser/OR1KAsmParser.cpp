@@ -7,15 +7,18 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "llvm/ADT/StringSwitch.h"
+#include "llvm/ADT/STLExtras.h"
 #include "MCTargetDesc/OR1KMCTargetDesc.h"
 #include "llvm/MC/MCParser/MCAsmLexer.h"
 #include "llvm/MC/MCParser/MCParsedAsmOperand.h"
 #include "llvm/MC/MCTargetAsmParser.h"
 #include "llvm/MC/MCStreamer.h"
 #include "llvm/MC/MCSubtargetInfo.h"
+#include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCExpr.h"
+#include "llvm/MC/MCSymbol.h"
 #include "llvm/MC/MCInst.h"
-#include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/TargetRegistry.h"
 using namespace llvm;
 
@@ -38,6 +41,10 @@ class OR1KAsmParser : public MCTargetAsmParser {
   OR1KOperand *ParseRegister(unsigned &RegNo);
 
   OR1KOperand *ParseImmediate();
+
+  MCSymbolRefExpr::VariantKind getVariantKind(StringRef Symbol);
+  const MCExpr *evaluateRelocExpr(const MCExpr *Expr, MCSymbolRefExpr::VariantKind VK);
+  OR1KOperand *ParseSymbolOrRelocExpr();
 
   bool ParseInstruction(ParseInstructionInfo &Info, StringRef Name,
                         SMLoc NameLoc,
@@ -275,6 +282,111 @@ OR1KOperand *OR1KAsmParser::ParseImmediate() {
   }
 }
 
+MCSymbolRefExpr::VariantKind OR1KAsmParser::getVariantKind(StringRef Symbol) {
+  MCSymbolRefExpr::VariantKind VK =
+      StringSwitch<MCSymbolRefExpr::VariantKind>(Symbol)
+          .Case("hi", MCSymbolRefExpr::VK_OR1K_ABS_HI)
+          .Case("lo", MCSymbolRefExpr::VK_OR1K_ABS_LO)
+          .Case("plt", MCSymbolRefExpr::VK_OR1K_PLT)
+          .Case("got", MCSymbolRefExpr::VK_OR1K_GOT)
+          .Case("gotpchi", MCSymbolRefExpr::VK_OR1K_GOTPCHI)
+          .Case("gotpclo", MCSymbolRefExpr::VK_OR1K_GOTPCLO)
+          .Case("gotoffhi", MCSymbolRefExpr::VK_OR1K_GOTOFFHI)
+          .Case("gotofflo", MCSymbolRefExpr::VK_OR1K_GOTOFFLO)
+          .Default(MCSymbolRefExpr::VK_None);
+
+  return VK;
+}
+
+const MCExpr *OR1KAsmParser::evaluateRelocExpr(const MCExpr *Expr,
+                                               MCSymbolRefExpr::VariantKind VK) {
+  // Check the type of the expression.
+  if (const MCConstantExpr *MCE = dyn_cast<MCConstantExpr>(Expr)) {
+    // It's a constant, evaluate lo or hi value.
+    if (VK == MCSymbolRefExpr::VK_OR1K_ABS_LO) {
+      short Val = MCE->getValue();
+      return MCConstantExpr::Create(Val, getContext());
+    } else if (MCSymbolRefExpr::VK_OR1K_ABS_HI) {
+      int Val = MCE->getValue();
+      int LoSign = Val & 0x8000;
+      Val = (Val & 0xffff0000) >> 16;
+      // Lower part is treated as a signed int, so if it is negative
+      // we must add 1 to the hi part to compensate.
+      if (LoSign)
+        Val++;
+      return MCConstantExpr::Create(Val, getContext());
+    } else {
+      return 0;
+    }
+  }
+
+  if (const MCSymbolRefExpr *MSRE = dyn_cast<MCSymbolRefExpr>(Expr)) {
+    // It's a symbol, create a symbolic expression from the symbol.
+    StringRef Symbol = MSRE->getSymbol().getName();
+    return MCSymbolRefExpr::Create(Symbol, VK, getContext());
+  }
+
+  if (const MCBinaryExpr *BE = dyn_cast<MCBinaryExpr>(Expr)) {
+    // It's a binary expression, map operands.
+    const MCExpr *LExp = evaluateRelocExpr(BE->getLHS(), VK);
+    const MCExpr *RExp = evaluateRelocExpr(BE->getRHS(), VK);
+    return MCBinaryExpr::Create(BE->getOpcode(), LExp, RExp, getContext());
+  }
+
+  if (const MCUnaryExpr *UN = dyn_cast<MCUnaryExpr>(Expr)) {
+    // It's an unary expression, map operand.
+    const MCExpr *UnExp = evaluateRelocExpr(UN->getSubExpr(), VK);
+    return MCUnaryExpr::Create(UN->getOpcode(), UnExp, getContext());
+  }
+
+  return 0;
+}
+
+OR1KOperand *OR1KAsmParser::ParseSymbolOrRelocExpr() {
+  SMLoc S = Parser.getTok().getLoc();
+  StringRef Identifier;
+  if (Parser.parseIdentifier(Identifier))
+    return 0;
+  SMLoc E =
+      SMLoc::getFromPointer(Parser.getTok().getLoc().getPointer() - 1);
+
+  MCSymbolRefExpr::VariantKind VK = getVariantKind(Identifier);
+  if(VK == MCSymbolRefExpr::VK_None) {
+    // Create a symbol reference.
+    MCSymbol *Sym = getContext().GetOrCreateSymbol(Identifier);
+    const MCExpr *Res =
+        MCSymbolRefExpr::Create(Sym, MCSymbolRefExpr::VK_None, getContext());
+    return OR1KOperand::CreateImm(Res, S, E);
+  } else {
+    // Parse a relocation expression.
+    SMLoc ExprS = Parser.getTok().getLoc();
+    if(getLexer().isNot(AsmToken::LParen)) {
+      Error(Parser.getTok().getLoc(), "Expected a parenthesized expression");
+      return 0;
+    }
+    getLexer().Lex();
+
+    const MCExpr *EVal;
+    if(getParser().parseExpression(EVal))
+      return 0;
+
+    SMLoc ExprE = Parser.getTok().getLoc();
+    if(getLexer().isNot(AsmToken::RParen)) {
+      Error(E, "Expected a closing parenthesis");
+      return 0;
+    }
+    getLexer().Lex();
+
+    const MCExpr *Res = evaluateRelocExpr(EVal, VK);
+    if(!Res) {
+      Error(ExprS, "Unsupported relocation expression");
+      return 0;
+    }
+
+    return OR1KOperand::CreateImm(Res, S, ExprE);
+  }
+}
+
 /// Looks at a token type and creates the relevant operand
 /// from this information, adding to Operands.
 /// If operand was parsed, returns false, else true.
@@ -294,7 +406,7 @@ ParseOperand(SmallVectorImpl<MCParsedAsmOperand*> &Operands) {
     // If next token is left parenthesis, then memory operand, attempt to
     // parse next token as base of
     // FIXME: There should be a better way of doing this.
-    if(Op)
+    if(Op) {
       if(getLexer().is(AsmToken::LParen)) {
         getLexer().Lex();
         // Swap tokens around so that they can be parsed
@@ -303,16 +415,23 @@ ParseOperand(SmallVectorImpl<MCParsedAsmOperand*> &Operands) {
 
         // Invalid memory operand, fail
         if(!Op || getLexer().isNot(AsmToken::RParen)) {
-          Error(Parser.getTok().getLoc(), "unknown operand");
+          Error(Parser.getTok().getLoc(), "Unsupported operand");
           return true;
         }
         getLexer().Lex();
       }
+    } else {
+      // Attempt to parse token as symbol
+      Op = ParseSymbolOrRelocExpr();
+      if(!Op) {
+        return true;
+      }
+    }
   }
 
   // If the token could not be parsed then fail
   if(!Op) {
-    Error(Parser.getTok().getLoc(), "unknown operand");
+    Error(Parser.getTok().getLoc(), "Unsupported operand");
     return true;
   }
 
