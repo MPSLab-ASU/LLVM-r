@@ -533,10 +533,19 @@ class MTSPR_I
 
 def MTSPR : MTSPR_I;
 
-/*
+class TRAP_I<bits<16> subOp, string asmstr>
+  : InstOR1K<(outs), (ins i16imm:$imm),
+             !strconcat(asmstr, "\t$imm"), []> {
+  bits<16> imm;
 
-def SYS :
-def TRAP :
+  let Inst{31-16} = subOp;
+  let Inst{15-0} = imm;
+}
+
+def SYS  : TRAP_I<0x2000, "l.sys">;
+def TRAP : TRAP_I<0x2100, "l.trap">;
+
+/*
 
 def RFE :
 
