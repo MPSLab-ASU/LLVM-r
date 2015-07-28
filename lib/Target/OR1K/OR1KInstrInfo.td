@@ -545,11 +545,13 @@ class TRAP_I<bits<16> subOp, string asmstr>
 def SYS  : TRAP_I<0x2000, "l.sys">;
 def TRAP : TRAP_I<0x2100, "l.trap">;
 
-/*
+class RFE_I
+  : InstOR1K<(outs), (ins),
+             "l.rfe", []> {
+  let Inst{31-26} = 0x9;
+}
 
-def RFE :
-
-*/
+def RFE : RFE_I;
 
 class NOP_I<bits<2> op2Val, string asmstr>
   : InstBI<0x5, (outs), (ins i16imm:$imm),
