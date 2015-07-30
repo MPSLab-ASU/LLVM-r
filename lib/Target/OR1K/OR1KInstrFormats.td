@@ -7,6 +7,14 @@
 //
 //===----------------------------------------------------------------------===//
 
+class Format<bits<2> value> {
+  bits<2> Value = value;
+}
+
+def OtherFrm : Format<0>;
+def AFrm : Format<1>;
+def JFrm : Format<2>;
+
 class InstOR1K<dag outs, dag ins, string asmstr, list<dag> pattern>
   : Instruction {
   field bits<32> Inst;
@@ -15,6 +23,9 @@ class InstOR1K<dag outs, dag ins, string asmstr, list<dag> pattern>
 
   let Namespace = "OR1K";
   let DecoderNamespace = "OR1K";
+
+  Format format = OtherFrm;
+  let TSFlags{1-0} = format.Value;
 
   bits<2> optype;
   bits<4> opcode;

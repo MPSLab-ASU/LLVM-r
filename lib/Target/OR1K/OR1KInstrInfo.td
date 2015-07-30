@@ -200,6 +200,7 @@ class SF_RI<bits<5> op2Val, string asmstr, PatLeaf Cond>
   let Inst{20-16} = rA;
   let Inst{15-0} = imm;
 
+  let format = AFrm;
   let op2 = op2Val;
 }
 
@@ -235,6 +236,8 @@ class ALU_RI<bits<4> subOp, dag outs, dag ins, string asmstr,
   let Inst{25-21} = rD;
   let Inst{20-16} = rA;
   let Inst{15-0} = imm16;
+
+  let format = AFrm;
 }
 
 class ALU_RIs<bits<4> subOp, string asmstr, SDNode OpNode>
@@ -454,6 +457,7 @@ class BRANCH<bits<4> subOp, string asmstring, list<dag> pattern>
 
   let Inst{25-0} = dst;
 
+  let format = JFrm;
   let opcode = subOp;
 }
 
@@ -464,6 +468,7 @@ class BRANCHL<bits<4> subOp, string asmstring>
 
   let Inst{25-0} = dst;
 
+  let format = JFrm;
   let opcode = subOp;
 }
 

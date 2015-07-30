@@ -128,10 +128,21 @@ getMachineOpValue(const MCInst &MI, const MCOperand &MO,
   switch(cast<MCSymbolRefExpr>(Expr)->getKind()) {
     default: llvm_unreachable("Unknown fixup kind!");
       break;
-    // FIXME: We shouldn't have VK_None at this point?
-    // Simple test seems to show that None here is REL26?
     case MCSymbolRefExpr::VK_None:
-      FixupKind = OR1K::fixup_OR1K_REL26;
+      // This is an assembly expression without an explicit
+      // relocation kind. Guess one based on instruction format.
+      switch(MCII.get(MI.getOpcode()).TSFlags) {
+        case OR1KII::AFrm:
+        FixupKind = OR1K::fixup_OR1K_LO16_INSN;
+        break;
+
+        case OR1KII::JFrm:
+        FixupKind = OR1K::fixup_OR1K_REL26;
+        break;
+
+        default:
+        llvm_unreachable("Unsupported expression operand in assembly source");
+      }
       break;
     case MCSymbolRefExpr::VK_OR1K_ABS_HI:
       FixupKind = OR1K::fixup_OR1K_HI16_INSN;

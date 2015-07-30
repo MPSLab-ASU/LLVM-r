@@ -62,6 +62,18 @@ namespace OR1KII {
     /// offset to the PLT entry of symbol name from the current code location.
     MO_PLT
   };
+
+  enum {
+    //===------------------------------------------------------------------===//
+    // Instruction encoding formats.
+    //
+
+    // ALU instructions (16-bit immediate)
+    AFrm = 1,
+
+    // Branch and link instructions (26-bit immediate)
+    JFrm = 2,
+  };
 }
 
 static inline unsigned getOR1KRegisterNumbering(unsigned Reg) {

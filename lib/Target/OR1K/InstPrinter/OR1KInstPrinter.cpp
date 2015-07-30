@@ -35,7 +35,8 @@ void OR1KInstPrinter::printInst(const MCInst *MI, raw_ostream &O,
 static void printExpr(const MCExpr *Expr, raw_ostream &O) {
   const MCSymbolRefExpr *SRE;
 
-  if (const MCBinaryExpr *BE = dyn_cast<MCBinaryExpr>(Expr))
+  const MCBinaryExpr *BE = dyn_cast<MCBinaryExpr>(Expr);
+  if (BE)
     SRE = dyn_cast<MCSymbolRefExpr>(BE->getLHS());
   else
     SRE = dyn_cast<MCSymbolRefExpr>(Expr);
@@ -43,14 +44,13 @@ static void printExpr(const MCExpr *Expr, raw_ostream &O) {
 
   MCSymbolRefExpr::VariantKind Kind = SRE->getKind();
 
-  if (Kind == MCSymbolRefExpr::VK_None) {
-    O << *Expr;
-    return;
-  }
+  if(Kind != MCSymbolRefExpr::VK_None)
+    O << MCSymbolRefExpr::getVariantKindName(Kind);
 
-  O <<  MCSymbolRefExpr::getVariantKindName(Kind) << "(";
-  O << *Expr;
-  O << ")";
+  if (BE || Kind != MCSymbolRefExpr::VK_None)
+    O << "(" << *Expr << ")";
+  else
+    O << *Expr;
 }
 
 void OR1KInstPrinter::printOperand(const MCInst *MI, unsigned OpNo,
@@ -86,8 +86,12 @@ void OR1KInstPrinter::printMemOperand(const MCInst *MI, int OpNo,
 void OR1KInstPrinter::printS16ImmOperand(const MCInst *MI, unsigned OpNo,
                                          raw_ostream &O) {
   const MCOperand &Op = MI->getOperand(OpNo);
-  assert(Op.isImm() && "Immediate operand not an immediate");
-  O << (int16_t)Op.getImm();
+  if (Op.isImm()) {
+    O << (int16_t)Op.getImm();
+  } else {
+    assert(Op.isExpr() && "Expected an expression");
+    printExpr(Op.getExpr(), O);
+  }
 }
 
 void OR1KInstPrinter::printRegName(raw_ostream &O, unsigned RegNo) const {
