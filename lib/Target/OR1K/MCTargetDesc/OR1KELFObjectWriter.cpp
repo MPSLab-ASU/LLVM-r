@@ -44,6 +44,24 @@ unsigned OR1KELFObjectWriter::GetRelocType(const MCValue &Target,
   unsigned Kind = (unsigned)Fixup.getKind();
   switch (Kind) {
     default: llvm_unreachable("Invalid fixup kind!");
+    case FK_Data_4:
+      if(IsPCRel)
+        Type = ELF::R_OR1K_32_PCREL;
+      else
+        Type = ELF::R_OR1K_32;
+    break;
+    case FK_Data_2:
+      if(IsPCRel)
+        Type = ELF::R_OR1K_16_PCREL;
+      else
+        Type = ELF::R_OR1K_16;
+    break;
+    case FK_Data_1:
+      if(IsPCRel)
+        Type = ELF::R_OR1K_8_PCREL;
+      else
+        Type = ELF::R_OR1K_8;
+    break;
     case OR1K::fixup_OR1K_PCREL32:
     case FK_PCRel_4:
       Type = ELF::R_OR1K_32_PCREL;
@@ -57,15 +75,12 @@ unsigned OR1KELFObjectWriter::GetRelocType(const MCValue &Target,
       Type = ELF::R_OR1K_8_PCREL;
       break;
     case OR1K::fixup_OR1K_32:
-    case FK_Data_4:
       Type = ELF::R_OR1K_32;
       break;
     case OR1K::fixup_OR1K_16:
-    case FK_Data_2:
       Type = ELF::R_OR1K_16;
       break;
     case OR1K::fixup_OR1K_8:
-    case FK_Data_1:
       Type = ELF::R_OR1K_8;
       break;
     case OR1K::fixup_OR1K_NONE:
