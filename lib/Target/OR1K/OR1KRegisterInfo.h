@@ -36,7 +36,7 @@ struct OR1KRegisterInfo : public OR1KGenRegisterInfo {
 
   bool requiresRegisterScavenging(const MachineFunction &MF) const;
 
-  void eliminateFrameIndex(MachineBasicBlock::iterator II, 
+  void eliminateFrameIndex(MachineBasicBlock::iterator II,
                            int SPAdj, unsigned FIOperandNum,
                            RegScavenger *RS = NULL) const;
 
@@ -51,8 +51,6 @@ struct OR1KRegisterInfo : public OR1KGenRegisterInfo {
   unsigned getBaseRegister() const;
 
   // Exception handling queries.
-  unsigned getEHExceptionRegister() const;
-  unsigned getEHHandlerRegister() const;
   int getDwarfRegNum(unsigned RegNum, bool isEH) const;
 };
 

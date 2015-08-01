@@ -157,13 +157,3 @@ unsigned OR1KRegisterInfo::getFrameRegister(const MachineFunction &MF) const {
 unsigned OR1KRegisterInfo::getBaseRegister() const {
   return OR1K::R14;
 }
-
-unsigned OR1KRegisterInfo::getEHExceptionRegister() const {
-  llvm_unreachable("What is the exception register");
-  return 0;
-}
-
-unsigned OR1KRegisterInfo::getEHHandlerRegister() const {
-  llvm_unreachable("What is the exception handler register");
-  return 0;
-}

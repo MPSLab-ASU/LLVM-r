@@ -54,6 +54,9 @@ OR1KTargetLowering::OR1KTargetLowering(OR1KTargetMachine &tm) :
 
   setStackPointerRegisterToSaveRestore(OR1K::R1);
 
+  setExceptionPointerRegister(OR1K::R3);
+  setExceptionSelectorRegister(OR1K::R4);
+
   setOperationAction(ISD::BR_CC,             MVT::i32, Custom);
   setOperationAction(ISD::BR_CC,             MVT::f32, Custom);
   setOperationAction(ISD::BR_JT,             MVT::Other, Expand);
