@@ -23,6 +23,7 @@ OR1KMCAsmInfo::OR1KMCAsmInfo(StringRef TT) {
   ExceptionsType              = ExceptionHandling::DwarfCFI;
   HasLEB128                   = true;
   DwarfRegNumForCFI           = true;
+  SupportsDebugInformation    = true;
 
   // OR1K assembly requires ".section" before ".bss"
   UsesELFSectionDirectiveForBSS = true;
