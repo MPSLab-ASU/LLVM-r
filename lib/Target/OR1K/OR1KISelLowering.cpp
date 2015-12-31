@@ -1101,8 +1101,8 @@ SDValue OR1KTargetLowering::LowerBlockAddress(SDValue Op,
   uint8_t OpFlagHi = IsPIC ? OR1KII::MO_GOTOFFHI : OR1KII::MO_ABS_HI;
   uint8_t OpFlagLo = IsPIC ? OR1KII::MO_GOTOFFLO : OR1KII::MO_ABS_LO;
 
-  SDValue Hi = DAG.getBlockAddress(BA, MVT::i32, true, OpFlagHi);
-  SDValue Lo = DAG.getBlockAddress(BA, MVT::i32, true, OpFlagLo);
+  SDValue Hi = DAG.getBlockAddress(BA, MVT::i32, 0, true, OpFlagHi);
+  SDValue Lo = DAG.getBlockAddress(BA, MVT::i32, 0, true, OpFlagLo);
   Hi = DAG.getNode(OR1KISD::HI, dl, MVT::i32, Hi);
   Lo = DAG.getNode(OR1KISD::LO, dl, MVT::i32, Lo);
   SDValue Result = DAG.getNode(ISD::OR, dl, MVT::i32, Hi, Lo);
