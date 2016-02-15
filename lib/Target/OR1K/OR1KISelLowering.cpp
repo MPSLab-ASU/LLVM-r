@@ -557,8 +557,7 @@ SDValue
 OR1KTargetLowering::LowerCCCCallTo(SDValue Chain, SDValue Callee,
                                    CallingConv::ID CallConv, bool isVarArg,
                                    bool isTailCall,
-                                   const SmallVectorImpl<ISD::OutputArg>
-                                   &Outs,
+                                   const SmallVectorImpl<ISD::OutputArg> &Outs,
                                    const SmallVectorImpl<SDValue> &OutVals,
                                    const SmallVectorImpl<ISD::InputArg> &Ins,
                                    SDLoc dl, SelectionDAG &DAG,
@@ -571,16 +570,18 @@ OR1KTargetLowering::LowerCCCCallTo(SDValue Chain, SDValue Callee,
   MachineFrameInfo *MFI = DAG.getMachineFunction().getFrameInfo();
   bool IsPIC = getTargetMachine().getRelocationModel() == Reloc::PIC_;
 
-  NumFixedArgs = 0;
-  if (isVarArg && G) {
-    const Function* CalleeFn = dyn_cast<Function>(G->getGlobal());
-    if (CalleeFn)
-      NumFixedArgs = CalleeFn->getFunctionType()->getNumParams();
-  }
-  if (NumFixedArgs)
+  if (isVarArg) {
+    NumFixedArgs = Outs.size();
+    for(unsigned i = 0, e = Outs.size(); i != e; ++i) {
+      if(!Outs[i].IsFixed) {
+        NumFixedArgs = i;
+        break;
+      }
+    }
     CCInfo.AnalyzeCallOperands(Outs, CC_OR1K32_VarArg);
-  else
+  } else {
     CCInfo.AnalyzeCallOperands(Outs, CC_OR1K32);
+  }
 
   // Get a count of how many bytes are to be pushed on the stack.
   unsigned NumBytes = CCInfo.getNextStackOffset();
@@ -619,7 +620,6 @@ OR1KTargetLowering::LowerCCCCallTo(SDValue Chain, SDValue Callee,
     CCValAssign &VA = ArgLocs[i];
     SDValue Arg = OutVals[i];
     ISD::ArgFlagsTy Flags = Outs[i].Flags;
-
 
     // Promote the value if needed.
     switch (VA.getLocInfo()) {
