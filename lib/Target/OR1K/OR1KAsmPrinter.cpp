@@ -231,6 +231,9 @@ void OR1KAsmPrinter::customEmitInstruction(const MachineInstr *MI) {
   }
   }
 
+  if(MI->isInsideBundle())
+    OutStreamer.AddComment("in delay slot");
+
   MCInst TmpInst;
   MCInstLowering.Lower(MI, TmpInst);
   OutStreamer.EmitInstruction(TmpInst, STI);
