@@ -70,6 +70,7 @@ OR1KRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
 
   MachineInstr &MI = *II;
   MachineFunction &MF = *MI.getParent()->getParent();
+  MachineFrameInfo *MFI = MF.getFrameInfo();
   const TargetFrameLowering *TFI = MF.getTarget().getFrameLowering();
   bool HasFP = TFI->hasFP(MF);
   DebugLoc dl = MI.getDebugLoc();
@@ -79,17 +80,35 @@ OR1KRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
   int Offset = MF.getFrameInfo()->getObjectOffset(FrameIndex) +
                MI.getOperand(FIOperandNum+1).getImm();
 
-  // Addressable stack objects are addressed using neg. offsets from fp
-  // or pos. offsets from sp/basepointer
-  if (!HasFP || (needsStackRealignment(MF) && FrameIndex >= 0))
-    Offset += MF.getFrameInfo()->getStackSize();
+  const std::vector<CalleeSavedInfo> &CSI = MFI->getCalleeSavedInfo();
+  int MinCSFI = 0;
+  int MaxCSFI = -1;
 
-  unsigned FrameReg = getFrameRegister(MF);
-  if (FrameIndex >= 0) {
-    if (hasBasePointer(MF))
-      FrameReg = getBaseRegister();
-    else if (needsStackRealignment(MF))
-      FrameReg = OR1K::R1;
+  if (CSI.size()) {
+    MinCSFI = CSI[0].getFrameIdx();
+    MaxCSFI = CSI[CSI.size() - 1].getFrameIdx();
+  }
+
+  unsigned FrameReg;
+  if ((FrameIndex >= MinCSFI && FrameIndex <= MaxCSFI) &&
+      needsStackRealignment(MF)) {
+    // When stack is realigned, callee-saved registers are always addressed
+    // using the frame pointer to be consistent with CFI, since CFA cannot
+    // be easily realigned.
+    FrameReg = getFrameRegister(MF);
+  } else {
+    // Addressable stack objects are addressed using neg. offsets from fp
+    // or pos. offsets from sp/basepointer
+    if (!HasFP || (needsStackRealignment(MF) && FrameIndex >= 0))
+      Offset += MF.getFrameInfo()->getStackSize();
+
+    FrameReg = getFrameRegister(MF);
+    if (FrameIndex >= 0) {
+      if (hasBasePointer(MF))
+        FrameReg = getBaseRegister();
+      else if (needsStackRealignment(MF))
+        FrameReg = OR1K::R1;
+    }
   }
 
   // Replace frame index with a frame pointer reference.
