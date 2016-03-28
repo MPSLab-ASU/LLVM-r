@@ -24,7 +24,7 @@ entry:
 ; CHECK: BB#1: derived from LLVM BB %for.body
 ; CHECK: Successors according to CFG: BB#2(130023362) BB#4(62)
 for.body:
-  br i1 undef, label %for.cond.backedge, label %lor.lhs.false.i
+  br i1 undef, label %for.cond.backedge, label %lor.lhs.false.i, !prof !1
 
 for.cond.backedge:
   %tobool = icmp eq %classL* undef, null
@@ -59,4 +59,5 @@ declare %classL* @_ZN1M1JI1LS1_EcvPS1_Ev(%classM2*)
 declare void @_ZN1F10handleMoveEb(%classF*, i1 zeroext)
 declare void @_Z3fn1v()
 
-!0 = metadata !{metadata !"clang version 3.5"}
+!0 = !{!"clang version 3.5"}
+!1 = !{!"branch_weights", i32 62, i32 62}

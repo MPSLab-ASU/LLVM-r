@@ -14,12 +14,12 @@
 #ifndef LLVM_SUPPORT_COMPRESSION_H
 #define LLVM_SUPPORT_COMPRESSION_H
 
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/DataTypes.h"
 #include <memory>
 
 namespace llvm {
 
-class MemoryBuffer;
 class StringRef;
 
 namespace zlib {
@@ -42,12 +42,11 @@ enum Status {
 
 bool isAvailable();
 
-Status compress(StringRef InputBuffer,
-                std::unique_ptr<MemoryBuffer> &CompressedBuffer,
+Status compress(StringRef InputBuffer, SmallVectorImpl<char> &CompressedBuffer,
                 CompressionLevel Level = DefaultCompression);
 
 Status uncompress(StringRef InputBuffer,
-                  std::unique_ptr<MemoryBuffer> &UncompressedBuffer,
+                  SmallVectorImpl<char> &UncompressedBuffer,
                   size_t UncompressedSize);
 
 uint32_t crc32(StringRef Buffer);

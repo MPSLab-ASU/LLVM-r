@@ -20,6 +20,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/Triple.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/Config/config.h"
 #include "llvm/Config/llvm-config.h"
@@ -242,16 +243,18 @@ int main(int argc, char **argv) {
     case MakefileStyle:
       ActivePrefix = ActiveObjRoot;
       ActiveBinDir = ActiveObjRoot + "/" + build_mode + "/bin";
-      ActiveLibDir = ActiveObjRoot + "/" + build_mode + "/lib";
+      ActiveLibDir =
+          ActiveObjRoot + "/" + build_mode + "/lib" + LLVM_LIBDIR_SUFFIX;
       break;
     case CMakeStyle:
       ActiveBinDir = ActiveObjRoot + "/bin";
-      ActiveLibDir = ActiveObjRoot + "/lib";
+      ActiveLibDir = ActiveObjRoot + "/lib" + LLVM_LIBDIR_SUFFIX;
       break;
     case CMakeBuildModeStyle:
       ActivePrefix = ActiveObjRoot;
       ActiveBinDir = ActiveObjRoot + "/bin/" + build_mode;
-      ActiveLibDir = ActiveObjRoot + "/lib/" + build_mode;
+      ActiveLibDir =
+          ActiveObjRoot + "/lib" + LLVM_LIBDIR_SUFFIX + "/" + build_mode;
       break;
     }
 
@@ -262,7 +265,7 @@ int main(int argc, char **argv) {
     ActivePrefix = CurrentExecPrefix;
     ActiveIncludeDir = ActivePrefix + "/include";
     ActiveBinDir = ActivePrefix + "/bin";
-    ActiveLibDir = ActivePrefix + "/lib";
+    ActiveLibDir = ActivePrefix + "/lib" + LLVM_LIBDIR_SUFFIX;
     ActiveIncludeOption = "-I" + ActiveIncludeDir;
   }
 
@@ -311,7 +314,7 @@ int main(int argc, char **argv) {
       } else if (Arg == "--targets-built") {
         OS << LLVM_TARGETS_BUILT << '\n';
       } else if (Arg == "--host-target") {
-        OS << LLVM_DEFAULT_TARGET_TRIPLE << '\n';
+        OS << Triple::normalize(LLVM_DEFAULT_TARGET_TRIPLE) << '\n';
       } else if (Arg == "--build-mode") {
         OS << build_mode << '\n';
       } else if (Arg == "--assertion-mode") {

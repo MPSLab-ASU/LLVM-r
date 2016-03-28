@@ -102,11 +102,11 @@ namespace {
   public:
     SparcAsmBackend(const Target &T) : MCAsmBackend(), TheTarget(T) {}
 
-    unsigned getNumFixupKinds() const {
+    unsigned getNumFixupKinds() const override {
       return Sparc::NumTargetFixupKinds;
     }
 
-    const MCFixupKindInfo &getFixupKindInfo(MCFixupKind Kind) const {
+    const MCFixupKindInfo &getFixupKindInfo(MCFixupKind Kind) const override {
       const static MCFixupKindInfo Infos[Sparc::NumTargetFixupKinds] = {
         // name                    offset bits  flags
         { "fixup_sparc_call30",     2,     30,  MCFixupKindInfo::FKF_IsPCRel },
@@ -154,13 +154,10 @@ namespace {
       return Infos[Kind - FirstTargetFixupKind];
     }
 
-    void processFixupValue(const MCAssembler &Asm,
-                           const MCAsmLayout &Layout,
-                           const MCFixup &Fixup,
-                           const MCFragment *DF,
-                           MCValue &  Target,
-                           uint64_t &Value,
-                           bool &IsResolved) {
+    void processFixupValue(const MCAssembler &Asm, const MCAsmLayout &Layout,
+                           const MCFixup &Fixup, const MCFragment *DF,
+                           const MCValue &Target, uint64_t &Value,
+                           bool &IsResolved) override {
       switch ((Sparc::Fixups)Fixup.getKind()) {
       default: break;
       case Sparc::fixup_sparc_wplt30:
@@ -187,7 +184,7 @@ namespace {
       }
     }
 
-    bool mayNeedRelaxation(const MCInst &Inst) const {
+    bool mayNeedRelaxation(const MCInst &Inst) const override {
       // FIXME.
       return false;
     }
@@ -197,17 +194,17 @@ namespace {
     bool fixupNeedsRelaxation(const MCFixup &Fixup,
                               uint64_t Value,
                               const MCRelaxableFragment *DF,
-                              const MCAsmLayout &Layout) const {
+                              const MCAsmLayout &Layout) const override {
       // FIXME.
-      assert(0 && "fixupNeedsRelaxation() unimplemented");
+      llvm_unreachable("fixupNeedsRelaxation() unimplemented");
       return false;
     }
-    void relaxInstruction(const MCInst &Inst, MCInst &Res) const {
+    void relaxInstruction(const MCInst &Inst, MCInst &Res) const override {
       // FIXME.
-      assert(0 && "relaxInstruction() unimplemented");
+      llvm_unreachable("relaxInstruction() unimplemented");
     }
 
-    bool writeNopData(uint64_t Count, MCObjectWriter *OW) const {
+    bool writeNopData(uint64_t Count, MCObjectWriter *OW) const override {
       // Cannot emit NOP with size not multiple of 32 bits.
       if (Count % 4 != 0)
         return false;
@@ -232,7 +229,7 @@ namespace {
       SparcAsmBackend(T), OSType(OSType) { }
 
     void applyFixup(const MCFixup &Fixup, char *Data, unsigned DataSize,
-                    uint64_t Value) const {
+                    uint64_t Value, bool IsPCRel) const override {
 
       Value = adjustFixupValue(Fixup.getKind(), Value);
       if (!Value) return;           // Doesn't change encoding.
@@ -247,7 +244,7 @@ namespace {
 
     }
 
-    MCObjectWriter *createObjectWriter(raw_ostream &OS) const {
+    MCObjectWriter *createObjectWriter(raw_ostream &OS) const override {
       uint8_t OSABI = MCELFObjectTargetWriter::getOSABI(OSType);
       return createSparcELFObjectWriter(OS, is64Bit(), OSABI);
     }

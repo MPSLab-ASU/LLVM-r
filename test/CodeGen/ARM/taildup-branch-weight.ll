@@ -1,4 +1,6 @@
-; RUN: llc < %s -march=arm -print-machineinstrs=tailduplication -tail-dup-size=100 -enable-tail-merge=false -disable-cgp -o /dev/null 2>&1 | FileCheck %s
+; RUN: llc -mtriple=arm-eabi -print-machineinstrs=tailduplication -tail-dup-size=100 \
+; RUN:      -enable-tail-merge=false -disable-cgp %s -o /dev/null 2>&1 \
+; RUN:	| FileCheck %s
 
 ; CHECK: Machine code for function test0:
 ; CHECK: Successors according to CFG: BB#1(4) BB#2(124)
@@ -25,7 +27,7 @@ B4:
   ret void
 }
 
-!0 = metadata !{metadata !"branch_weights", i32 4, i32 124}
+!0 = !{!"branch_weights", i32 4, i32 124}
 
 ; CHECK: Machine code for function test1:
 ; CHECK: Successors according to CFG: BB#1(8) BB#2(248)
@@ -49,4 +51,4 @@ B3:
   ret void
 }
 
-!1 = metadata !{metadata !"branch_weights", i32 248, i32 8}
+!1 = !{!"branch_weights", i32 248, i32 8}

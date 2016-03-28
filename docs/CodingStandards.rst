@@ -76,10 +76,7 @@ implemented in the LLVM namespace following the expected standard interface.
 
 There are some exceptions such as the standard I/O streams library which are
 avoided. Also, there is much more detailed information on these subjects in the
-`Programmer's Manual`_.
-
-.. _Programmer's Manual:
-  http://llvm.org/docs/ProgrammersManual.html
+:doc:`ProgrammersManual`.
 
 Supported C++11 Language and Library Features
 ---------------------------------------------
@@ -110,7 +107,7 @@ unlikely to be supported by our host compilers.
 * Trailing return types: N2541_
 * Lambdas: N2927_
 
-  * But *not* ``std::function``, until Clang implements `MSVC-compatible RTTI`_.
+  * But *not* lambdas with default arguments.
 
 * ``decltype``: N2343_
 * Nested closing right angle brackets: N1757_
@@ -119,6 +116,11 @@ unlikely to be supported by our host compilers.
 * Strongly-typed and forward declarable enums: N2347_, N2764_
 * Local and unnamed types as template arguments: N2657_
 * Range-based for-loop: N2930_
+
+  * But ``{}`` are required around inner ``do {} while()`` loops.  As a result,
+    ``{}`` are required around function-like macros inside range-based for
+    loops.
+
 * ``override`` and ``final``: N2928_, N3206_, N3272_
 * Atomic operations and the C++11 memory model: N2429_
 
@@ -160,6 +162,8 @@ being aware of:
 * ``std::initializer_list`` (and the constructors and functions that take it as
   an argument) are not always available, so you cannot (for example) initialize
   a ``std::vector`` with a braced initializer list.
+* ``std::equal()`` (and other algorithms) incorrectly assert in MSVC when given
+  ``nullptr`` as an iterator.
 
 Other than these areas you should assume the standard library is available and
 working as expected until some build bot tells you otherwise. If you're in an
@@ -171,6 +175,25 @@ traits header to emulate it.
 
 .. _the libstdc++ manual:
   http://gcc.gnu.org/onlinedocs/gcc-4.7.3/libstdc++/manual/manual/status.html#status.iso.2011
+
+Other Languages
+---------------
+
+Any code written in the Go programming language is not subject to the
+formatting rules below. Instead, we adopt the formatting rules enforced by
+the `gofmt`_ tool.
+
+Go code should strive to be idiomatic. Two good sets of guidelines for what
+this means are `Effective Go`_ and `Go Code Review Comments`_.
+
+.. _gofmt:
+  https://golang.org/cmd/gofmt/
+
+.. _Effective Go:
+  https://golang.org/doc/effective_go.html
+
+.. _Go Code Review Comments:
+  https://code.google.com/p/go-wiki/wiki/CodeReviewComments
 
 Mechanical Source Issues
 ========================
@@ -605,7 +628,7 @@ is never used for a class.  Because of this, we turn them off globally in the
 code.
 
 That said, LLVM does make extensive use of a hand-rolled form of RTTI that use
-templates like `isa<>, cast<>, and dyn_cast<> <ProgrammersManual.html#isa>`_.
+templates like :ref:`isa\<>, cast\<>, and dyn_cast\<> <isa>`.
 This form of RTTI is opt-in and can be
 :doc:`added to any class <HowToSetUpLLVMStyleRTTI>`. It is also
 substantially more efficient than ``dynamic_cast<>``.
@@ -1281,9 +1304,9 @@ method will never be implemented. This enables other checks like
 ``-Wunused-private-field`` to run correctly on classes that contain these
 methods.
 
-To maintain compatibility with C++03, ``LLVM_DELETED_FUNCTION`` should be used
-which will expand to ``= delete`` if the compiler supports it. These methods
-should still be declared private. Example of the uncopyable pattern:
+For compatibility with MSVC, ``LLVM_DELETED_FUNCTION`` should be used which
+will expand to ``= delete`` on compilers that support it. These methods should
+still be declared private. Example of the uncopyable pattern:
 
 .. code-block:: c++
 

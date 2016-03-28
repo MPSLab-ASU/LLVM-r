@@ -17,13 +17,14 @@
 //
 //===----------------------------------------------------------------------===//
 
-#define DEBUG_TYPE "mips-mc-nacl"
-
 #include "Mips.h"
+#include "MipsELFStreamer.h"
 #include "MipsMCNaCl.h"
 #include "llvm/MC/MCELFStreamer.h"
 
 using namespace llvm;
+
+#define DEBUG_TYPE "mips-mc-nacl"
 
 namespace {
 
@@ -33,11 +34,11 @@ const unsigned LoadStoreStackMaskReg = Mips::T7;
 /// Extend the generic MCELFStreamer class so that it can mask dangerous
 /// instructions.
 
-class MipsNaClELFStreamer : public MCELFStreamer {
+class MipsNaClELFStreamer : public MipsELFStreamer {
 public:
   MipsNaClELFStreamer(MCContext &Context, MCAsmBackend &TAB, raw_ostream &OS,
-                      MCCodeEmitter *Emitter)
-    : MCELFStreamer(Context, TAB, OS, Emitter), PendingCall(false) {}
+                      MCCodeEmitter *Emitter, const MCSubtargetInfo &STI)
+    : MipsELFStreamer(Context, TAB, OS, Emitter, STI), PendingCall(false) {}
 
   ~MipsNaClELFStreamer() {}
 
@@ -47,7 +48,13 @@ private:
   bool PendingCall;
 
   bool isIndirectJump(const MCInst &MI) {
-    return MI.getOpcode() == Mips::JR || MI.getOpcode() == Mips::RET;
+    if (MI.getOpcode() == Mips::JALR) {
+      // MIPS32r6/MIPS64r6 doesn't have a JR instruction and uses JALR instead.
+      // JALR is an indirect branch if the link register is $0.
+      assert(MI.getOperand(0).isReg());
+      return MI.getOperand(0).getReg() == Mips::ZERO;
+    }
+    return MI.getOpcode() == Mips::JR;
   }
 
   bool isStackPointerFirstOperand(const MCInst &MI) {
@@ -55,7 +62,9 @@ private:
             && MI.getOperand(0).getReg() == Mips::SP);
   }
 
-  bool isCall(unsigned Opcode, bool *IsIndirectCall) {
+  bool isCall(const MCInst &MI, bool *IsIndirectCall) {
+    unsigned Opcode = MI.getOpcode();
+
     *IsIndirectCall = false;
 
     switch (Opcode) {
@@ -63,12 +72,19 @@ private:
       return false;
 
     case Mips::JAL:
+    case Mips::BAL:
     case Mips::BAL_BR:
     case Mips::BLTZAL:
     case Mips::BGEZAL:
       return true;
 
     case Mips::JALR:
+      // JALR is only a call if the link register is not $0. Otherwise it's an
+      // indirect branch.
+      assert(MI.getOperand(0).isReg());
+      if (MI.getOperand(0).getReg() == Mips::ZERO)
+        return false;
+
       *IsIndirectCall = true;
       return true;
     }
@@ -81,7 +97,7 @@ private:
     MaskInst.addOperand(MCOperand::CreateReg(AddrReg));
     MaskInst.addOperand(MCOperand::CreateReg(AddrReg));
     MaskInst.addOperand(MCOperand::CreateReg(MaskReg));
-    MCELFStreamer::EmitInstruction(MaskInst, STI);
+    MipsELFStreamer::EmitInstruction(MaskInst, STI);
   }
 
   // Sandbox indirect branch or return instruction by inserting mask operation
@@ -91,7 +107,7 @@ private:
 
     EmitBundleLock(false);
     emitMask(AddrReg, IndirectBranchMaskReg, STI);
-    MCELFStreamer::EmitInstruction(MI, STI);
+    MipsELFStreamer::EmitInstruction(MI, STI);
     EmitBundleUnlock();
   }
 
@@ -106,7 +122,7 @@ private:
       unsigned BaseReg = MI.getOperand(AddrIdx).getReg();
       emitMask(BaseReg, LoadStoreStackMaskReg, STI);
     }
-    MCELFStreamer::EmitInstruction(MI, STI);
+    MipsELFStreamer::EmitInstruction(MI, STI);
     if (MaskAfter) {
       // Sandbox SP change.
       unsigned SPReg = MI.getOperand(0).getReg();
@@ -119,7 +135,8 @@ private:
 public:
   /// This function is the one used to emit instruction data into the ELF
   /// streamer.  We override it to mask dangerous instructions.
-  virtual void EmitInstruction(const MCInst &Inst, const MCSubtargetInfo &STI) {
+  void EmitInstruction(const MCInst &Inst,
+                       const MCSubtargetInfo &STI) override {
     // Sandbox indirect jumps.
     if (isIndirectJump(Inst)) {
       if (PendingCall)
@@ -135,24 +152,23 @@ public:
                                                     &IsStore);
     bool IsSPFirstOperand = isStackPointerFirstOperand(Inst);
     if (IsMemAccess || IsSPFirstOperand) {
-      if (PendingCall)
-        report_fatal_error("Dangerous instruction in branch delay slot!");
-
       bool MaskBefore = (IsMemAccess
                          && baseRegNeedsLoadStoreMask(Inst.getOperand(AddrIdx)
                                                           .getReg()));
       bool MaskAfter = IsSPFirstOperand && !IsStore;
-      if (MaskBefore || MaskAfter)
+      if (MaskBefore || MaskAfter) {
+        if (PendingCall)
+          report_fatal_error("Dangerous instruction in branch delay slot!");
         sandboxLoadStoreStackChange(Inst, AddrIdx, STI, MaskBefore, MaskAfter);
-      else
-        MCELFStreamer::EmitInstruction(Inst, STI);
-      return;
+        return;
+      }
+      // fallthrough
     }
 
     // Sandbox calls by aligning call and branch delay to the bundle end.
     // For indirect calls, emit the mask before the call.
     bool IsIndirectCall;
-    if (isCall(Inst.getOpcode(), &IsIndirectCall)) {
+    if (isCall(Inst, &IsIndirectCall)) {
       if (PendingCall)
         report_fatal_error("Dangerous instruction in branch delay slot!");
 
@@ -162,20 +178,20 @@ public:
         unsigned TargetReg = Inst.getOperand(1).getReg();
         emitMask(TargetReg, IndirectBranchMaskReg, STI);
       }
-      MCELFStreamer::EmitInstruction(Inst, STI);
+      MipsELFStreamer::EmitInstruction(Inst, STI);
       PendingCall = true;
       return;
     }
     if (PendingCall) {
       // Finish the sandboxing sequence by emitting branch delay.
-      MCELFStreamer::EmitInstruction(Inst, STI);
+      MipsELFStreamer::EmitInstruction(Inst, STI);
       EmitBundleUnlock();
       PendingCall = false;
       return;
     }
 
     // None of the sandboxing applies, just emit the instruction.
-    MCELFStreamer::EmitInstruction(Inst, STI);
+    MipsELFStreamer::EmitInstruction(Inst, STI);
   }
 };
 
@@ -201,6 +217,7 @@ bool isBasePlusOffsetMemoryAccess(unsigned Opcode, unsigned *AddrIdx,
   case Mips::LWC1:
   case Mips::LDC1:
   case Mips::LL:
+  case Mips::LL_R6:
   case Mips::LWL:
   case Mips::LWR:
     *AddrIdx = 1;
@@ -221,6 +238,7 @@ bool isBasePlusOffsetMemoryAccess(unsigned Opcode, unsigned *AddrIdx,
 
   // Store instructions with base address register in position 2.
   case Mips::SC:
+  case Mips::SC_R6:
     *AddrIdx = 2;
     if (IsStore)
       *IsStore = true;
@@ -235,13 +253,13 @@ bool baseRegNeedsLoadStoreMask(unsigned Reg) {
 
 MCELFStreamer *createMipsNaClELFStreamer(MCContext &Context, MCAsmBackend &TAB,
                                          raw_ostream &OS,
-                                         MCCodeEmitter *Emitter, bool RelaxAll,
-                                         bool NoExecStack) {
-  MipsNaClELFStreamer *S = new MipsNaClELFStreamer(Context, TAB, OS, Emitter);
+                                         MCCodeEmitter *Emitter,
+                                         const MCSubtargetInfo &STI,
+                                         bool RelaxAll) {
+  MipsNaClELFStreamer *S = new MipsNaClELFStreamer(Context, TAB, OS, Emitter,
+                                                   STI);
   if (RelaxAll)
     S->getAssembler().setRelaxAll(true);
-  if (NoExecStack)
-    S->getAssembler().setNoExecStack(true);
 
   // Set bundle-alignment as required by the NaCl ABI for the target.
   S->EmitBundleAlignMode(MIPS_NACL_BUNDLE_ALIGN);

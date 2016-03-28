@@ -15,15 +15,17 @@
 //
 //===----------------------------------------------------------------------===//
 
-#define DEBUG_TYPE "gvn"
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DepthFirstIterator.h"
 #include "llvm/ADT/Hashing.h"
+#include "llvm/ADT/MapVector.h"
+#include "llvm/ADT/PostOrderIterator.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/Analysis/AliasAnalysis.h"
+#include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/CFG.h"
 #include "llvm/Analysis/ConstantFolding.h"
 #include "llvm/Analysis/InstructionSimplify.h"
@@ -45,10 +47,13 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Target/TargetLibraryInfo.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
+#include "llvm/Transforms/Utils/Local.h"
 #include "llvm/Transforms/Utils/SSAUpdater.h"
 #include <vector>
 using namespace llvm;
 using namespace PatternMatch;
+
+#define DEBUG_TYPE "gvn"
 
 STATISTIC(NumGVNInstr,  "Number of instructions deleted");
 STATISTIC(NumGVNLoad,   "Number of loads deleted");
@@ -111,11 +116,10 @@ namespace {
     uint32_t nextValueNumber;
 
     Expression create_expression(Instruction* I);
-    Expression create_intrinsic_expression(CallInst *C, uint32_t opcode,
-                                           bool IsCommutative);
     Expression create_cmp_expression(unsigned Opcode,
                                      CmpInst::Predicate Predicate,
                                      Value *LHS, Value *RHS);
+    Expression create_extractvalue_expression(ExtractValueInst* EI);
     uint32_t lookup_or_add_call(CallInst* C);
   public:
     ValueTable() : nextValueNumber(1) { }
@@ -189,33 +193,6 @@ Expression ValueTable::create_expression(Instruction *I) {
     for (InsertValueInst::idx_iterator II = E->idx_begin(), IE = E->idx_end();
          II != IE; ++II)
       e.varargs.push_back(*II);
-  } else if (ExtractValueInst *EVI = dyn_cast<ExtractValueInst>(I)) {
-    for (ExtractValueInst::idx_iterator II = EVI->idx_begin(),
-         IE = EVI->idx_end(); II != IE; ++II)
-      e.varargs.push_back(*II);
-  }
-
-  return e;
-}
-
-Expression ValueTable::create_intrinsic_expression(CallInst *C, uint32_t opcode,
-                                                   bool IsCommutative) {
-  Expression e;
-  e.opcode = opcode;
-  StructType *ST = cast<StructType>(C->getType());
-  assert(ST);
-  e.type = *ST->element_begin();
-
-  for (unsigned i = 0, ei = C->getNumArgOperands(); i < ei; ++i)
-    e.varargs.push_back(lookup_or_add(C->getArgOperand(i)));
-  if (IsCommutative) {
-    // Ensure that commutative instructions that only differ by a permutation
-    // of their operands get the same value number by sorting the operand value
-    // numbers.  Since all commutative instructions have two operands it is more
-    // efficient to sort by hand rather than using, say, std::sort.
-    assert(C->getNumArgOperands() == 2 && "Unsupported commutative instruction!");
-    if (e.varargs[0] > e.varargs[1])
-      std::swap(e.varargs[0], e.varargs[1]);
   }
 
   return e;
@@ -237,6 +214,58 @@ Expression ValueTable::create_cmp_expression(unsigned Opcode,
     Predicate = CmpInst::getSwappedPredicate(Predicate);
   }
   e.opcode = (Opcode << 8) | Predicate;
+  return e;
+}
+
+Expression ValueTable::create_extractvalue_expression(ExtractValueInst *EI) {
+  assert(EI && "Not an ExtractValueInst?");
+  Expression e;
+  e.type = EI->getType();
+  e.opcode = 0;
+
+  IntrinsicInst *I = dyn_cast<IntrinsicInst>(EI->getAggregateOperand());
+  if (I != nullptr && EI->getNumIndices() == 1 && *EI->idx_begin() == 0 ) {
+    // EI might be an extract from one of our recognised intrinsics. If it
+    // is we'll synthesize a semantically equivalent expression instead on
+    // an extract value expression.
+    switch (I->getIntrinsicID()) {
+      case Intrinsic::sadd_with_overflow:
+      case Intrinsic::uadd_with_overflow:
+        e.opcode = Instruction::Add;
+        break;
+      case Intrinsic::ssub_with_overflow:
+      case Intrinsic::usub_with_overflow:
+        e.opcode = Instruction::Sub;
+        break;
+      case Intrinsic::smul_with_overflow:
+      case Intrinsic::umul_with_overflow:
+        e.opcode = Instruction::Mul;
+        break;
+      default:
+        break;
+    }
+
+    if (e.opcode != 0) {
+      // Intrinsic recognized. Grab its args to finish building the expression.
+      assert(I->getNumArgOperands() == 2 &&
+             "Expect two args for recognised intrinsics.");
+      e.varargs.push_back(lookup_or_add(I->getArgOperand(0)));
+      e.varargs.push_back(lookup_or_add(I->getArgOperand(1)));
+      return e;
+    }
+  }
+
+  // Not a recognised intrinsic. Fall back to producing an extract value
+  // expression.
+  e.opcode = EI->getOpcode();
+  for (Instruction::op_iterator OI = EI->op_begin(), OE = EI->op_end();
+       OI != OE; ++OI)
+    e.varargs.push_back(lookup_or_add(*OI));
+
+  for (ExtractValueInst::idx_iterator II = EI->idx_begin(), IE = EI->idx_end();
+         II != IE; ++II)
+    e.varargs.push_back(*II);
+
   return e;
 }
 
@@ -303,7 +332,7 @@ uint32_t ValueTable::lookup_or_add_call(CallInst *C) {
     const MemoryDependenceAnalysis::NonLocalDepInfo &deps =
       MD->getNonLocalCallDependency(CallSite(C));
     // FIXME: Move the checking logic to MemDep!
-    CallInst* cdep = 0;
+    CallInst* cdep = nullptr;
 
     // Check to see if we have a single dominating call instruction that is
     // identical to C.
@@ -314,8 +343,8 @@ uint32_t ValueTable::lookup_or_add_call(CallInst *C) {
 
       // We don't handle non-definitions.  If we already have a call, reject
       // instruction dependencies.
-      if (!I->getResult().isDef() || cdep != 0) {
-        cdep = 0;
+      if (!I->getResult().isDef() || cdep != nullptr) {
+        cdep = nullptr;
         break;
       }
 
@@ -326,7 +355,7 @@ uint32_t ValueTable::lookup_or_add_call(CallInst *C) {
         continue;
       }
 
-      cdep = 0;
+      cdep = nullptr;
       break;
     }
 
@@ -373,29 +402,8 @@ uint32_t ValueTable::lookup_or_add(Value *V) {
   Instruction* I = cast<Instruction>(V);
   Expression exp;
   switch (I->getOpcode()) {
-    case Instruction::Call: {
-      CallInst *C = cast<CallInst>(I);
-      if (IntrinsicInst *II = dyn_cast<IntrinsicInst>(C)) {
-        switch (II->getIntrinsicID()) {
-          case Intrinsic::sadd_with_overflow:
-          case Intrinsic::uadd_with_overflow:
-            exp = create_intrinsic_expression(C, Instruction::Add, true);
-            break;
-          case Intrinsic::ssub_with_overflow:
-          case Intrinsic::usub_with_overflow:
-            exp = create_intrinsic_expression(C, Instruction::Sub, false);
-            break;
-          case Intrinsic::smul_with_overflow:
-          case Intrinsic::umul_with_overflow:
-            exp = create_intrinsic_expression(C, Instruction::Mul, true);
-            break;
-          default:
-            return lookup_or_add_call(C);
-        }
-      } else {
-        return lookup_or_add_call(C);
-      }
-    } break;
+    case Instruction::Call:
+      return lookup_or_add_call(cast<CallInst>(I));
     case Instruction::Add:
     case Instruction::FAdd:
     case Instruction::Sub:
@@ -434,8 +442,10 @@ uint32_t ValueTable::lookup_or_add(Value *V) {
     case Instruction::ShuffleVector:
     case Instruction::InsertValue:
     case Instruction::GetElementPtr:
-    case Instruction::ExtractValue:
       exp = create_expression(I);
+      break;
+    case Instruction::ExtractValue:
+      exp = create_extractvalue_expression(cast<ExtractValueInst>(I));
       break;
     default:
       valueNumbering[V] = nextValueNumber;
@@ -546,7 +556,7 @@ namespace {
     static AvailableValueInBlock getUndef(BasicBlock *BB) {
       AvailableValueInBlock Res;
       Res.BB = BB;
-      Res.Val.setPointer(0);
+      Res.Val.setPointer(nullptr);
       Res.Val.setInt(UndefVal);
       Res.Offset = 0;
       return Res;
@@ -583,6 +593,7 @@ namespace {
     DominatorTree *DT;
     const DataLayout *DL;
     const TargetLibraryInfo *TLI;
+    AssumptionCache *AC;
     SetVector<BasicBlock *> DeadBlocks;
 
     ValueTable VN;
@@ -606,7 +617,7 @@ namespace {
   public:
     static char ID; // Pass identification, replacement for typeid
     explicit GVN(bool noloads = false)
-        : FunctionPass(ID), NoLoads(noloads), MD(0) {
+        : FunctionPass(ID), NoLoads(noloads), MD(nullptr) {
       initializeGVNPass(*PassRegistry::getPassRegistry());
     }
 
@@ -644,7 +655,7 @@ namespace {
     /// removeFromLeaderTable - Scan the list of values corresponding to a given
     /// value number, and remove the given instruction if encountered.
     void removeFromLeaderTable(uint32_t N, Instruction *I, BasicBlock *BB) {
-      LeaderTableEntry* Prev = 0;
+      LeaderTableEntry* Prev = nullptr;
       LeaderTableEntry* Curr = &LeaderTable[N];
 
       while (Curr->Val != I || Curr->BB != BB) {
@@ -656,8 +667,8 @@ namespace {
         Prev->Next = Curr->Next;
       } else {
         if (!Curr->Next) {
-          Curr->Val = 0;
-          Curr->BB = 0;
+          Curr->Val = nullptr;
+          Curr->BB = nullptr;
         } else {
           LeaderTableEntry* Next = Curr->Next;
           Curr->Val = Next->Val;
@@ -672,6 +683,7 @@ namespace {
 
     // This transformation requires dominator postdominator info
     void getAnalysisUsage(AnalysisUsage &AU) const override {
+      AU.addRequired<AssumptionCacheTracker>();
       AU.addRequired<DominatorTreeWrapperPass>();
       AU.addRequired<TargetLibraryInfo>();
       if (!NoLoads)
@@ -698,6 +710,7 @@ namespace {
     void dump(DenseMap<uint32_t, Value*> &d);
     bool iterateOnFunction(Function &F);
     bool performPRE(Function &F);
+    bool performScalarPRE(Instruction *I);
     Value *findLeader(const BasicBlock *BB, uint32_t num);
     void cleanupGlobalSets();
     void verifyRemoved(const Instruction *I) const;
@@ -720,6 +733,7 @@ FunctionPass *llvm::createGVNPass(bool NoLoads) {
 }
 
 INITIALIZE_PASS_BEGIN(GVN, "gvn", "Global Value Numbering", false, false)
+INITIALIZE_PASS_DEPENDENCY(AssumptionCacheTracker)
 INITIALIZE_PASS_DEPENDENCY(MemoryDependenceAnalysis)
 INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfo)
@@ -850,7 +864,7 @@ static Value *CoerceAvailableValueToLoadType(Value *StoredVal,
                                              Instruction *InsertPt,
                                              const DataLayout &DL) {
   if (!CanCoerceMustAliasedValueToLoad(StoredVal, LoadedTy, DL))
-    return 0;
+    return nullptr;
 
   // If this is already the right type, just return it.
   Type *StoredValTy = StoredVal->getType();
@@ -1055,7 +1069,7 @@ static int AnalyzeLoadFromClobberingMemInst(Type *LoadTy, Value *LoadPtr,
                                             const DataLayout &DL) {
   // If the mem operation is a non-constant size, we can't handle it.
   ConstantInt *SizeCst = dyn_cast<ConstantInt>(MI->getLength());
-  if (SizeCst == 0) return -1;
+  if (!SizeCst) return -1;
   uint64_t MemSizeInBits = SizeCst->getZExtValue()*8;
 
   // If this is memset, we just need to see if the offset is valid in the size
@@ -1070,10 +1084,10 @@ static int AnalyzeLoadFromClobberingMemInst(Type *LoadTy, Value *LoadPtr,
   MemTransferInst *MTI = cast<MemTransferInst>(MI);
 
   Constant *Src = dyn_cast<Constant>(MTI->getSource());
-  if (Src == 0) return -1;
+  if (!Src) return -1;
 
   GlobalVariable *GV = dyn_cast<GlobalVariable>(GetUnderlyingObject(Src, &DL));
-  if (GV == 0 || !GV->isConstant()) return -1;
+  if (!GV || !GV->isConstant()) return -1;
 
   // See if the access is within the bounds of the transfer.
   int Offset = AnalyzeLoadFromClobberingWrite(LoadTy, LoadPtr,
@@ -1415,8 +1429,7 @@ void GVN::AnalyzeLoadAvailability(LoadInst *LI, LoadDepVect &Deps,
         // If this is a clobber and L is the first instruction in its block, then
         // we have the first instruction in the entry block.
         if (DepLI != LI && Address && DL) {
-          int Offset = AnalyzeLoadFromClobberingLoad(LI->getType(),
-                                                     LI->getPointerOperand(),
+          int Offset = AnalyzeLoadFromClobberingLoad(LI->getType(), Address,
                                                      DepLI, *DL);
 
           if (Offset != -1) {
@@ -1458,14 +1471,21 @@ void GVN::AnalyzeLoadAvailability(LoadInst *LI, LoadDepVect &Deps,
       continue;
     }
 
+    // Loading from calloc (which zero initializes memory) -> zero
+    if (isCallocLikeFn(DepInst, TLI)) {
+      ValuesPerBlock.push_back(AvailableValueInBlock::get(
+          DepBB, Constant::getNullValue(LI->getType())));
+      continue;
+    }
+
     if (StoreInst *S = dyn_cast<StoreInst>(DepInst)) {
       // Reject loads and stores that are to the same address but are of
       // different types if we have to.
       if (S->getValueOperand()->getType() != LI->getType()) {
         // If the stored value is larger or equal to the loaded value, we can
         // reuse it.
-        if (DL == 0 || !CanCoerceMustAliasedValueToLoad(S->getValueOperand(),
-                                                        LI->getType(), *DL)) {
+        if (!DL || !CanCoerceMustAliasedValueToLoad(S->getValueOperand(),
+                                                    LI->getType(), *DL)) {
           UnavailableBlocks.push_back(DepBB);
           continue;
         }
@@ -1481,7 +1501,7 @@ void GVN::AnalyzeLoadAvailability(LoadInst *LI, LoadDepVect &Deps,
       if (LD->getType() != LI->getType()) {
         // If the stored value is larger or equal to the loaded value, we can
         // reuse it.
-        if (DL == 0 || !CanCoerceMustAliasedValueToLoad(LD, LI->getType(),*DL)){
+        if (!DL || !CanCoerceMustAliasedValueToLoad(LD, LI->getType(),*DL)) {
           UnavailableBlocks.push_back(DepBB);
           continue;
         }
@@ -1534,7 +1554,7 @@ bool GVN::PerformLoadPRE(LoadInst *LI, AvailValInBlkVect &ValuesPerBlock,
 
   // Check to see how many predecessors have the loaded value fully
   // available.
-  DenseMap<BasicBlock*, Value*> PredLoads;
+  MapVector<BasicBlock *, Value *> PredLoads;
   DenseMap<BasicBlock*, char> FullyAvailableBlocks;
   for (unsigned i = 0, e = ValuesPerBlock.size(); i != e; ++i)
     FullyAvailableBlocks[ValuesPerBlock[i].BB] = true;
@@ -1548,7 +1568,6 @@ bool GVN::PerformLoadPRE(LoadInst *LI, AvailValInBlkVect &ValuesPerBlock,
     if (IsValueFullyAvailableInBlock(Pred, FullyAvailableBlocks, 0)) {
       continue;
     }
-    PredLoads[Pred] = 0;
 
     if (Pred->getTerminator()->getNumSuccessors() != 1) {
       if (isa<IndirectBrInst>(Pred->getTerminator())) {
@@ -1565,11 +1584,14 @@ bool GVN::PerformLoadPRE(LoadInst *LI, AvailValInBlkVect &ValuesPerBlock,
       }
 
       CriticalEdgePred.push_back(Pred);
+    } else {
+      // Only add the predecessors that will not be split for now.
+      PredLoads[Pred] = nullptr;
     }
   }
 
   // Decide whether PRE is profitable for this load.
-  unsigned NumUnavailablePreds = PredLoads.size();
+  unsigned NumUnavailablePreds = PredLoads.size() + CriticalEdgePred.size();
   assert(NumUnavailablePreds != 0 &&
          "Fully available value should already be eliminated!");
 
@@ -1581,12 +1603,10 @@ bool GVN::PerformLoadPRE(LoadInst *LI, AvailValInBlkVect &ValuesPerBlock,
       return false;
 
   // Split critical edges, and update the unavailable predecessors accordingly.
-  for (SmallVectorImpl<BasicBlock *>::iterator I = CriticalEdgePred.begin(),
-         E = CriticalEdgePred.end(); I != E; I++) {
-    BasicBlock *OrigPred = *I;
+  for (BasicBlock *OrigPred : CriticalEdgePred) {
     BasicBlock *NewPred = splitCriticalEdges(OrigPred, LoadBB);
-    PredLoads.erase(OrigPred);
-    PredLoads[NewPred] = 0;
+    assert(!PredLoads.count(OrigPred) && "Split edges shouldn't be in map!");
+    PredLoads[NewPred] = nullptr;
     DEBUG(dbgs() << "Split critical edge " << OrigPred->getName() << "->"
                  << LoadBB->getName() << '\n');
   }
@@ -1594,9 +1614,8 @@ bool GVN::PerformLoadPRE(LoadInst *LI, AvailValInBlkVect &ValuesPerBlock,
   // Check if the load can safely be moved to all the unavailable predecessors.
   bool CanDoPRE = true;
   SmallVector<Instruction*, 8> NewInsts;
-  for (DenseMap<BasicBlock*, Value*>::iterator I = PredLoads.begin(),
-         E = PredLoads.end(); I != E; ++I) {
-    BasicBlock *UnavailablePred = I->first;
+  for (auto &PredLoad : PredLoads) {
+    BasicBlock *UnavailablePred = PredLoad.first;
 
     // Do PHI translation to get its value in the predecessor if necessary.  The
     // returned pointer (if non-null) is guaranteed to dominate UnavailablePred.
@@ -1604,21 +1623,21 @@ bool GVN::PerformLoadPRE(LoadInst *LI, AvailValInBlkVect &ValuesPerBlock,
     // If all preds have a single successor, then we know it is safe to insert
     // the load on the pred (?!?), so we can insert code to materialize the
     // pointer if it is not available.
-    PHITransAddr Address(LI->getPointerOperand(), DL);
-    Value *LoadPtr = 0;
+    PHITransAddr Address(LI->getPointerOperand(), DL, AC);
+    Value *LoadPtr = nullptr;
     LoadPtr = Address.PHITranslateWithInsertion(LoadBB, UnavailablePred,
                                                 *DT, NewInsts);
 
     // If we couldn't find or insert a computation of this phi translated value,
     // we fail PRE.
-    if (LoadPtr == 0) {
+    if (!LoadPtr) {
       DEBUG(dbgs() << "COULDN'T INSERT PHI TRANSLATED VALUE OF: "
             << *LI->getPointerOperand() << "\n");
       CanDoPRE = false;
       break;
     }
 
-    I->second = LoadPtr;
+    PredLoad.second = LoadPtr;
   }
 
   if (!CanDoPRE) {
@@ -1627,8 +1646,8 @@ bool GVN::PerformLoadPRE(LoadInst *LI, AvailValInBlkVect &ValuesPerBlock,
       if (MD) MD->removeInstruction(I);
       I->eraseFromParent();
     }
-    // HINT:Don't revert the edge-splitting as following transformation may 
-    // also need to split these critial edges.
+    // HINT: Don't revert the edge-splitting as following transformation may
+    // also need to split these critical edges.
     return !CriticalEdgePred.empty();
   }
 
@@ -1649,18 +1668,19 @@ bool GVN::PerformLoadPRE(LoadInst *LI, AvailValInBlkVect &ValuesPerBlock,
     VN.lookup_or_add(NewInsts[i]);
   }
 
-  for (DenseMap<BasicBlock*, Value*>::iterator I = PredLoads.begin(),
-         E = PredLoads.end(); I != E; ++I) {
-    BasicBlock *UnavailablePred = I->first;
-    Value *LoadPtr = I->second;
+  for (const auto &PredLoad : PredLoads) {
+    BasicBlock *UnavailablePred = PredLoad.first;
+    Value *LoadPtr = PredLoad.second;
 
     Instruction *NewLoad = new LoadInst(LoadPtr, LI->getName()+".pre", false,
                                         LI->getAlignment(),
                                         UnavailablePred->getTerminator());
 
-    // Transfer the old load's TBAA tag to the new load.
-    if (MDNode *Tag = LI->getMetadata(LLVMContext::MD_tbaa))
-      NewLoad->setMetadata(LLVMContext::MD_tbaa, Tag);
+    // Transfer the old load's AA tags to the new load.
+    AAMDNodes Tags;
+    LI->getAAMetadata(Tags);
+    if (Tags)
+      NewLoad->setAAMetadata(Tags);
 
     // Transfer DebugLoc.
     NewLoad->setDebugLoc(LI->getDebugLoc());
@@ -1689,8 +1709,7 @@ bool GVN::PerformLoadPRE(LoadInst *LI, AvailValInBlkVect &ValuesPerBlock,
 bool GVN::processNonLocalLoad(LoadInst *LI) {
   // Step 1: Find the non-local dependencies of the load.
   LoadDepVect Deps;
-  AliasAnalysis::Location Loc = VN.getAliasAnalysis()->getLocation(LI);
-  MD->getNonLocalPointerDependency(Loc, true, LI->getParent(), Deps);
+  MD->getNonLocalPointerDependency(LI, Deps);
 
   // If we had to process more than one hundred blocks to find the
   // dependencies, this load isn't worth worrying about.  Optimizing
@@ -1709,6 +1728,15 @@ bool GVN::processNonLocalLoad(LoadInst *LI) {
       dbgs() << " has unknown dependencies\n";
     );
     return false;
+  }
+
+  // If this load follows a GEP, see if we can PRE the indices before analyzing.
+  if (GetElementPtrInst *GEP = dyn_cast<GetElementPtrInst>(LI->getOperand(0))) {
+    for (GetElementPtrInst::op_iterator OI = GEP->idx_begin(),
+                                        OE = GEP->idx_end();
+         OI != OE; ++OI)
+      if (Instruction *I = dyn_cast<Instruction>(OI->get()))
+        performScalarPRE(I);
   }
 
   // Step 2: Analyze the availability of the load
@@ -1763,32 +1791,24 @@ static void patchReplacementInstruction(Instruction *I, Value *Repl) {
       ReplOp->setHasNoUnsignedWrap(false);
   }
   if (Instruction *ReplInst = dyn_cast<Instruction>(Repl)) {
-    SmallVector<std::pair<unsigned, MDNode*>, 4> Metadata;
-    ReplInst->getAllMetadataOtherThanDebugLoc(Metadata);
-    for (int i = 0, n = Metadata.size(); i < n; ++i) {
-      unsigned Kind = Metadata[i].first;
-      MDNode *IMD = I->getMetadata(Kind);
-      MDNode *ReplMD = Metadata[i].second;
-      switch(Kind) {
-      default:
-        ReplInst->setMetadata(Kind, NULL); // Remove unknown metadata
-        break;
-      case LLVMContext::MD_dbg:
-        llvm_unreachable("getAllMetadataOtherThanDebugLoc returned a MD_dbg");
-      case LLVMContext::MD_tbaa:
-        ReplInst->setMetadata(Kind, MDNode::getMostGenericTBAA(IMD, ReplMD));
-        break;
-      case LLVMContext::MD_range:
-        ReplInst->setMetadata(Kind, MDNode::getMostGenericRange(IMD, ReplMD));
-        break;
-      case LLVMContext::MD_prof:
-        llvm_unreachable("MD_prof in a non-terminator instruction");
-        break;
-      case LLVMContext::MD_fpmath:
-        ReplInst->setMetadata(Kind, MDNode::getMostGenericFPMath(IMD, ReplMD));
-        break;
-      }
-    }
+    // FIXME: If both the original and replacement value are part of the
+    // same control-flow region (meaning that the execution of one
+    // guarentees the executation of the other), then we can combine the
+    // noalias scopes here and do better than the general conservative
+    // answer used in combineMetadata().
+
+    // In general, GVN unifies expressions over different control-flow
+    // regions, and so we need a conservative combination of the noalias
+    // scopes.
+    unsigned KnownIDs[] = {
+      LLVMContext::MD_tbaa,
+      LLVMContext::MD_alias_scope,
+      LLVMContext::MD_noalias,
+      LLVMContext::MD_range,
+      LLVMContext::MD_fpmath,
+      LLVMContext::MD_invariant_load,
+    };
+    combineMetadata(ReplInst, I, KnownIDs);
   }
 }
 
@@ -1827,7 +1847,7 @@ bool GVN::processLoad(LoadInst *L) {
     // a common base + constant offset, and if the previous store (or memset)
     // completely covers this load.  This sort of thing can happen in bitfield
     // access code.
-    Value *AvailVal = 0;
+    Value *AvailVal = nullptr;
     if (StoreInst *DepSI = dyn_cast<StoreInst>(Dep.getInst())) {
       int Offset = AnalyzeLoadFromClobberingStore(L->getType(),
                                                   L->getPointerOperand(),
@@ -1915,7 +1935,7 @@ bool GVN::processLoad(LoadInst *L) {
       if (DL) {
         StoredVal = CoerceAvailableValueToLoadType(StoredVal, L->getType(),
                                                    L, *DL);
-        if (StoredVal == 0)
+        if (!StoredVal)
           return false;
 
         DEBUG(dbgs() << "GVN COERCED STORE:\n" << *DepSI << '\n' << *StoredVal
@@ -1944,7 +1964,7 @@ bool GVN::processLoad(LoadInst *L) {
       if (DL) {
         AvailableVal = CoerceAvailableValueToLoadType(DepLI, L->getType(),
                                                       L, *DL);
-        if (AvailableVal == 0)
+        if (!AvailableVal)
           return false;
 
         DEBUG(dbgs() << "GVN COERCED LOAD:\n" << *DepLI << "\n" << *AvailableVal
@@ -1984,6 +2004,15 @@ bool GVN::processLoad(LoadInst *L) {
     }
   }
 
+  // If this load follows a calloc (which zero initializes memory),
+  // then the loaded value is zero
+  if (isCallocLikeFn(DepInst, TLI)) {
+    L->replaceAllUsesWith(Constant::getNullValue(L->getType()));
+    markInstructionForDeletion(L);
+    ++NumGVNLoad;
+    return true;
+  }
+
   return false;
 }
 
@@ -1994,9 +2023,9 @@ bool GVN::processLoad(LoadInst *L) {
 // a few comparisons of DFS numbers.
 Value *GVN::findLeader(const BasicBlock *BB, uint32_t num) {
   LeaderTableEntry Vals = LeaderTable[num];
-  if (!Vals.Val) return 0;
+  if (!Vals.Val) return nullptr;
 
-  Value *Val = 0;
+  Value *Val = nullptr;
   if (DT->dominates(Vals.BB, BB)) {
     Val = Vals.Val;
     if (isa<Constant>(Val)) return Val;
@@ -2047,7 +2076,7 @@ static bool isOnlyReachableViaThisEdge(const BasicBlockEdge &E,
   const BasicBlock *Src = E.getStart();
   assert((!Pred || Pred == Src) && "No edge between these basic blocks!");
   (void)Src;
-  return Pred != 0;
+  return Pred != nullptr;
 }
 
 /// propagateEquality - The given values are known to be equal in every block
@@ -2077,15 +2106,15 @@ bool GVN::propagateEquality(Value *LHS, Value *RHS,
       std::swap(LHS, RHS);
     assert((isa<Argument>(LHS) || isa<Instruction>(LHS)) && "Unexpected value!");
 
-    // If there is no obvious reason to prefer the left-hand side over the right-
-    // hand side, ensure the longest lived term is on the right-hand side, so the
-    // shortest lived term will be replaced by the longest lived.  This tends to
-    // expose more simplifications.
+    // If there is no obvious reason to prefer the left-hand side over the
+    // right-hand side, ensure the longest lived term is on the right-hand side,
+    // so the shortest lived term will be replaced by the longest lived.
+    // This tends to expose more simplifications.
     uint32_t LVN = VN.lookup_or_add(LHS);
     if ((isa<Argument>(LHS) && isa<Argument>(RHS)) ||
         (isa<Instruction>(LHS) && isa<Instruction>(RHS))) {
-      // Move the 'oldest' value to the right-hand side, using the value number as
-      // a proxy for age.
+      // Move the 'oldest' value to the right-hand side, using the value number
+      // as a proxy for age.
       uint32_t RVN = VN.lookup_or_add(RHS);
       if (LVN < RVN) {
         std::swap(LHS, RHS);
@@ -2114,10 +2143,10 @@ bool GVN::propagateEquality(Value *LHS, Value *RHS,
       NumGVNEqProp += NumReplacements;
     }
 
-    // Now try to deduce additional equalities from this one.  For example, if the
-    // known equality was "(A != B)" == "false" then it follows that A and B are
-    // equal in the scope.  Only boolean equalities with an explicit true or false
-    // RHS are currently supported.
+    // Now try to deduce additional equalities from this one. For example, if
+    // the known equality was "(A != B)" == "false" then it follows that A and B
+    // are equal in the scope. Only boolean equalities with an explicit true or
+    // false RHS are currently supported.
     if (!RHS->getType()->isIntegerTy(1))
       // Not a boolean equality - bail out.
       continue;
@@ -2142,7 +2171,7 @@ bool GVN::propagateEquality(Value *LHS, Value *RHS,
     // If we are propagating an equality like "(A == B)" == "true" then also
     // propagate the equality A == B.  When propagating a comparison such as
     // "(A >= B)" == "true", replace all instances of "A < B" with "false".
-    if (ICmpInst *Cmp = dyn_cast<ICmpInst>(LHS)) {
+    if (CmpInst *Cmp = dyn_cast<CmpInst>(LHS)) {
       Value *Op0 = Cmp->getOperand(0), *Op1 = Cmp->getOperand(1);
 
       // If "A == B" is known true, or "A != B" is known false, then replace
@@ -2151,12 +2180,28 @@ bool GVN::propagateEquality(Value *LHS, Value *RHS,
           (isKnownFalse && Cmp->getPredicate() == CmpInst::ICMP_NE))
         Worklist.push_back(std::make_pair(Op0, Op1));
 
+      // Handle the floating point versions of equality comparisons too.
+      if ((isKnownTrue && Cmp->getPredicate() == CmpInst::FCMP_OEQ) ||
+          (isKnownFalse && Cmp->getPredicate() == CmpInst::FCMP_UNE)) {
+
+        // Floating point -0.0 and 0.0 compare equal, so we can only
+        // propagate values if we know that we have a constant and that
+        // its value is non-zero.
+        
+        // FIXME: We should do this optimization if 'no signed zeros' is
+        // applicable via an instruction-level fast-math-flag or some other
+        // indicator that relaxed FP semantics are being used.
+
+        if (isa<ConstantFP>(Op1) && !cast<ConstantFP>(Op1)->isZero())
+          Worklist.push_back(std::make_pair(Op0, Op1));
+      }
+ 
       // If "A >= B" is known true, replace "A < B" with false everywhere.
       CmpInst::Predicate NotPred = Cmp->getInversePredicate();
       Constant *NotVal = ConstantInt::get(Cmp->getType(), isKnownFalse);
-      // Since we don't have the instruction "A < B" immediately to hand, work out
-      // the value number that it would have and use that to find an appropriate
-      // instruction (if any).
+      // Since we don't have the instruction "A < B" immediately to hand, work
+      // out the value number that it would have and use that to find an
+      // appropriate instruction (if any).
       uint32_t NextNum = VN.getNextUnusedValueNumber();
       uint32_t Num = VN.lookup_or_add_cmp(Cmp->getOpcode(), NotPred, Op0, Op1);
       // If the number we were assigned was brand new then there is no point in
@@ -2184,54 +2229,6 @@ bool GVN::propagateEquality(Value *LHS, Value *RHS,
   return Changed;
 }
 
-static bool normalOpAfterIntrinsic(Instruction *I, Value *Repl)
-{
-  switch (I->getOpcode()) {
-    case Instruction::Add:
-      if (IntrinsicInst *II = dyn_cast<IntrinsicInst>(Repl))
-          return II->getIntrinsicID() == Intrinsic::sadd_with_overflow
-              || II->getIntrinsicID() == Intrinsic::uadd_with_overflow;
-      return false;
-    case Instruction::Sub:
-      if (IntrinsicInst *II = dyn_cast<IntrinsicInst>(Repl))
-          return II->getIntrinsicID() == Intrinsic::ssub_with_overflow
-              || II->getIntrinsicID() == Intrinsic::usub_with_overflow;
-      return false;
-    case Instruction::Mul:
-      if (IntrinsicInst *II = dyn_cast<IntrinsicInst>(Repl))
-          return II->getIntrinsicID() == Intrinsic::smul_with_overflow
-              || II->getIntrinsicID() == Intrinsic::umul_with_overflow;
-      return false;
-    default:
-      return false;
-  }
-}
-
-static bool intrinsicAterNormalOp(Instruction *I, Value *Repl)
-{
-  IntrinsicInst *II = dyn_cast<IntrinsicInst>(I);
-  if (!II)
-    return false;
-
-  Instruction *RI = dyn_cast<Instruction>(Repl);
-  if (!RI)
-    return false;
-
-  switch (RI->getOpcode()) {
-    case Instruction::Add:
-      return II->getIntrinsicID() == Intrinsic::sadd_with_overflow
-          || II->getIntrinsicID() == Intrinsic::uadd_with_overflow;
-    case Instruction::Sub:
-      return II->getIntrinsicID() == Intrinsic::ssub_with_overflow
-          || II->getIntrinsicID() == Intrinsic::usub_with_overflow;
-    case Instruction::Mul:
-      return II->getIntrinsicID() == Intrinsic::smul_with_overflow
-          || II->getIntrinsicID() == Intrinsic::umul_with_overflow;
-    default:
-      return false;
-  }
-}
-
 /// processInstruction - When calculating availability, handle an instruction
 /// by inserting it into the appropriate sets
 bool GVN::processInstruction(Instruction *I) {
@@ -2243,7 +2240,7 @@ bool GVN::processInstruction(Instruction *I) {
   // to value numbering it.  Value numbering often exposes redundancies, for
   // example if it determines that %y is equal to %x then the instruction
   // "%z = and i32 %x, %y" becomes "%z = and i32 %x, %x" which we now simplify.
-  if (Value *V = SimplifyInstruction(I, DL, TLI, DT)) {
+  if (Value *V = SimplifyInstruction(I, DL, TLI, DT, AC)) {
     I->replaceAllUsesWith(V);
     if (MD && V->getType()->getScalarType()->isPointerTy())
       MD->invalidateCachedPointerInfo(V);
@@ -2339,31 +2336,10 @@ bool GVN::processInstruction(Instruction *I) {
   // Perform fast-path value-number based elimination of values inherited from
   // dominators.
   Value *repl = findLeader(I->getParent(), Num);
-  if (repl == 0) {
+  if (!repl) {
     // Failure, just remember this instance for future use.
     addToLeaderTable(Num, I, I->getParent());
     return false;
-  }
-
-  if (normalOpAfterIntrinsic(I, repl)) {
-    // An intrinsic followed by a normal operation (e.g. sadd_with_overflow
-    // followed by a sadd): replace the second instruction with an extract.
-    IntrinsicInst *II = cast<IntrinsicInst>(repl);
-    assert(II);
-    repl = ExtractValueInst::Create(II, 0, I->getName() + ".repl", I);
-  } else if (intrinsicAterNormalOp(I, repl)) {
-    // A normal operation followed by an intrinsic (e.g. sadd followed by a
-    // sadd_with_overflow).
-    // Clone the intrinsic, and insert it before the replacing instruction. Then
-    // replace the (current) instruction with the cloned one. In a subsequent
-    // run, the original replacement (the non-intrinsic) will be be replaced by
-    // the new intrinsic.
-    Instruction *RI = dyn_cast<Instruction>(repl);
-    assert(RI);
-    Instruction *newIntrinsic = I->clone();
-    newIntrinsic->setName(I->getName() + ".repl");
-    newIntrinsic->insertBefore(RI);
-    repl = newIntrinsic;
   }
 
   // Remove it!
@@ -2383,7 +2359,8 @@ bool GVN::runOnFunction(Function& F) {
     MD = &getAnalysis<MemoryDependenceAnalysis>();
   DT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree();
   DataLayoutPass *DLP = getAnalysisIfAvailable<DataLayoutPass>();
-  DL = DLP ? &DLP->getDataLayout() : 0;
+  DL = DLP ? &DLP->getDataLayout() : nullptr;
+  AC = &getAnalysis<AssumptionCacheTracker>().getAssumptionCache(F);
   TLI = &getAnalysis<TargetLibraryInfo>();
   VN.setAliasAnalysis(&getAnalysis<AliasAnalysis>());
   VN.setMemDep(MD);
@@ -2480,180 +2457,182 @@ bool GVN::processBlock(BasicBlock *BB) {
   return ChangedFunction;
 }
 
+bool GVN::performScalarPRE(Instruction *CurInst) {
+  SmallVector<std::pair<Value*, BasicBlock*>, 8> predMap;
+
+  if (isa<AllocaInst>(CurInst) || isa<TerminatorInst>(CurInst) ||
+      isa<PHINode>(CurInst) || CurInst->getType()->isVoidTy() ||
+      CurInst->mayReadFromMemory() || CurInst->mayHaveSideEffects() ||
+      isa<DbgInfoIntrinsic>(CurInst))
+    return false;
+
+  // Don't do PRE on compares. The PHI would prevent CodeGenPrepare from
+  // sinking the compare again, and it would force the code generator to
+  // move the i1 from processor flags or predicate registers into a general
+  // purpose register.
+  if (isa<CmpInst>(CurInst))
+    return false;
+
+  // We don't currently value number ANY inline asm calls.
+  if (CallInst *CallI = dyn_cast<CallInst>(CurInst))
+    if (CallI->isInlineAsm())
+      return false;
+
+  uint32_t ValNo = VN.lookup(CurInst);
+
+  // Look for the predecessors for PRE opportunities.  We're
+  // only trying to solve the basic diamond case, where
+  // a value is computed in the successor and one predecessor,
+  // but not the other.  We also explicitly disallow cases
+  // where the successor is its own predecessor, because they're
+  // more complicated to get right.
+  unsigned NumWith = 0;
+  unsigned NumWithout = 0;
+  BasicBlock *PREPred = nullptr;
+  BasicBlock *CurrentBlock = CurInst->getParent();
+  predMap.clear();
+
+  for (pred_iterator PI = pred_begin(CurrentBlock), PE = pred_end(CurrentBlock);
+       PI != PE; ++PI) {
+    BasicBlock *P = *PI;
+    // We're not interested in PRE where the block is its
+    // own predecessor, or in blocks with predecessors
+    // that are not reachable.
+    if (P == CurrentBlock) {
+      NumWithout = 2;
+      break;
+    } else if (!DT->isReachableFromEntry(P)) {
+      NumWithout = 2;
+      break;
+    }
+
+    Value *predV = findLeader(P, ValNo);
+    if (!predV) {
+      predMap.push_back(std::make_pair(static_cast<Value *>(nullptr), P));
+      PREPred = P;
+      ++NumWithout;
+    } else if (predV == CurInst) {
+      /* CurInst dominates this predecessor. */
+      NumWithout = 2;
+      break;
+    } else {
+      predMap.push_back(std::make_pair(predV, P));
+      ++NumWith;
+    }
+  }
+
+  // Don't do PRE when it might increase code size, i.e. when
+  // we would need to insert instructions in more than one pred.
+  if (NumWithout != 1 || NumWith == 0)
+    return false;
+
+  // Don't do PRE across indirect branch.
+  if (isa<IndirectBrInst>(PREPred->getTerminator()))
+    return false;
+
+  // We can't do PRE safely on a critical edge, so instead we schedule
+  // the edge to be split and perform the PRE the next time we iterate
+  // on the function.
+  unsigned SuccNum = GetSuccessorNumber(PREPred, CurrentBlock);
+  if (isCriticalEdge(PREPred->getTerminator(), SuccNum)) {
+    toSplit.push_back(std::make_pair(PREPred->getTerminator(), SuccNum));
+    return false;
+  }
+
+  // Instantiate the expression in the predecessor that lacked it.
+  // Because we are going top-down through the block, all value numbers
+  // will be available in the predecessor by the time we need them.  Any
+  // that weren't originally present will have been instantiated earlier
+  // in this loop.
+  Instruction *PREInstr = CurInst->clone();
+  bool success = true;
+  for (unsigned i = 0, e = CurInst->getNumOperands(); i != e; ++i) {
+    Value *Op = PREInstr->getOperand(i);
+    if (isa<Argument>(Op) || isa<Constant>(Op) || isa<GlobalValue>(Op))
+      continue;
+
+    if (Value *V = findLeader(PREPred, VN.lookup(Op))) {
+      PREInstr->setOperand(i, V);
+    } else {
+      success = false;
+      break;
+    }
+  }
+
+  // Fail out if we encounter an operand that is not available in
+  // the PRE predecessor.  This is typically because of loads which
+  // are not value numbered precisely.
+  if (!success) {
+    DEBUG(verifyRemoved(PREInstr));
+    delete PREInstr;
+    return false;
+  }
+
+  PREInstr->insertBefore(PREPred->getTerminator());
+  PREInstr->setName(CurInst->getName() + ".pre");
+  PREInstr->setDebugLoc(CurInst->getDebugLoc());
+  VN.add(PREInstr, ValNo);
+  ++NumGVNPRE;
+
+  // Update the availability map to include the new instruction.
+  addToLeaderTable(ValNo, PREInstr, PREPred);
+
+  // Create a PHI to make the value available in this block.
+  PHINode *Phi =
+      PHINode::Create(CurInst->getType(), predMap.size(),
+                      CurInst->getName() + ".pre-phi", CurrentBlock->begin());
+  for (unsigned i = 0, e = predMap.size(); i != e; ++i) {
+    if (Value *V = predMap[i].first)
+      Phi->addIncoming(V, predMap[i].second);
+    else
+      Phi->addIncoming(PREInstr, PREPred);
+  }
+
+  VN.add(Phi, ValNo);
+  addToLeaderTable(ValNo, Phi, CurrentBlock);
+  Phi->setDebugLoc(CurInst->getDebugLoc());
+  CurInst->replaceAllUsesWith(Phi);
+  if (Phi->getType()->getScalarType()->isPointerTy()) {
+    // Because we have added a PHI-use of the pointer value, it has now
+    // "escaped" from alias analysis' perspective.  We need to inform
+    // AA of this.
+    for (unsigned ii = 0, ee = Phi->getNumIncomingValues(); ii != ee; ++ii) {
+      unsigned jj = PHINode::getOperandNumForIncomingValue(ii);
+      VN.getAliasAnalysis()->addEscapingUse(Phi->getOperandUse(jj));
+    }
+
+    if (MD)
+      MD->invalidateCachedPointerInfo(Phi);
+  }
+  VN.erase(CurInst);
+  removeFromLeaderTable(ValNo, CurInst, CurrentBlock);
+
+  DEBUG(dbgs() << "GVN PRE removed: " << *CurInst << '\n');
+  if (MD)
+    MD->removeInstruction(CurInst);
+  DEBUG(verifyRemoved(CurInst));
+  CurInst->eraseFromParent();
+  return true;
+}
+
 /// performPRE - Perform a purely local form of PRE that looks for diamond
 /// control flow patterns and attempts to perform simple PRE at the join point.
 bool GVN::performPRE(Function &F) {
   bool Changed = false;
-  SmallVector<std::pair<Value*, BasicBlock*>, 8> predMap;
-  for (df_iterator<BasicBlock*> DI = df_begin(&F.getEntryBlock()),
-       DE = df_end(&F.getEntryBlock()); DI != DE; ++DI) {
-    BasicBlock *CurrentBlock = *DI;
-
+  for (BasicBlock *CurrentBlock : depth_first(&F.getEntryBlock())) {
     // Nothing to PRE in the entry block.
-    if (CurrentBlock == &F.getEntryBlock()) continue;
+    if (CurrentBlock == &F.getEntryBlock())
+      continue;
 
     // Don't perform PRE on a landing pad.
-    if (CurrentBlock->isLandingPad()) continue;
+    if (CurrentBlock->isLandingPad())
+      continue;
 
     for (BasicBlock::iterator BI = CurrentBlock->begin(),
-         BE = CurrentBlock->end(); BI != BE; ) {
+                              BE = CurrentBlock->end();
+         BI != BE;) {
       Instruction *CurInst = BI++;
-
-      if (isa<AllocaInst>(CurInst) ||
-          isa<TerminatorInst>(CurInst) || isa<PHINode>(CurInst) ||
-          CurInst->getType()->isVoidTy() ||
-          CurInst->mayReadFromMemory() || CurInst->mayHaveSideEffects() ||
-          isa<DbgInfoIntrinsic>(CurInst))
-        continue;
-
-      // Don't do PRE on compares. The PHI would prevent CodeGenPrepare from
-      // sinking the compare again, and it would force the code generator to
-      // move the i1 from processor flags or predicate registers into a general
-      // purpose register.
-      if (isa<CmpInst>(CurInst))
-        continue;
-
-      // We don't currently value number ANY inline asm calls.
-      if (CallInst *CallI = dyn_cast<CallInst>(CurInst))
-        if (CallI->isInlineAsm())
-          continue;
-
-      uint32_t ValNo = VN.lookup(CurInst);
-
-      // Look for the predecessors for PRE opportunities.  We're
-      // only trying to solve the basic diamond case, where
-      // a value is computed in the successor and one predecessor,
-      // but not the other.  We also explicitly disallow cases
-      // where the successor is its own predecessor, because they're
-      // more complicated to get right.
-      unsigned NumWith = 0;
-      unsigned NumWithout = 0;
-      BasicBlock *PREPred = 0;
-      predMap.clear();
-
-      for (pred_iterator PI = pred_begin(CurrentBlock),
-           PE = pred_end(CurrentBlock); PI != PE; ++PI) {
-        BasicBlock *P = *PI;
-        // We're not interested in PRE where the block is its
-        // own predecessor, or in blocks with predecessors
-        // that are not reachable.
-        if (P == CurrentBlock) {
-          NumWithout = 2;
-          break;
-        } else if (!DT->isReachableFromEntry(P))  {
-          NumWithout = 2;
-          break;
-        }
-
-        Value* predV = findLeader(P, ValNo);
-        if (predV == 0) {
-          predMap.push_back(std::make_pair(static_cast<Value *>(0), P));
-          PREPred = P;
-          ++NumWithout;
-        } else if (predV->getType() != CurInst->getType()) {
-          continue;
-        } else if (predV == CurInst) {
-          /* CurInst dominates this predecessor. */
-          NumWithout = 2;
-          break;
-        } else {
-          predMap.push_back(std::make_pair(predV, P));
-          ++NumWith;
-        }
-      }
-
-      // Don't do PRE when it might increase code size, i.e. when
-      // we would need to insert instructions in more than one pred.
-      if (NumWithout != 1 || NumWith == 0)
-        continue;
-
-      // Don't do PRE across indirect branch.
-      if (isa<IndirectBrInst>(PREPred->getTerminator()))
-        continue;
-
-      // We can't do PRE safely on a critical edge, so instead we schedule
-      // the edge to be split and perform the PRE the next time we iterate
-      // on the function.
-      unsigned SuccNum = GetSuccessorNumber(PREPred, CurrentBlock);
-      if (isCriticalEdge(PREPred->getTerminator(), SuccNum)) {
-        toSplit.push_back(std::make_pair(PREPred->getTerminator(), SuccNum));
-        continue;
-      }
-
-      // Instantiate the expression in the predecessor that lacked it.
-      // Because we are going top-down through the block, all value numbers
-      // will be available in the predecessor by the time we need them.  Any
-      // that weren't originally present will have been instantiated earlier
-      // in this loop.
-      Instruction *PREInstr = CurInst->clone();
-      bool success = true;
-      for (unsigned i = 0, e = CurInst->getNumOperands(); i != e; ++i) {
-        Value *Op = PREInstr->getOperand(i);
-        if (isa<Argument>(Op) || isa<Constant>(Op) || isa<GlobalValue>(Op))
-          continue;
-
-        if (Value *V = findLeader(PREPred, VN.lookup(Op))) {
-          PREInstr->setOperand(i, V);
-        } else {
-          success = false;
-          break;
-        }
-      }
-
-      // Fail out if we encounter an operand that is not available in
-      // the PRE predecessor.  This is typically because of loads which
-      // are not value numbered precisely.
-      if (!success) {
-        DEBUG(verifyRemoved(PREInstr));
-        delete PREInstr;
-        continue;
-      }
-
-      PREInstr->insertBefore(PREPred->getTerminator());
-      PREInstr->setName(CurInst->getName() + ".pre");
-      PREInstr->setDebugLoc(CurInst->getDebugLoc());
-      VN.add(PREInstr, ValNo);
-      ++NumGVNPRE;
-
-      // Update the availability map to include the new instruction.
-      addToLeaderTable(ValNo, PREInstr, PREPred);
-
-      // Create a PHI to make the value available in this block.
-      PHINode* Phi = PHINode::Create(CurInst->getType(), predMap.size(),
-                                     CurInst->getName() + ".pre-phi",
-                                     CurrentBlock->begin());
-      for (unsigned i = 0, e = predMap.size(); i != e; ++i) {
-        if (Value *V = predMap[i].first)
-          Phi->addIncoming(V, predMap[i].second);
-        else
-          Phi->addIncoming(PREInstr, PREPred);
-      }
-
-      VN.add(Phi, ValNo);
-      addToLeaderTable(ValNo, Phi, CurrentBlock);
-      Phi->setDebugLoc(CurInst->getDebugLoc());
-      CurInst->replaceAllUsesWith(Phi);
-      if (Phi->getType()->getScalarType()->isPointerTy()) {
-        // Because we have added a PHI-use of the pointer value, it has now
-        // "escaped" from alias analysis' perspective.  We need to inform
-        // AA of this.
-        for (unsigned ii = 0, ee = Phi->getNumIncomingValues(); ii != ee;
-             ++ii) {
-          unsigned jj = PHINode::getOperandNumForIncomingValue(ii);
-          VN.getAliasAnalysis()->addEscapingUse(Phi->getOperandUse(jj));
-        }
-
-        if (MD)
-          MD->invalidateCachedPointerInfo(Phi);
-      }
-      VN.erase(CurInst);
-      removeFromLeaderTable(ValNo, CurInst, CurrentBlock);
-
-      DEBUG(dbgs() << "GVN PRE removed: " << *CurInst << '\n');
-      if (MD) MD->removeInstruction(CurInst);
-      DEBUG(verifyRemoved(CurInst));
-      CurInst->eraseFromParent();
-      Changed = true;
+      Changed = performScalarPRE(CurInst);
     }
   }
 
@@ -2691,26 +2670,21 @@ bool GVN::iterateOnFunction(Function &F) {
 
   // Top-down walk of the dominator tree
   bool Changed = false;
-#if 0
-  // Needed for value numbering with phi construction to work.
-  ReversePostOrderTraversal<Function*> RPOT(&F);
-  for (ReversePostOrderTraversal<Function*>::rpo_iterator RI = RPOT.begin(),
-       RE = RPOT.end(); RI != RE; ++RI)
-    Changed |= processBlock(*RI);
-#else
   // Save the blocks this function have before transformation begins. GVN may
   // split critical edge, and hence may invalidate the RPO/DT iterator.
   //
   std::vector<BasicBlock *> BBVect;
   BBVect.reserve(256);
-  for (df_iterator<DomTreeNode*> DI = df_begin(DT->getRootNode()),
-       DE = df_end(DT->getRootNode()); DI != DE; ++DI)
-    BBVect.push_back(DI->getBlock());
+  // Needed for value numbering with phi construction to work.
+  ReversePostOrderTraversal<Function *> RPOT(&F);
+  for (ReversePostOrderTraversal<Function *>::rpo_iterator RI = RPOT.begin(),
+                                                           RE = RPOT.end();
+       RI != RE; ++RI)
+    BBVect.push_back(*RI);
 
   for (std::vector<BasicBlock *>::iterator I = BBVect.begin(), E = BBVect.end();
        I != E; I++)
     Changed |= processBlock(*I);
-#endif
 
   return Changed;
 }
@@ -2853,7 +2827,7 @@ bool GVN::processFoldableCondBr(BranchInst *BI) {
   return true;
 }
 
-// performPRE() will trigger assert if it come across an instruciton without
+// performPRE() will trigger assert if it comes across an instruction without
 // associated val-num. As it normally has far more live instructions than dead
 // instructions, it makes more sense just to "fabricate" a val-number for the
 // dead code than checking if instruction involved is dead or not.

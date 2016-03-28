@@ -14,6 +14,7 @@
 #include "llvm/ADT/SmallString.h"
 #include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCObjectWriter.h"
+#include "llvm/MC/StringTableBuilder.h"
 #include "llvm/Support/DataTypes.h"
 #include "llvm/Support/MachO.h"
 #include <vector>
@@ -104,12 +105,14 @@ class MachObjectWriter : public MCObjectWriter {
   /// @name Symbol Table Data
   /// @{
 
-  SmallString<256> StringTable;
+  StringTableBuilder StringTable;
   std::vector<MachSymbolData> LocalSymbolData;
   std::vector<MachSymbolData> ExternalSymbolData;
   std::vector<MachSymbolData> UndefinedSymbolData;
 
   /// @}
+
+  MachSymbolData *findSymbolData(const MCSymbol &Sym);
 
 public:
   MachObjectWriter(MCMachObjectTargetWriter *MOTW, raw_ostream &_OS,
@@ -230,14 +233,14 @@ public:
 
   void RecordRelocation(const MCAssembler &Asm, const MCAsmLayout &Layout,
                         const MCFragment *Fragment, const MCFixup &Fixup,
-                        MCValue Target, uint64_t &FixedValue) override;
+                        MCValue Target, bool &IsPCRel,
+                        uint64_t &FixedValue) override;
 
   void BindIndirectSymbols(MCAssembler &Asm);
 
   /// ComputeSymbolTable - Compute the symbol table data
   ///
-  /// \param StringTable [out] - The string table data.
-  void ComputeSymbolTable(MCAssembler &Asm, SmallString<256> &StringTable,
+  void ComputeSymbolTable(MCAssembler &Asm,
                           std::vector<MachSymbolData> &LocalSymbolData,
                           std::vector<MachSymbolData> &ExternalSymbolData,
                           std::vector<MachSymbolData> &UndefinedSymbolData);

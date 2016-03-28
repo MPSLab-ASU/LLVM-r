@@ -11,11 +11,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef ARM_FRAMEINFO_H
-#define ARM_FRAMEINFO_H
+#ifndef LLVM_LIB_TARGET_ARM_ARMFRAMELOWERING_H
+#define LLVM_LIB_TARGET_ARM_ARMFRAMELOWERING_H
 
-#include "ARM.h"
-#include "ARMSubtarget.h"
 #include "llvm/Target/TargetFrameLowering.h"
 
 namespace llvm {
@@ -26,15 +24,14 @@ protected:
   const ARMSubtarget &STI;
 
 public:
-  explicit ARMFrameLowering(const ARMSubtarget &sti)
-    : TargetFrameLowering(StackGrowsDown, sti.getStackAlignment(), 0, 4),
-      STI(sti) {
-  }
+  explicit ARMFrameLowering(const ARMSubtarget &sti);
 
   /// emitProlog/emitEpilog - These methods insert prolog and epilog code into
   /// the function.
   void emitPrologue(MachineFunction &MF) const override;
   void emitEpilogue(MachineFunction &MF, MachineBasicBlock &MBB) const override;
+
+  void fixTCReturn(MachineFunction &MF, MachineBasicBlock &MBB) const;
 
   bool spillCalleeSavedRegisters(MachineBasicBlock &MBB,
                                  MachineBasicBlock::iterator MI,
@@ -57,6 +54,8 @@ public:
 
   void processFunctionBeforeCalleeSavedScan(MachineFunction &MF,
                                             RegScavenger *RS) const override;
+
+  void adjustForSegmentedStacks(MachineFunction &MF) const override;
 
  private:
   void emitPushInst(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI,

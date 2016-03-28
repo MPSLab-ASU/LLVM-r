@@ -14,7 +14,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#define DEBUG_TYPE "scalarizer"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InstVisitor.h"
@@ -24,6 +23,8 @@
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 
 using namespace llvm;
+
+#define DEBUG_TYPE "scalarizer"
 
 namespace {
 // Used to store the scattered form of a vector.
@@ -48,7 +49,7 @@ public:
   // insert them before BBI in BB.  If Cache is nonnull, use it to cache
   // the results.
   Scatterer(BasicBlock *bb, BasicBlock::iterator bbi, Value *v,
-            ValueVector *cachePtr = 0);
+            ValueVector *cachePtr = nullptr);
 
   // Return component I, creating a new Value for it if necessary.
   Value *operator[](unsigned I);
@@ -101,7 +102,7 @@ struct BinarySplitter {
 
 // Information about a load or store that we're scalarizing.
 struct VectorLayout {
-  VectorLayout() : VecTy(0), ElemTy(0), VecAlign(0), ElemSize(0) {}
+  VectorLayout() : VecTy(nullptr), ElemTy(nullptr), VecAlign(0), ElemSize(0) {}
 
   // Return the alignment of element I.
   uint64_t getElemAlign(unsigned I) {
@@ -149,6 +150,16 @@ public:
   bool visitLoadInst(LoadInst &);
   bool visitStoreInst(StoreInst &);
 
+  static void registerOptions() {
+    // This is disabled by default because having separate loads and stores
+    // makes it more likely that the -combiner-alias-analysis limits will be
+    // reached.
+    OptionRegistry::registerOption<bool, Scalarizer,
+                                 &Scalarizer::ScalarizeLoadStore>(
+        "scalarize-load-store",
+        "Allow the scalarizer pass to scalarize loads and store", false);
+  }
+
 private:
   Scatterer scatter(Instruction *, Value *);
   void gather(Instruction *, const ValueVector &);
@@ -163,19 +174,14 @@ private:
   GatherList Gathered;
   unsigned ParallelLoopAccessMDKind;
   const DataLayout *DL;
+  bool ScalarizeLoadStore;
 };
 
 char Scalarizer::ID = 0;
 } // end anonymous namespace
 
-// This is disabled by default because having separate loads and stores makes
-// it more likely that the -combiner-alias-analysis limits will be reached.
-static cl::opt<bool> ScalarizeLoadStore
-  ("scalarize-load-store", cl::Hidden, cl::init(false),
-   cl::desc("Allow the scalarizer pass to scalarize loads and store"));
-
-INITIALIZE_PASS(Scalarizer, "scalarizer", "Scalarize vector operations",
-                false, false)
+INITIALIZE_PASS_WITH_OPTIONS(Scalarizer, "scalarizer",
+                             "Scalarize vector operations", false, false)
 
 Scatterer::Scatterer(BasicBlock *bb, BasicBlock::iterator bbi, Value *v,
                      ValueVector *cachePtr)
@@ -186,9 +192,9 @@ Scatterer::Scatterer(BasicBlock *bb, BasicBlock::iterator bbi, Value *v,
     Ty = PtrTy->getElementType();
   Size = Ty->getVectorNumElements();
   if (!CachePtr)
-    Tmp.resize(Size, 0);
+    Tmp.resize(Size, nullptr);
   else if (CachePtr->empty())
-    CachePtr->resize(Size, 0);
+    CachePtr->resize(Size, nullptr);
   else
     assert(Size == CachePtr->size() && "Inconsistent vector sizes");
 }
@@ -235,13 +241,15 @@ Value *Scatterer::operator[](unsigned I) {
 
 bool Scalarizer::doInitialization(Module &M) {
   ParallelLoopAccessMDKind =
-    M.getContext().getMDKindID("llvm.mem.parallel_loop_access");
+      M.getContext().getMDKindID("llvm.mem.parallel_loop_access");
+  ScalarizeLoadStore =
+      M.getContext().getOption<bool, Scalarizer, &Scalarizer::ScalarizeLoadStore>();
   return false;
 }
 
 bool Scalarizer::runOnFunction(Function &F) {
   DataLayoutPass *DLP = getAnalysisIfAvailable<DataLayoutPass>();
-  DL = DLP ? &DLP->getDataLayout() : 0;
+  DL = DLP ? &DLP->getDataLayout() : nullptr;
   for (Function::iterator BBI = F.begin(), BBE = F.end(); BBI != BBE; ++BBI) {
     BasicBlock *BB = BBI;
     for (BasicBlock::iterator II = BB->begin(), IE = BB->end(); II != IE;) {
@@ -311,6 +319,8 @@ bool Scalarizer::canTransferMetadata(unsigned Tag) {
           || Tag == LLVMContext::MD_fpmath
           || Tag == LLVMContext::MD_tbaa_struct
           || Tag == LLVMContext::MD_invariant_load
+          || Tag == LLVMContext::MD_alias_scope
+          || Tag == LLVMContext::MD_noalias
           || Tag == ParallelLoopAccessMDKind);
 }
 
@@ -321,8 +331,10 @@ void Scalarizer::transferMetadata(Instruction *Op, const ValueVector &CV) {
   Op->getAllMetadataOtherThanDebugLoc(MDs);
   for (unsigned I = 0, E = CV.size(); I != E; ++I) {
     if (Instruction *New = dyn_cast<Instruction>(CV[I])) {
-      for (SmallVectorImpl<std::pair<unsigned, MDNode *> >::iterator
-             MI = MDs.begin(), ME = MDs.end(); MI != ME; ++MI)
+      for (SmallVectorImpl<std::pair<unsigned, MDNode *>>::iterator
+               MI = MDs.begin(),
+               ME = MDs.end();
+           MI != ME; ++MI)
         if (canTransferMetadata(MI->first))
           New->setMetadata(MI->first, MI->second);
       New->setDebugLoc(Op->getDebugLoc());

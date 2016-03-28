@@ -12,60 +12,36 @@
 //===----------------------------------------------------------------------===//
 
 
-#ifndef SYSTEMZTARGETMACHINE_H
-#define SYSTEMZTARGETMACHINE_H
+#ifndef LLVM_LIB_TARGET_SYSTEMZ_SYSTEMZTARGETMACHINE_H
+#define LLVM_LIB_TARGET_SYSTEMZ_SYSTEMZTARGETMACHINE_H
 
-#include "SystemZFrameLowering.h"
-#include "SystemZISelLowering.h"
-#include "SystemZInstrInfo.h"
-#include "SystemZRegisterInfo.h"
-#include "SystemZSelectionDAGInfo.h"
 #include "SystemZSubtarget.h"
-#include "llvm/IR/DataLayout.h"
-#include "llvm/Target/TargetFrameLowering.h"
 #include "llvm/Target/TargetMachine.h"
 
 namespace llvm {
 
+class TargetFrameLowering;
+
 class SystemZTargetMachine : public LLVMTargetMachine {
+  std::unique_ptr<TargetLoweringObjectFile> TLOF;
   SystemZSubtarget        Subtarget;
-  const DataLayout        DL;
-  SystemZInstrInfo        InstrInfo;
-  SystemZTargetLowering   TLInfo;
-  SystemZSelectionDAGInfo TSInfo;
-  SystemZFrameLowering    FrameLowering;
 
 public:
   SystemZTargetMachine(const Target &T, StringRef TT, StringRef CPU,
                        StringRef FS, const TargetOptions &Options,
                        Reloc::Model RM, CodeModel::Model CM,
                        CodeGenOpt::Level OL);
+  ~SystemZTargetMachine() override;
 
   // Override TargetMachine.
-  const TargetFrameLowering *getFrameLowering() const override {
-    return &FrameLowering;
-  }
-  const SystemZInstrInfo *getInstrInfo() const override {
-    return &InstrInfo;
-  }
   const SystemZSubtarget *getSubtargetImpl() const override {
     return &Subtarget;
   }
-  const DataLayout *getDataLayout() const override {
-    return &DL;
-  }
-  const SystemZRegisterInfo *getRegisterInfo() const override {
-    return &InstrInfo.getRegisterInfo();
-  }
-  const SystemZTargetLowering *getTargetLowering() const override {
-    return &TLInfo;
-  }
-  const TargetSelectionDAGInfo *getSelectionDAGInfo() const override {
-    return &TSInfo;
-  }
-
   // Override LLVMTargetMachine
   TargetPassConfig *createPassConfig(PassManagerBase &PM) override;
+  TargetLoweringObjectFile *getObjFileLowering() const override {
+    return TLOF.get();
+  }
 };
 
 } // end namespace llvm

@@ -21,8 +21,6 @@
 //
 //
 
-#define DEBUG_TYPE "mips-constant-islands"
-
 #include "Mips.h"
 #include "MCTargetDesc/MipsBaseInfo.h"
 #include "Mips16InstrInfo.h"
@@ -30,6 +28,7 @@
 #include "MipsTargetMachine.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
+#include "llvm/CodeGen/MachineConstantPool.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
@@ -46,6 +45,8 @@
 #include <algorithm>
 
 using namespace llvm;
+
+#define DEBUG_TYPE "mips-constant-islands"
 
 STATISTIC(NumCPEs,       "Number of constpool entries");
 STATISTIC(NumSplit,      "Number of uncond branches inserted");
@@ -343,7 +344,6 @@ namespace {
 
   const TargetMachine &TM;
   bool IsPIC;
-  unsigned ABI;
   const MipsSubtarget *STI;
   const Mips16InstrInfo *TII;
   MipsFunctionInfo *MFI;
@@ -365,17 +365,15 @@ namespace {
   public:
     static char ID;
     MipsConstantIslands(TargetMachine &tm)
-      : MachineFunctionPass(ID), TM(tm),
-        IsPIC(TM.getRelocationModel() == Reloc::PIC_),
-        ABI(TM.getSubtarget<MipsSubtarget>().getTargetABI()),
-        STI(&TM.getSubtarget<MipsSubtarget>()), MF(0), MCP(0),
-        PrescannedForConstants(false){}
+        : MachineFunctionPass(ID), TM(tm),
+          IsPIC(TM.getRelocationModel() == Reloc::PIC_), STI(nullptr),
+          MF(nullptr), MCP(nullptr), PrescannedForConstants(false) {}
 
-    virtual const char *getPassName() const {
+    const char *getPassName() const override {
       return "Mips Constant Islands";
     }
 
-    bool runOnMachineFunction(MachineFunction &F);
+    bool runOnMachineFunction(MachineFunction &F) override;
 
     void doInitialPlacement(std::vector<MachineInstr*> &CPEMIs);
     CPEntry *findConstPoolEntry(unsigned CPI, const MachineInstr *CPEMI);
@@ -384,15 +382,11 @@ namespace {
     unsigned getOffsetOf(MachineInstr *MI) const;
     unsigned getUserOffset(CPUser&) const;
     void dumpBBs();
-    void verify();
 
     bool isOffsetInRange(unsigned UserOffset, unsigned TrialOffset,
                          unsigned Disp, bool NegativeOK);
     bool isOffsetInRange(unsigned UserOffset, unsigned TrialOffset,
                          const CPUser &U);
-
-    bool isLongFormOffsetInRange(unsigned UserOffset, unsigned TrialOffset,
-                                const CPUser &U);
 
     void computeBlockSize(MachineBasicBlock *MBB);
     MachineBasicBlock *splitBlockBeforeInstr(MachineInstr *MI);
@@ -427,14 +421,6 @@ namespace {
   char MipsConstantIslands::ID = 0;
 } // end of anonymous namespace
 
-
-bool MipsConstantIslands::isLongFormOffsetInRange
-  (unsigned UserOffset, unsigned TrialOffset,
-   const CPUser &U) {
-  return isOffsetInRange(UserOffset, TrialOffset,
-                         U.getLongFormMaxDisp(), U.NegOk);
-}
-
 bool MipsConstantIslands::isOffsetInRange
   (unsigned UserOffset, unsigned TrialOffset,
    const CPUser &U) {
@@ -462,12 +448,14 @@ bool MipsConstantIslands::runOnMachineFunction(MachineFunction &mf) {
   // FIXME:
   MF = &mf;
   MCP = mf.getConstantPool();
+  STI = &mf.getTarget().getSubtarget<MipsSubtarget>();
   DEBUG(dbgs() << "constant island machine function " << "\n");
-  if (!TM.getSubtarget<MipsSubtarget>().inMips16Mode() ||
-      !MipsSubtarget::useConstantIslands()) {
+  if (!STI->inMips16Mode() || !MipsSubtarget::useConstantIslands()) {
     return false;
   }
-  TII = (const Mips16InstrInfo*)MF->getTarget().getInstrInfo();
+  TII = (const Mips16InstrInfo *)MF->getTarget()
+            .getSubtargetImpl()
+            ->getInstrInfo();
   MFI = MF->getInfo<MipsFunctionInfo>();
   DEBUG(dbgs() << "constant island processing " << "\n");
   //
@@ -574,7 +562,7 @@ MipsConstantIslands::doInitialPlacement(std::vector<MachineInstr*> &CPEMIs) {
   // identity mapping of CPI's to CPE's.
   const std::vector<MachineConstantPoolEntry> &CPs = MCP->getConstants();
 
-  const DataLayout &TD = *MF->getTarget().getDataLayout();
+  const DataLayout &TD = *MF->getSubtarget().getDataLayout();
   for (unsigned i = 0, e = CPs.size(); i != e; ++i) {
     unsigned Size = TD.getTypeAllocSize(CPs[i].getType());
     assert(Size >= 4 && "Too small constant pool entry");
@@ -600,9 +588,7 @@ MipsConstantIslands::doInitialPlacement(std::vector<MachineInstr*> &CPEMIs) {
       if (InsPoint[a] == InsAt)
         InsPoint[a] = CPEMI;
     // Add a new CPEntry, but no corresponding CPUser yet.
-    std::vector<CPEntry> CPEs;
-    CPEs.push_back(CPEntry(CPEMI, i));
-    CPEntries.push_back(CPEs);
+    CPEntries.emplace_back(1, CPEntry(CPEMI, i));
     ++NumCPEs;
     DEBUG(dbgs() << "Moved CPI#" << i << " to end of function, size = "
                  << Size << ", align = " << Align <<'\n');
@@ -640,7 +626,7 @@ MipsConstantIslands::CPEntry
     if (CPEs[i].CPEMI == CPEMI)
       return &CPEs[i];
   }
-  return NULL;
+  return nullptr;
 }
 
 /// getCPELogAlign - Returns the required alignment of the constant pool entry
@@ -1077,7 +1063,7 @@ bool MipsConstantIslands::decrementCPEReferenceCount(unsigned CPI,
   assert(CPE && "Unexpected!");
   if (--CPE->RefCount == 0) {
     removeDeadCPEMI(CPEMI);
-    CPE->CPEMI = NULL;
+    CPE->CPEMI = nullptr;
     --NumCPEs;
     return true;
   }
@@ -1110,7 +1096,7 @@ int MipsConstantIslands::findInRangeCPEntry(CPUser& U, unsigned UserOffset)
     if (CPEs[i].CPEMI == CPEMI)
       continue;
     // Removing CPEs can leave empty entries, skip
-    if (CPEs[i].CPEMI == NULL)
+    if (CPEs[i].CPEMI == nullptr)
       continue;
     if (isCPEntryInRange(UserMI, UserOffset, CPEs[i].CPEMI, U.getMaxDisp(),
                      U.NegOk)) {
@@ -1166,7 +1152,7 @@ int MipsConstantIslands::findLongFormInRangeCPEntry
     if (CPEs[i].CPEMI == CPEMI)
       continue;
     // Removing CPEs can leave empty entries, skip
-    if (CPEs[i].CPEMI == NULL)
+    if (CPEs[i].CPEMI == nullptr)
       continue;
     if (isCPEntryInRange(UserMI, UserOffset, CPEs[i].CPEMI,
                          U.getLongFormMaxDisp(), U.NegOk)) {
@@ -1498,7 +1484,7 @@ bool MipsConstantIslands::removeUnusedCPEntries() {
       for (unsigned j = 0, ee = CPEs.size(); j != ee; ++j) {
         if (CPEs[j].RefCount == 0 && CPEs[j].CPEMI) {
           removeDeadCPEMI(CPEs[j].CPEMI);
-          CPEs[j].CPEMI = NULL;
+          CPEs[j].CPEMI = nullptr;
           MadeChange = true;
         }
       }

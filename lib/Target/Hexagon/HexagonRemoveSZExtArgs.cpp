@@ -15,6 +15,7 @@
 #include "Hexagon.h"
 #include "HexagonTargetMachine.h"
 #include "llvm/CodeGen/MachineFunctionAnalysis.h"
+#include "llvm/CodeGen/StackProtector.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/Pass.h"
@@ -33,16 +34,16 @@ namespace {
     HexagonRemoveExtendArgs() : FunctionPass(ID) {
       initializeHexagonRemoveExtendArgsPass(*PassRegistry::getPassRegistry());
     }
-    virtual bool runOnFunction(Function &F);
+    bool runOnFunction(Function &F) override;
 
-    const char *getPassName() const {
+    const char *getPassName() const override {
       return "Remove sign extends";
     }
 
-    virtual void getAnalysisUsage(AnalysisUsage &AU) const {
+    void getAnalysisUsage(AnalysisUsage &AU) const override {
       AU.addRequired<MachineFunctionAnalysis>();
       AU.addPreserved<MachineFunctionAnalysis>();
-      AU.addPreserved("stack-protector");
+      AU.addPreserved<StackProtector>();
       FunctionPass::getAnalysisUsage(AU);
     }
   };

@@ -17,7 +17,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#define DEBUG_TYPE "sccp"
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
@@ -41,6 +40,8 @@
 #include "llvm/Transforms/Utils/Local.h"
 #include <algorithm>
 using namespace llvm;
+
+#define DEBUG_TYPE "sccp"
 
 STATISTIC(NumInstRemoved, "Number of instructions removed");
 STATISTIC(NumDeadBlocks , "Number of basic blocks unreachable");
@@ -81,7 +82,7 @@ class LatticeVal {
   }
 
 public:
-  LatticeVal() : Val(0, undefined) {}
+  LatticeVal() : Val(nullptr, undefined) {}
 
   bool isUndefined() const { return getLatticeValue() == undefined; }
   bool isConstant() const {
@@ -133,7 +134,7 @@ public:
   ConstantInt *getConstantInt() const {
     if (isConstant())
       return dyn_cast<ConstantInt>(getConstant());
-    return 0;
+    return nullptr;
   }
 
   void markForcedConstant(Constant *V) {
@@ -213,7 +214,8 @@ public:
   ///
   /// This returns true if the block was not considered live before.
   bool MarkBlockExecutable(BasicBlock *BB) {
-    if (!BBExecutable.insert(BB)) return false;
+    if (!BBExecutable.insert(BB).second)
+      return false;
     DEBUG(dbgs() << "Marking Block Executable: " << BB->getName() << '\n');
     BBWorkList.push_back(BB);  // Add the block to the work list!
     return true;
@@ -403,7 +405,7 @@ private:
     if (Constant *C = dyn_cast<Constant>(V)) {
       Constant *Elt = C->getAggregateElement(i);
 
-      if (Elt == 0)
+      if (!Elt)
         LV.markOverdefined();      // Unknown sort of constant.
       else if (isa<UndefValue>(Elt))
         ; // Undef values remain undefined.
@@ -491,10 +493,11 @@ private:
   }
   void visitCallSite      (CallSite CS);
   void visitResumeInst    (TerminatorInst &I) { /*returns void*/ }
-  void visitUnwindInst    (TerminatorInst &I) { /*returns void*/ }
   void visitUnreachableInst(TerminatorInst &I) { /*returns void*/ }
   void visitFenceInst     (FenceInst &I) { /*returns void*/ }
-  void visitAtomicCmpXchgInst (AtomicCmpXchgInst &I) { markOverdefined(&I); }
+  void visitAtomicCmpXchgInst(AtomicCmpXchgInst &I) {
+    markAnythingOverdefined(&I);
+  }
   void visitAtomicRMWInst (AtomicRMWInst &I) { markOverdefined(&I); }
   void visitAllocaInst    (Instruction &I) { markOverdefined(&I); }
   void visitVAArgInst     (Instruction &I) { markAnythingOverdefined(&I); }
@@ -523,7 +526,7 @@ void SCCPSolver::getFeasibleSuccessors(TerminatorInst &TI,
 
     LatticeVal BCValue = getValueState(BI->getCondition());
     ConstantInt *CI = BCValue.getConstantInt();
-    if (CI == 0) {
+    if (!CI) {
       // Overdefined condition variables, and branches on unfoldable constant
       // conditions, mean the branch could go either way.
       if (!BCValue.isUndefined())
@@ -550,7 +553,7 @@ void SCCPSolver::getFeasibleSuccessors(TerminatorInst &TI,
     LatticeVal SCValue = getValueState(SI->getCondition());
     ConstantInt *CI = SCValue.getConstantInt();
 
-    if (CI == 0) {   // Overdefined or undefined condition?
+    if (!CI) {   // Overdefined or undefined condition?
       // All destinations are executable!
       if (!SCValue.isUndefined())
         Succs.assign(TI.getNumSuccessors(), true);
@@ -595,7 +598,7 @@ bool SCCPSolver::isEdgeFeasible(BasicBlock *From, BasicBlock *To) {
     // Overdefined condition variables mean the branch could go either way,
     // undef conditions mean that neither edge is feasible yet.
     ConstantInt *CI = BCValue.getConstantInt();
-    if (CI == 0)
+    if (!CI)
       return !BCValue.isUndefined();
 
     // Constant condition variables mean the branch can only go a single way.
@@ -613,7 +616,7 @@ bool SCCPSolver::isEdgeFeasible(BasicBlock *From, BasicBlock *To) {
     LatticeVal SCValue = getValueState(SI->getCondition());
     ConstantInt *CI = SCValue.getConstantInt();
 
-    if (CI == 0)
+    if (!CI)
       return !SCValue.isUndefined();
 
     return SI->findCaseValue(CI).getCaseSuccessor() == To;
@@ -627,7 +630,7 @@ bool SCCPSolver::isEdgeFeasible(BasicBlock *From, BasicBlock *To) {
 #ifndef NDEBUG
   dbgs() << "Unknown terminator instruction: " << *TI << '\n';
 #endif
-  llvm_unreachable(0);
+  llvm_unreachable(nullptr);
 }
 
 // visit Implementations - Something changed in this instruction, either an
@@ -668,7 +671,7 @@ void SCCPSolver::visitPHINode(PHINode &PN) {
   // constant.  If they are constant and don't agree, the PHI is overdefined.
   // If there are no executable operands, the PHI remains undefined.
   //
-  Constant *OperandVal = 0;
+  Constant *OperandVal = nullptr;
   for (unsigned i = 0, e = PN.getNumIncomingValues(); i != e; ++i) {
     LatticeVal IV = getValueState(PN.getIncomingValue(i));
     if (IV.isUndefined()) continue;  // Doesn't influence PHI node.
@@ -679,7 +682,7 @@ void SCCPSolver::visitPHINode(PHINode &PN) {
     if (IV.isOverdefined())    // PHI node becomes overdefined!
       return markOverdefined(&PN);
 
-    if (OperandVal == 0) {   // Grab the first value.
+    if (!OperandVal) {   // Grab the first value.
       OperandVal = IV.getConstant();
       continue;
     }
@@ -775,7 +778,7 @@ void SCCPSolver::visitExtractValueInst(ExtractValueInst &EVI) {
 
 void SCCPSolver::visitInsertValueInst(InsertValueInst &IVI) {
   StructType *STy = dyn_cast<StructType>(IVI.getType());
-  if (STy == 0)
+  if (!STy)
     return markOverdefined(&IVI);
 
   // If this has more than one index, we can't handle it, drive all results to
@@ -863,7 +866,7 @@ void SCCPSolver::visitBinaryOperator(Instruction &I) {
   // If this is an AND or OR with 0 or -1, it doesn't matter that the other
   // operand is overdefined.
   if (I.getOpcode() == Instruction::And || I.getOpcode() == Instruction::Or) {
-    LatticeVal *NonOverdefVal = 0;
+    LatticeVal *NonOverdefVal = nullptr;
     if (!V1State.isOverdefined())
       NonOverdefVal = &V1State;
     else if (!V2State.isOverdefined())
@@ -1008,7 +1011,7 @@ void SCCPSolver::visitGetElementPtrInst(GetElementPtrInst &I) {
   }
 
   Constant *Ptr = Operands[0];
-  ArrayRef<Constant *> Indices(Operands.begin() + 1, Operands.end());
+  auto Indices = makeArrayRef(Operands.begin() + 1, Operands.end());
   markConstant(&I, ConstantExpr::getGetElementPtr(Ptr, Indices));
 }
 
@@ -1082,7 +1085,7 @@ void SCCPSolver::visitCallSite(CallSite CS) {
   // The common case is that we aren't tracking the callee, either because we
   // are not doing interprocedural analysis or the callee is indirect, or is
   // external.  Handle these cases first.
-  if (F == 0 || F->isDeclaration()) {
+  if (!F || F->isDeclaration()) {
 CallOverdefined:
     // Void return and not tracking callee, just bail.
     if (I->getType()->isVoidTy()) return;
@@ -1104,6 +1107,9 @@ CallOverdefined:
         assert(State.isConstant() && "Unknown state!");
         Operands.push_back(State.getConstant());
       }
+
+      if (getValueState(I).isOverdefined())
+        return;
 
       // If we can constant fold this, mark the result of the call as a
       // constant.
@@ -1556,7 +1562,7 @@ bool SCCP::runOnFunction(Function &F) {
 
   DEBUG(dbgs() << "SCCP on function '" << F.getName() << "'\n");
   const DataLayoutPass *DLP = getAnalysisIfAvailable<DataLayoutPass>();
-  const DataLayout *DL = DLP ? &DLP->getDataLayout() : 0;
+  const DataLayout *DL = DLP ? &DLP->getDataLayout() : nullptr;
   const TargetLibraryInfo *TLI = &getAnalysis<TargetLibraryInfo>();
   SCCPSolver Solver(DL, TLI);
 
@@ -1685,7 +1691,7 @@ static bool AddressIsTaken(const GlobalValue *GV) {
 
 bool IPSCCP::runOnModule(Module &M) {
   DataLayoutPass *DLP = getAnalysisIfAvailable<DataLayoutPass>();
-  const DataLayout *DL = DLP ? &DLP->getDataLayout() : 0;
+  const DataLayout *DL = DLP ? &DLP->getDataLayout() : nullptr;
   const TargetLibraryInfo *TLI = &getAnalysis<TargetLibraryInfo>();
   SCCPSolver Solver(DL, TLI);
 

@@ -69,7 +69,7 @@ public:
   }
 
   TinyPtrVector(TinyPtrVector &&RHS) : Val(RHS.Val) {
-    RHS.Val = (EltTy)0;
+    RHS.Val = (EltTy)nullptr;
   }
   TinyPtrVector &operator=(TinyPtrVector &&RHS) {
     if (this == &RHS)
@@ -92,14 +92,21 @@ public:
     }
 
     Val = RHS.Val;
-    RHS.Val = (EltTy)0;
+    RHS.Val = (EltTy)nullptr;
     return *this;
   }
+
+  /// Constructor from a single element.
+  explicit TinyPtrVector(EltTy Elt) : Val(Elt) {}
+
+  /// Constructor from an ArrayRef.
+  explicit TinyPtrVector(ArrayRef<EltTy> Elts)
+      : Val(new VecTy(Elts.begin(), Elts.end())) {}
 
   // implicit conversion operator to ArrayRef.
   operator ArrayRef<EltTy>() const {
     if (Val.isNull())
-      return ArrayRef<EltTy>();
+      return None;
     if (Val.template is<EltTy>())
       return *Val.getAddrOfPtr1();
     return *Val.template get<VecTy*>();
@@ -174,7 +181,7 @@ public:
   }
 
   void push_back(EltTy NewVal) {
-    assert(NewVal != 0 && "Can't add a null value");
+    assert(NewVal && "Can't add a null value");
 
     // If we have nothing, add something.
     if (Val.isNull()) {
@@ -195,7 +202,7 @@ public:
   void pop_back() {
     // If we have a single value, convert to empty.
     if (Val.template is<EltTy>())
-      Val = (EltTy)0;
+      Val = (EltTy)nullptr;
     else if (VecTy *Vec = Val.template get<VecTy*>())
       Vec->pop_back();
   }
@@ -203,7 +210,7 @@ public:
   void clear() {
     // If we have a single value, convert to empty.
     if (Val.template is<EltTy>()) {
-      Val = (EltTy)0;
+      Val = (EltTy)nullptr;
     } else if (VecTy *Vec = Val.template dyn_cast<VecTy*>()) {
       // If we have a vector form, just clear it.
       Vec->clear();
@@ -218,7 +225,7 @@ public:
     // If we have a single value, convert to empty.
     if (Val.template is<EltTy>()) {
       if (I == begin())
-        Val = (EltTy)0;
+        Val = (EltTy)nullptr;
     } else if (VecTy *Vec = Val.template dyn_cast<VecTy*>()) {
       // multiple items in a vector; just do the erase, there is no
       // benefit to collapsing back to a pointer
@@ -234,7 +241,7 @@ public:
 
     if (Val.template is<EltTy>()) {
       if (S == begin() && S != E)
-        Val = (EltTy)0;
+        Val = (EltTy)nullptr;
     } else if (VecTy *Vec = Val.template dyn_cast<VecTy*>()) {
       return Vec->erase(S, E);
     }

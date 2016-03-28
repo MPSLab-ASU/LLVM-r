@@ -20,7 +20,7 @@
 #include "llvm/Support/ManagedStatic.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/Support/system_error.h"
+#include <system_error>
 using namespace llvm;
 using namespace llvm::object;
 
@@ -300,12 +300,12 @@ DumpDataInCodeDataCommand(const MachOObjectFile &Obj,
 static int
 DumpLinkerOptionsCommand(const MachOObjectFile &Obj,
                          const MachOObjectFile::LoadCommandInfo &LCI) {
-  MachO::linker_options_command LOLC = Obj.getLinkerOptionsLoadCommand(LCI);
+  MachO::linker_option_command LOLC = Obj.getLinkerOptionLoadCommand(LCI);
   outs() << "  ('count', " << LOLC.count << ")\n"
          << "  ('_strings', [\n";
 
-  uint64_t DataSize = LOLC.cmdsize - sizeof(MachO::linker_options_command);
-  const char *P = LCI.Ptr + sizeof(MachO::linker_options_command);
+  uint64_t DataSize = LOLC.cmdsize - sizeof(MachO::linker_option_command);
+  const char *P = LCI.Ptr + sizeof(MachO::linker_option_command);
   StringRef Data(P, DataSize);
   for (unsigned i = 0; i != LOLC.count; ++i) {
     std::pair<StringRef,StringRef> Split = Data.split('\0');
@@ -324,7 +324,18 @@ DumpVersionMin(const MachOObjectFile &Obj,
                const MachOObjectFile::LoadCommandInfo &LCI) {
   MachO::version_min_command VMLC = Obj.getVersionMinLoadCommand(LCI);
   outs() << "  ('version, " << VMLC.version << ")\n"
-         << "  ('reserved, " << VMLC.reserved << ")\n";
+         << "  ('sdk, " << VMLC.sdk << ")\n";
+  return 0;
+}
+
+static int
+DumpDylibID(const MachOObjectFile &Obj,
+            const MachOObjectFile::LoadCommandInfo &LCI) {
+  MachO::dylib_command DLLC = Obj.getDylibIDLoadCommand(LCI);
+  outs() << "  ('install_name', '" << LCI.Ptr + DLLC.dylib.name << "')\n"
+         << "  ('timestamp, " << DLLC.dylib.timestamp << ")\n"
+         << "  ('cur_version, " << DLLC.dylib.current_version << ")\n"
+         << "  ('compat_version, " << DLLC.dylib.compatibility_version << ")\n";
   return 0;
 }
 
@@ -345,11 +356,13 @@ static int DumpLoadCommand(const MachOObjectFile &Obj,
     return DumpLinkeditDataCommand(Obj, LCI);
   case MachO::LC_DATA_IN_CODE:
     return DumpDataInCodeDataCommand(Obj, LCI);
-  case MachO::LC_LINKER_OPTIONS:
+  case MachO::LC_LINKER_OPTION:
     return DumpLinkerOptionsCommand(Obj, LCI);
   case MachO::LC_VERSION_MIN_IPHONEOS:
   case MachO::LC_VERSION_MIN_MACOSX:
     return DumpVersionMin(Obj, LCI);
+  case MachO::LC_ID_DYLIB:
+    return DumpDylibID(Obj, LCI);
   default:
     Warning("unknown load command: " + Twine(LCI.C.cmd));
     return 0;
@@ -390,12 +403,12 @@ int main(int argc, char **argv) {
 
   cl::ParseCommandLineOptions(argc, argv, "llvm Mach-O dumping tool\n");
 
-  ErrorOr<Binary *> BinaryOrErr = createBinary(InputFile);
-  if (error_code EC = BinaryOrErr.getError())
+  ErrorOr<OwningBinary<Binary>> BinaryOrErr = createBinary(InputFile);
+  if (std::error_code EC = BinaryOrErr.getError())
     return Error("unable to read input: '" + EC.message() + "'");
-  std::unique_ptr<Binary> Binary(BinaryOrErr.get());
+  Binary &Binary = *BinaryOrErr.get().getBinary();
 
-  const MachOObjectFile *InputObject = dyn_cast<MachOObjectFile>(Binary.get());
+  const MachOObjectFile *InputObject = dyn_cast<MachOObjectFile>(&Binary);
   if (!InputObject)
     return Error("Not a MachO object");
 

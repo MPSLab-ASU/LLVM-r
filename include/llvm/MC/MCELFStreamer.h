@@ -41,14 +41,21 @@ public:
 
   virtual ~MCELFStreamer();
 
+  /// state management
+  void reset() override {
+    LocalCommons.clear();
+    BindingExplicitlySet.clear();
+    SeenIdent = false;
+    MCObjectStreamer::reset();
+  }
+
   /// @name MCStreamer Interface
   /// @{
 
-  void InitSections() override;
+  void InitSections(bool NoExecStack) override;
   void ChangeSection(const MCSection *Section,
                      const MCExpr *Subsection) override;
   void EmitLabel(MCSymbol *Symbol) override;
-  void EmitDebugLabel(MCSymbol *Symbol) override;
   void EmitAssemblerFlag(MCAssemblerFlag Flag) override;
   void EmitThumbFunc(MCSymbol *Func) override;
   void EmitWeakReference(MCSymbol *Alias, const MCSymbol *Symbol) override;
@@ -61,18 +68,17 @@ public:
   void EmitCOFFSymbolType(int Type) override;
   void EndCOFFSymbolDef() override;
 
-  MCSymbolData &getOrCreateSymbolData(const MCSymbol *Symbol) override;
-
   void EmitELFSize(MCSymbol *Symbol, const MCExpr *Value) override;
 
   void EmitLocalCommonSymbol(MCSymbol *Symbol, uint64_t Size,
                              unsigned ByteAlignment) override;
 
-  void EmitZerofill(const MCSection *Section, MCSymbol *Symbol = 0,
+  void EmitZerofill(const MCSection *Section, MCSymbol *Symbol = nullptr,
                     uint64_t Size = 0, unsigned ByteAlignment = 0) override;
   void EmitTBSSSymbol(const MCSection *Section, MCSymbol *Symbol,
                       uint64_t Size, unsigned ByteAlignment = 0) override;
-  void EmitValueImpl(const MCExpr *Value, unsigned Size) override;
+  void EmitValueImpl(const MCExpr *Value, unsigned Size,
+                     const SMLoc &Loc = SMLoc()) override;
 
   void EmitFileDirective(StringRef Filename) override;
 
@@ -109,8 +115,7 @@ private:
 
 MCELFStreamer *createARMELFStreamer(MCContext &Context, MCAsmBackend &TAB,
                                     raw_ostream &OS, MCCodeEmitter *Emitter,
-                                    bool RelaxAll, bool NoExecStack,
-                                    bool IsThumb);
+                                    bool RelaxAll, bool IsThumb);
 
 } // end namespace llvm
 

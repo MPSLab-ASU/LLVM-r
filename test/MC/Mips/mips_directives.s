@@ -51,7 +51,7 @@ $BB0_4:
     .set  $tmp7, $BB0_4-$BB0_2
     .set f6,$f6
 # CHECK:    abs.s   $f6, $f7           # encoding: [0x46,0x00,0x39,0x85]
-# CHECK:    lui     $1, %hi($tmp7)     # encoding: [0x3c'A',0x01'A',0x00,0x00]
+# CHECK:    lui     $1, %hi($tmp7)     # encoding: [0x3c,0x01,A,A]
 # CHECK:                               #   fixup A - offset: 0, value: ($tmp7)@ABS_HI, kind: fixup_Mips_HI16
     abs.s  f6,FPU_MASK
     lui $1, %hi($tmp7)
@@ -64,6 +64,16 @@ $BB0_4:
     ldxc1   $f0, $zero($5)
     luxc1   $f0, $6($5)
     lwxc1   $f6, $2($5)
+
+# CHECK: .set mips64
+# CHECK: dadd $3, $3, $3
+    .set mips64
+    dadd   $3, $3, $3                  # encoding: [0x00,0x62,0x18,0x2c]
+
+# CHECK: .set mips64r2
+# CHECK: drotr $9, $6, 30              # encoding: [0x00,0x26,0x4f,0xba]
+    .set mips64r2
+    drotr   $9, $6, 30
 
 # CHECK:   .set dsp
 # CHECK:   lbux    $7, $10($11)         # encoding: [0x7d,0x6a,0x39,0x8a]

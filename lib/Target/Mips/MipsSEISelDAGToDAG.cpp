@@ -11,7 +11,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#define DEBUG_TYPE "mips-isel"
 #include "MipsSEISelDAGToDAG.h"
 #include "MCTargetDesc/MipsBaseInfo.h"
 #include "Mips.h"
@@ -35,8 +34,11 @@
 #include "llvm/Target/TargetMachine.h"
 using namespace llvm;
 
+#define DEBUG_TYPE "mips-isel"
+
 bool MipsSEDAGToDAGISel::runOnMachineFunction(MachineFunction &MF) {
-  if (Subtarget.inMips16Mode())
+  Subtarget = &TM.getSubtarget<MipsSubtarget>();
+  if (Subtarget->inMips16Mode())
     return false;
   return MipsDAGToDAGISel::runOnMachineFunction(MF);
 }
@@ -128,20 +130,17 @@ void MipsSEDAGToDAGISel::initGlobalBaseReg(MachineFunction &MF) {
   MachineBasicBlock &MBB = MF.front();
   MachineBasicBlock::iterator I = MBB.begin();
   MachineRegisterInfo &RegInfo = MF.getRegInfo();
-  const TargetInstrInfo &TII = *MF.getTarget().getInstrInfo();
+  const TargetInstrInfo &TII = *MF.getSubtarget().getInstrInfo();
   DebugLoc DL = I != MBB.end() ? I->getDebugLoc() : DebugLoc();
   unsigned V0, V1, GlobalBaseReg = MipsFI->getGlobalBaseReg();
   const TargetRegisterClass *RC;
 
-  if (Subtarget.isABI_N64())
-    RC = (const TargetRegisterClass*)&Mips::GPR64RegClass;
-  else
-    RC = (const TargetRegisterClass*)&Mips::GPR32RegClass;
+  RC = (Subtarget->isABI_N64()) ? &Mips::GPR64RegClass : &Mips::GPR32RegClass;
 
   V0 = RegInfo.createVirtualRegister(RC);
   V1 = RegInfo.createVirtualRegister(RC);
 
-  if (Subtarget.isABI_N64()) {
+  if (Subtarget->isABI_N64()) {
     MF.getRegInfo().addLiveIn(Mips::T9_64);
     MBB.addLiveIn(Mips::T9_64);
 
@@ -173,7 +172,7 @@ void MipsSEDAGToDAGISel::initGlobalBaseReg(MachineFunction &MF) {
   MF.getRegInfo().addLiveIn(Mips::T9);
   MBB.addLiveIn(Mips::T9);
 
-  if (Subtarget.isABI_N32()) {
+  if (Subtarget->isABI_N32()) {
     // lui $v0, %hi(%neg(%gp_rel(fname)))
     // addu $v1, $v0, $t9
     // addiu $globalbasereg, $v1, %lo(%neg(%gp_rel(fname)))
@@ -186,7 +185,7 @@ void MipsSEDAGToDAGISel::initGlobalBaseReg(MachineFunction &MF) {
     return;
   }
 
-  assert(Subtarget.isABI_O32());
+  assert(Subtarget->isABI_O32());
 
   // For O32 ABI, the following instruction sequence is emitted to initialize
   // the global base register:
@@ -237,13 +236,35 @@ SDNode *MipsSEDAGToDAGISel::selectAddESubE(unsigned MOp, SDValue InFlag,
           (Opc == ISD::SUBC || Opc == ISD::SUBE)) &&
          "(ADD|SUB)E flag operand must come from (ADD|SUB)C/E insn");
 
+  unsigned SLTuOp = Mips::SLTu, ADDuOp = Mips::ADDu;
+  if (Subtarget->isGP64bit()) {
+    SLTuOp = Mips::SLTu64;
+    ADDuOp = Mips::DADDu;
+  }
+
   SDValue Ops[] = { CmpLHS, InFlag.getOperand(1) };
   SDValue LHS = Node->getOperand(0), RHS = Node->getOperand(1);
   EVT VT = LHS.getValueType();
 
-  SDNode *Carry = CurDAG->getMachineNode(Mips::SLTu, DL, VT, Ops);
-  SDNode *AddCarry = CurDAG->getMachineNode(Mips::ADDu, DL, VT,
-                                            SDValue(Carry, 0), RHS);
+  SDNode *Carry = CurDAG->getMachineNode(SLTuOp, DL, VT, Ops);
+
+  if (Subtarget->isGP64bit()) {
+    // On 64-bit targets, sltu produces an i64 but our backend currently says
+    // that SLTu64 produces an i32. We need to fix this in the long run but for
+    // now, just make the DAG type-correct by asserting the upper bits are zero.
+    Carry = CurDAG->getMachineNode(Mips::SUBREG_TO_REG, DL, VT,
+                                   CurDAG->getTargetConstant(0, VT),
+                                   SDValue(Carry, 0),
+                                   CurDAG->getTargetConstant(Mips::sub_32, VT));
+  }
+
+  // Generate a second addition only if we know that RHS is not a
+  // constant-zero node.
+  SDNode *AddCarry = Carry;
+  ConstantSDNode *C = dyn_cast<ConstantSDNode>(RHS);
+  if (!C || C->getZExtValue())
+    AddCarry = CurDAG->getMachineNode(ADDuOp, DL, VT, SDValue(Carry, 0), RHS);
+
   return CurDAG->SelectNodeTo(Node, MOp, VT, MVT::Glue, LHS,
                               SDValue(AddCarry, 0));
 }
@@ -407,12 +428,12 @@ bool MipsSEDAGToDAGISel::selectIntAddrMSA(SDValue Addr, SDValue &Base,
 // * MSA is enabled
 // * N is a ISD::BUILD_VECTOR representing a constant splat
 bool MipsSEDAGToDAGISel::selectVSplat(SDNode *N, APInt &Imm) const {
-  if (!Subtarget.hasMSA())
+  if (!Subtarget->hasMSA())
     return false;
 
   BuildVectorSDNode *Node = dyn_cast<BuildVectorSDNode>(N);
 
-  if (Node == NULL)
+  if (!Node)
     return false;
 
   APInt SplatValue, SplatUndef;
@@ -421,7 +442,7 @@ bool MipsSEDAGToDAGISel::selectVSplat(SDNode *N, APInt &Imm) const {
 
   if (!Node->isConstantSplat(SplatValue, SplatUndef, SplatBitSize,
                              HasAnyUndefs, 8,
-                             !Subtarget.isLittle()))
+                             !Subtarget->isLittle()))
     return false;
 
   Imm = SplatValue;
@@ -642,26 +663,28 @@ std::pair<bool, SDNode*> MipsSEDAGToDAGISel::selectNode(SDNode *Node) {
 
   case ISD::SUBE: {
     SDValue InFlag = Node->getOperand(2);
-    Result = selectAddESubE(Mips::SUBu, InFlag, InFlag.getOperand(0), DL, Node);
+    unsigned Opc = Subtarget->isGP64bit() ? Mips::DSUBu : Mips::SUBu;
+    Result = selectAddESubE(Opc, InFlag, InFlag.getOperand(0), DL, Node);
     return std::make_pair(true, Result);
   }
 
   case ISD::ADDE: {
-    if (Subtarget.hasDSP()) // Select DSP instructions, ADDSC and ADDWC.
+    if (Subtarget->hasDSP()) // Select DSP instructions, ADDSC and ADDWC.
       break;
     SDValue InFlag = Node->getOperand(2);
-    Result = selectAddESubE(Mips::ADDu, InFlag, InFlag.getValue(0), DL, Node);
+    unsigned Opc = Subtarget->isGP64bit() ? Mips::DADDu : Mips::ADDu;
+    Result = selectAddESubE(Opc, InFlag, InFlag.getValue(0), DL, Node);
     return std::make_pair(true, Result);
   }
 
   case ISD::ConstantFP: {
     ConstantFPSDNode *CN = dyn_cast<ConstantFPSDNode>(Node);
     if (Node->getValueType(0) == MVT::f64 && CN->isExactlyValue(+0.0)) {
-      if (Subtarget.hasMips64()) {
+      if (Subtarget->isGP64bit()) {
         SDValue Zero = CurDAG->getCopyFromReg(CurDAG->getEntryNode(), DL,
                                               Mips::ZERO_64, MVT::i64);
         Result = CurDAG->getMachineNode(Mips::DMTC1, DL, MVT::f64, Zero);
-      } else if (Subtarget.isFP64bit()) {
+      } else if (Subtarget->isFP64bit()) {
         SDValue Zero = CurDAG->getCopyFromReg(CurDAG->getEntryNode(), DL,
                                               Mips::ZERO, MVT::i32);
         Result = CurDAG->getMachineNode(Mips::BuildPairF64_64, DL, MVT::f64,
@@ -812,17 +835,17 @@ std::pair<bool, SDNode*> MipsSEDAGToDAGISel::selectNode(SDNode *Node) {
     EVT ResVecTy = BVN->getValueType(0);
     EVT ViaVecTy;
 
-    if (!Subtarget.hasMSA() || !BVN->getValueType(0).is128BitVector())
-      return std::make_pair(false, (SDNode*)NULL);
+    if (!Subtarget->hasMSA() || !BVN->getValueType(0).is128BitVector())
+      return std::make_pair(false, nullptr);
 
     if (!BVN->isConstantSplat(SplatValue, SplatUndef, SplatBitSize,
                               HasAnyUndefs, 8,
-                              !Subtarget.isLittle()))
-      return std::make_pair(false, (SDNode*)NULL);
+                              !Subtarget->isLittle()))
+      return std::make_pair(false, nullptr);
 
     switch (SplatBitSize) {
     default:
-      return std::make_pair(false, (SDNode*)NULL);
+      return std::make_pair(false, nullptr);
     case 8:
       LdiOp = Mips::LDI_B;
       ViaVecTy = MVT::v16i8;
@@ -842,7 +865,7 @@ std::pair<bool, SDNode*> MipsSEDAGToDAGISel::selectNode(SDNode *Node) {
     }
 
     if (!SplatValue.isSignedIntN(10))
-      return std::make_pair(false, (SDNode*)NULL);
+      return std::make_pair(false, nullptr);
 
     SDValue Imm = CurDAG->getTargetConstant(SplatValue,
                                             ViaVecTy.getVectorElementType());
@@ -868,7 +891,7 @@ std::pair<bool, SDNode*> MipsSEDAGToDAGISel::selectNode(SDNode *Node) {
 
   }
 
-  return std::make_pair(false, (SDNode*)NULL);
+  return std::make_pair(false, nullptr);
 }
 
 FunctionPass *llvm::createMipsSEISelDag(MipsTargetMachine &TM) {

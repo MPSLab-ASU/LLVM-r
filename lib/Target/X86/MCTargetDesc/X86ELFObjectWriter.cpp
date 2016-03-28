@@ -25,8 +25,7 @@ namespace {
     virtual ~X86ELFObjectWriter();
   protected:
     unsigned GetRelocType(const MCValue &Target, const MCFixup &Fixup,
-                          bool IsPCRel, bool IsRelocWithSymbol,
-                          int64_t Addend) const override;
+                          bool IsPCRel) const override;
   };
 }
 
@@ -41,12 +40,10 @@ X86ELFObjectWriter::~X86ELFObjectWriter()
 
 unsigned X86ELFObjectWriter::GetRelocType(const MCValue &Target,
                                           const MCFixup &Fixup,
-                                          bool IsPCRel,
-                                          bool IsRelocWithSymbol,
-                                          int64_t Addend) const {
+                                          bool IsPCRel) const {
   // determine the type of the relocation
 
-  MCSymbolRefExpr::VariantKind Modifier = Fixup.getAccessVariant();
+  MCSymbolRefExpr::VariantKind Modifier = Target.getAccessVariant();
   unsigned Type;
   if (getEMachine() == ELF::EM_X86_64) {
     if (IsPCRel) {
@@ -80,7 +77,7 @@ unsigned X86ELFObjectWriter::GetRelocType(const MCValue &Target,
           break;
         case MCSymbolRefExpr::VK_GOTTPOFF:
           Type = ELF::R_X86_64_GOTTPOFF;
-        break;
+          break;
         case MCSymbolRefExpr::VK_TLSGD:
           Type = ELF::R_X86_64_TLSGD;
           break;
@@ -101,6 +98,12 @@ unsigned X86ELFObjectWriter::GetRelocType(const MCValue &Target,
     } else {
       switch ((unsigned)Fixup.getKind()) {
       default: llvm_unreachable("invalid fixup kind!");
+      case X86::reloc_global_offset_table8:
+        Type = ELF::R_X86_64_GOTPC64;
+        break;
+      case X86::reloc_global_offset_table:
+        Type = ELF::R_X86_64_GOTPC32;
+        break;
       case FK_Data_8:
         switch (Modifier) {
         default:
@@ -218,6 +221,9 @@ unsigned X86ELFObjectWriter::GetRelocType(const MCValue &Target,
           break;
         case MCSymbolRefExpr::VK_GOT:
           Type = ELF::R_386_GOT32;
+          break;
+        case MCSymbolRefExpr::VK_PLT:
+          Type = ELF::R_386_PLT32;
           break;
         case MCSymbolRefExpr::VK_GOTOFF:
           Type = ELF::R_386_GOTOFF;

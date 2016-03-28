@@ -11,13 +11,11 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef ARMINSTRUCTIONINFO_H
-#define ARMINSTRUCTIONINFO_H
+#ifndef LLVM_LIB_TARGET_ARM_ARMINSTRINFO_H
+#define LLVM_LIB_TARGET_ARM_ARMINSTRINFO_H
 
-#include "ARM.h"
 #include "ARMBaseInstrInfo.h"
 #include "ARMRegisterInfo.h"
-#include "ARMSubtarget.h"
 
 namespace llvm {
   class ARMSubtarget;
@@ -39,6 +37,10 @@ public:
   /// always be able to get register info as well (through this method).
   ///
   const ARMRegisterInfo &getRegisterInfo() const override { return RI; }
+
+private:
+  void expandLoadStackGuard(MachineBasicBlock::iterator MI,
+                            Reloc::Model RM) const override;
 };
 
 }

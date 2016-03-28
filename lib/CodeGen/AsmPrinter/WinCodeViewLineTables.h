@@ -11,8 +11,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef CODEGEN_ASMPRINTER_WINCODEVIEWLINETABLES_H__
-#define CODEGEN_ASMPRINTER_WINCODEVIEWLINETABLES_H__
+#ifndef LLVM_LIB_CODEGEN_ASMPRINTER_WINCODEVIEWLINETABLES_H
+#define LLVM_LIB_CODEGEN_ASMPRINTER_WINCODEVIEWLINETABLES_H
 
 #include "AsmPrinterHandler.h"
 #include "llvm/ADT/DenseMap.h"
@@ -32,13 +32,13 @@ namespace llvm {
 class WinCodeViewLineTables : public AsmPrinterHandler {
   AsmPrinter *Asm;
   DebugLoc PrevInstLoc;
-  LexicalScopes LScopes;
 
   // For each function, store a vector of labels to its instructions, as well as
   // to the end of the function.
   struct FunctionInfo {
     SmallVector<MCSymbol *, 10> Instrs;
     MCSymbol *End;
+    FunctionInfo() : End(nullptr) {}
   } *CurFn;
 
   typedef DenseMap<const Function *, FunctionInfo> FnDebugInfoTy;
@@ -104,7 +104,7 @@ class WinCodeViewLineTables : public AsmPrinterHandler {
   void maybeRecordLocation(DebugLoc DL, const MachineFunction *MF);
 
   void clear() {
-    assert(CurFn == 0);
+    assert(CurFn == nullptr);
     FileNameRegistry.clear();
     InstrInfo.clear();
   }

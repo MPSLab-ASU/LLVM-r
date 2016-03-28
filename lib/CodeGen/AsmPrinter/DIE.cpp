@@ -11,13 +11,15 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "DIE.h"
+#include "llvm/CodeGen/DIE.h"
+#include "DwarfCompileUnit.h"
 #include "DwarfDebug.h"
 #include "DwarfUnit.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/CodeGen/AsmPrinter.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/MC/MCAsmInfo.h"
+#include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCStreamer.h"
 #include "llvm/MC/MCSymbol.h"
 #include "llvm/Support/Debug.h"
@@ -104,15 +106,6 @@ void DIEAbbrev::print(raw_ostream &O) {
 void DIEAbbrev::dump() { print(dbgs()); }
 #endif
 
-//===----------------------------------------------------------------------===//
-// DIE Implementation
-//===----------------------------------------------------------------------===//
-
-DIE::~DIE() {
-  for (unsigned i = 0, N = Children.size(); i < N; ++i)
-    delete Children[i];
-}
-
 /// Climb up the parent chain to get the unit DIE to which this DIE
 /// belongs.
 const DIE *DIE::getUnit() const {
@@ -131,7 +124,7 @@ const DIE *DIE::getUnitOrNull() const {
       return p;
     p = p->getParent();
   }
-  return NULL;
+  return nullptr;
 }
 
 DIEValue *DIE::findAttribute(dwarf::Attribute Attribute) const {
@@ -143,7 +136,7 @@ DIEValue *DIE::findAttribute(dwarf::Attribute Attribute) const {
   for (size_t i = 0; i < Values.size(); ++i)
     if (Abbrevs.getData()[i].getAttribute() == Attribute)
       return Values[i];
-  return NULL;
+  return nullptr;
 }
 
 #ifndef NDEBUG
@@ -379,29 +372,52 @@ void DIEString::print(raw_ostream &O) const {
 // DIEEntry Implementation
 //===----------------------------------------------------------------------===//
 
+/// Emit something like ".long Hi+Offset-Lo" where the size in bytes of the
+/// directive is specified by Size and Hi/Lo specify the labels.
+static void emitLabelOffsetDifference(MCStreamer &Streamer, const MCSymbol *Hi,
+                                      uint64_t Offset, const MCSymbol *Lo,
+                                      unsigned Size) {
+  MCContext &Context = Streamer.getContext();
+
+  // Emit Hi+Offset - Lo
+  // Get the Hi+Offset expression.
+  const MCExpr *Plus =
+      MCBinaryExpr::CreateAdd(MCSymbolRefExpr::Create(Hi, Context),
+                              MCConstantExpr::Create(Offset, Context), Context);
+
+  // Get the Hi+Offset-Lo expression.
+  const MCExpr *Diff = MCBinaryExpr::CreateSub(
+      Plus, MCSymbolRefExpr::Create(Lo, Context), Context);
+
+  // Otherwise, emit with .set (aka assignment).
+  MCSymbol *SetLabel = Context.CreateTempSymbol();
+  Streamer.EmitAssignment(SetLabel, Diff);
+  Streamer.EmitSymbolValue(SetLabel, Size);
+}
+
 /// EmitValue - Emit debug information entry offset.
 ///
 void DIEEntry::EmitValue(AsmPrinter *AP, dwarf::Form Form) const {
 
   if (Form == dwarf::DW_FORM_ref_addr) {
     const DwarfDebug *DD = AP->getDwarfDebug();
-    unsigned Addr = Entry->getOffset();
+    unsigned Addr = Entry.getOffset();
     assert(!DD->useSplitDwarf() && "TODO: dwo files can't have relocations.");
     // For DW_FORM_ref_addr, output the offset from beginning of debug info
     // section. Entry->getOffset() returns the offset from start of the
     // compile unit.
-    DwarfCompileUnit *CU = DD->lookupUnit(Entry->getUnit());
+    DwarfCompileUnit *CU = DD->lookupUnit(Entry.getUnit());
     assert(CU && "CUDie should belong to a CU.");
     Addr += CU->getDebugInfoOffset();
     if (AP->MAI->doesDwarfUseRelocationsAcrossSections())
       AP->EmitLabelPlusOffset(CU->getSectionSym(), Addr,
                               DIEEntry::getRefAddrSize(AP));
     else
-      AP->EmitLabelOffsetDifference(CU->getSectionSym(), Addr,
-                                    CU->getSectionSym(),
-                                    DIEEntry::getRefAddrSize(AP));
+      emitLabelOffsetDifference(AP->OutStreamer, CU->getSectionSym(), Addr,
+                                CU->getSectionSym(),
+                                DIEEntry::getRefAddrSize(AP));
   } else
-    AP->EmitInt32(Entry->getOffset());
+    AP->EmitInt32(Entry.getOffset());
 }
 
 unsigned DIEEntry::getRefAddrSize(AsmPrinter *AP) {
@@ -418,7 +434,7 @@ unsigned DIEEntry::getRefAddrSize(AsmPrinter *AP) {
 
 #ifndef NDEBUG
 void DIEEntry::print(raw_ostream &O) const {
-  O << format("Die: 0x%lx", (long)(intptr_t)Entry);
+  O << format("Die: 0x%lx", (long)(intptr_t)&Entry);
 }
 #endif
 
@@ -559,13 +575,13 @@ unsigned DIELocList::SizeOf(AsmPrinter *AP, dwarf::Form Form) const {
 /// EmitValue - Emit label value.
 ///
 void DIELocList::EmitValue(AsmPrinter *AP, dwarf::Form Form) const {
-  MCSymbol *Label = AP->GetTempSymbol("debug_loc", Index);
-  MCSymbol *DwarfDebugLocSectionSym = AP->getDwarfDebug()->getDebugLocSym();
+  DwarfDebug *DD = AP->getDwarfDebug();
+  MCSymbol *Label = DD->getDebugLocEntries()[Index].Label;
 
-  if (AP->MAI->doesDwarfUseRelocationsAcrossSections())
-    AP->EmitSectionOffset(Label, DwarfDebugLocSectionSym);
+  if (AP->MAI->doesDwarfUseRelocationsAcrossSections() && !DD->useSplitDwarf())
+    AP->EmitSectionOffset(Label, DD->getDebugLocSym());
   else
-    AP->EmitLabelDifference(Label, DwarfDebugLocSectionSym, 4);
+    AP->EmitLabelDifference(Label, DD->getDebugLocSym(), 4);
 }
 
 #ifndef NDEBUG

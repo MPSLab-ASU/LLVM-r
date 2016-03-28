@@ -10,6 +10,7 @@
 #ifndef LLVM_MC_MCOBJECTSTREAMER_H
 #define LLVM_MC_MCOBJECTSTREAMER_H
 
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/MC/MCAssembler.h"
 #include "llvm/MC/MCStreamer.h"
 
@@ -35,10 +36,17 @@ class MCObjectStreamer : public MCStreamer {
   MCAssembler *Assembler;
   MCSectionData *CurSectionData;
   MCSectionData::iterator CurInsertionPoint;
+  bool EmitEHFrame;
+  bool EmitDebugFrame;
+  SmallVector<MCSymbolData *, 2> PendingLabels;
 
   virtual void EmitInstToData(const MCInst &Inst, const MCSubtargetInfo&) = 0;
   void EmitCFIStartProcImpl(MCDwarfFrameInfo &Frame) override;
   void EmitCFIEndProcImpl(MCDwarfFrameInfo &Frame) override;
+
+  // If any labels have been emitted but not assigned fragments, ensure that
+  // they get assigned, either to F if possible or to a new data fragment.
+  void flushPendingLabels(MCFragment *F);
 
 protected:
   MCObjectStreamer(MCContext &Context, MCAsmBackend &TAB, raw_ostream &_OS,
@@ -54,6 +62,12 @@ public:
   /// Object streamers require the integrated assembler.
   bool isIntegratedAssemblerRequired() const override { return true; }
 
+  MCSymbolData &getOrCreateSymbolData(const MCSymbol *Symbol) {
+    return getAssembler().getOrCreateSymbolData(*Symbol);
+  }
+  void EmitFrames(MCAsmBackend *MAB);
+  void EmitCFISections(bool EH, bool Debug) override;
+
 protected:
   MCSectionData *getCurrentSectionData() const {
     return CurSectionData;
@@ -61,27 +75,28 @@ protected:
 
   MCFragment *getCurrentFragment() const;
 
-  void insert(MCFragment *F) const {
+  void insert(MCFragment *F) {
+    flushPendingLabels(F);
     CurSectionData->getFragmentList().insert(CurInsertionPoint, F);
     F->setParent(CurSectionData);
   }
 
   /// Get a data fragment to write into, creating a new one if the current
   /// fragment is not a data fragment.
-  MCDataFragment *getOrCreateDataFragment() const;
-
-  const MCExpr *AddValueSymbols(const MCExpr *Value);
+  MCDataFragment *getOrCreateDataFragment();
 
 public:
+  void visitUsedSymbol(const MCSymbol &Sym) override;
+
   MCAssembler &getAssembler() { return *Assembler; }
 
   /// @name MCStreamer Interface
   /// @{
 
   void EmitLabel(MCSymbol *Symbol) override;
-  void EmitDebugLabel(MCSymbol *Symbol) override;
   void EmitAssignment(MCSymbol *Symbol, const MCExpr *Value) override;
-  void EmitValueImpl(const MCExpr *Value, unsigned Size) override;
+  void EmitValueImpl(const MCExpr *Value, unsigned Size,
+                     const SMLoc &Loc = SMLoc()) override;
   void EmitULEB128Value(const MCExpr *Value) override;
   void EmitSLEB128Value(const MCExpr *Value) override;
   void EmitWeakReference(MCSymbol *Alias, const MCSymbol *Symbol) override;
@@ -109,14 +124,18 @@ public:
                              StringRef FileName) override;
   void EmitDwarfAdvanceLineAddr(int64_t LineDelta, const MCSymbol *LastLabel,
                                 const MCSymbol *Label,
-                                unsigned PointerSize) override;
+                                unsigned PointerSize);
   void EmitDwarfAdvanceFrameAddr(const MCSymbol *LastLabel,
-                                 const MCSymbol *Label) override;
+                                 const MCSymbol *Label);
   void EmitGPRel32Value(const MCExpr *Value) override;
   void EmitGPRel64Value(const MCExpr *Value) override;
   void EmitFill(uint64_t NumBytes, uint8_t FillValue) override;
   void EmitZeros(uint64_t NumBytes) override;
   void FinishImpl() override;
+
+  bool mayHaveInstructions() const override {
+    return getCurrentSectionData()->hasInstructions();
+  }
 };
 
 } // end namespace llvm

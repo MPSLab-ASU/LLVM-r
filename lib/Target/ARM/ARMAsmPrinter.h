@@ -7,17 +7,20 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef ARMASMPRINTER_H
-#define ARMASMPRINTER_H
+#ifndef LLVM_LIB_TARGET_ARM_ARMASMPRINTER_H
+#define LLVM_LIB_TARGET_ARM_ARMASMPRINTER_H
 
-#include "ARM.h"
-#include "ARMTargetMachine.h"
+#include "ARMSubtarget.h"
 #include "llvm/CodeGen/AsmPrinter.h"
-#include "llvm/Support/Compiler.h"
+#include "llvm/Target/TargetMachine.h"
 
 namespace llvm {
 
+class ARMFunctionInfo;
 class MCOperand;
+class MachineConstantPool;
+class MachineOperand;
+class MCSymbol;
 
 namespace ARM {
   enum DW_ISA {
@@ -43,18 +46,24 @@ class LLVM_LIBRARY_VISIBILITY ARMAsmPrinter : public AsmPrinter {
   /// InConstantPool - Maintain state when emitting a sequence of constant
   /// pool entries so we can properly mark them as data regions.
   bool InConstantPool;
+
+  /// ThumbIndirectPads - These maintain a per-function list of jump pad
+  /// labels used for ARMv4t thumb code to make register indirect calls.
+  SmallVector<std::pair<unsigned, MCSymbol*>, 4> ThumbIndirectPads;
+
 public:
   explicit ARMAsmPrinter(TargetMachine &TM, MCStreamer &Streamer)
-    : AsmPrinter(TM, Streamer), AFI(NULL), MCP(NULL), InConstantPool(false) {
-      Subtarget = &TM.getSubtarget<ARMSubtarget>();
-    }
+    : AsmPrinter(TM, Streamer), AFI(nullptr), MCP(nullptr),
+      InConstantPool(false) {
+    Subtarget = &TM.getSubtarget<ARMSubtarget>();
+  }
 
   const char *getPassName() const override {
     return "ARM Assembly / Object Emitter";
   }
 
   void printOperand(const MachineInstr *MI, int OpNum, raw_ostream &O,
-                    const char *Modifier = 0);
+                    const char *Modifier = nullptr);
 
   bool PrintAsmOperand(const MachineInstr *MI, unsigned OpNum,
                        unsigned AsmVariant, const char *ExtraCode,

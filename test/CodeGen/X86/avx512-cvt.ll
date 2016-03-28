@@ -24,6 +24,22 @@ define <16 x i32> @fptoui00(<16 x float> %a) nounwind {
   ret <16 x i32> %b
 }
 
+; CHECK-LABEL: fptoui_256
+; CHECK: vcvttps2udq
+; CHECK: ret
+define <8 x i32> @fptoui_256(<8 x float> %a) nounwind {
+  %b = fptoui <8 x float> %a to <8 x i32>
+  ret <8 x i32> %b
+}
+
+; CHECK-LABEL: fptoui_128
+; CHECK: vcvttps2udq
+; CHECK: ret
+define <4 x i32> @fptoui_128(<4 x float> %a) nounwind {
+  %b = fptoui <4 x float> %a to <4 x i32>
+  ret <4 x i32> %b
+}
+
 ; CHECK-LABEL: fptoui01
 ; CHECK: vcvttpd2udq
 ; CHECK: ret
@@ -176,12 +192,36 @@ define <16 x double> @uitof64(<16 x i32> %a) nounwind {
   ret <16 x double> %b
 }
 
+; CHECK-LABEL: uitof64_256
+; CHECK: vcvtudq2pd
+; CHECK: ret
+define <4 x double> @uitof64_256(<4 x i32> %a) nounwind {
+  %b = uitofp <4 x i32> %a to <4 x double>
+  ret <4 x double> %b
+}
+
 ; CHECK-LABEL: uitof32
 ; CHECK: vcvtudq2ps
 ; CHECK: ret
 define <16 x float> @uitof32(<16 x i32> %a) nounwind {
   %b = uitofp <16 x i32> %a to <16 x float>
   ret <16 x float> %b
+}
+
+; CHECK-LABEL: uitof32_256
+; CHECK: vcvtudq2ps
+; CHECK: ret
+define <8 x float> @uitof32_256(<8 x i32> %a) nounwind {
+  %b = uitofp <8 x i32> %a to <8 x float>
+  ret <8 x float> %b
+}
+
+; CHECK-LABEL: uitof32_128
+; CHECK: vcvtudq2ps
+; CHECK: ret
+define <4 x float> @uitof32_128(<4 x i32> %a) nounwind {
+  %b = uitofp <4 x i32> %a to <4 x float>
+  ret <4 x float> %b
 }
 
 ; CHECK-LABEL: @fptosi02
@@ -214,4 +254,57 @@ define float @uitofp02(i32 %a) nounwind {
 define double @uitofp03(i32 %a) nounwind {
   %b = uitofp i32 %a to double
   ret double %b
+}
+
+; CHECK-LABEL: @sitofp_16i1_float
+; CHECK: vpbroadcastd
+; CHECK: vcvtdq2ps
+define <16 x float> @sitofp_16i1_float(<16 x i32> %a) {
+  %mask = icmp slt <16 x i32> %a, zeroinitializer
+  %1 = sitofp <16 x i1> %mask to <16 x float>
+  ret <16 x float> %1
+}
+
+; CHECK-LABEL: @sitofp_16i8_float
+; CHECK: vpmovsxbd
+; CHECK: vcvtdq2ps
+define <16 x float> @sitofp_16i8_float(<16 x i8> %a) {
+  %1 = sitofp <16 x i8> %a to <16 x float>
+  ret <16 x float> %1
+}
+
+; CHECK-LABEL: @sitofp_16i16_float
+; CHECK: vpmovsxwd
+; CHECK: vcvtdq2ps
+define <16 x float> @sitofp_16i16_float(<16 x i16> %a) {
+  %1 = sitofp <16 x i16> %a to <16 x float>
+  ret <16 x float> %1
+}
+
+; CHECK-LABEL: @sitofp_8i16_double
+; CHECK: vpmovsxwd
+; CHECK: vcvtdq2pd
+define <8 x double> @sitofp_8i16_double(<8 x i16> %a) {
+  %1 = sitofp <8 x i16> %a to <8 x double>
+  ret <8 x double> %1
+}
+
+; CHECK-LABEL: sitofp_8i8_double
+; CHECK: vpmovzxwd
+; CHECK: vpslld
+; CHECK: vpsrad
+; CHECK: vcvtdq2pd
+define <8 x double> @sitofp_8i8_double(<8 x i8> %a) {
+  %1 = sitofp <8 x i8> %a to <8 x double>
+  ret <8 x double> %1
+}
+
+
+; CHECK-LABEL: @sitofp_8i1_double
+; CHECK: vpbroadcastq
+; CHECK: vcvtdq2pd
+define <8 x double> @sitofp_8i1_double(<8 x double> %a) {
+  %cmpres = fcmp ogt <8 x double> %a, zeroinitializer
+  %1 = sitofp <8 x i1> %cmpres to <8 x double>
+  ret <8 x double> %1
 }

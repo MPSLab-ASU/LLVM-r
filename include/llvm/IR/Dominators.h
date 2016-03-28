@@ -31,6 +31,11 @@
 
 namespace llvm {
 
+// FIXME: Replace this brittle forward declaration with the include of the new
+// PassManager.h when doing so doesn't break the PassManagerBuilder.
+template <typename IRUnitT> class AnalysisManager;
+class PreservedAnalyses;
+
 EXTERN_TEMPLATE_INSTANTIATION(class DomTreeNodeBase<BasicBlock>);
 EXTERN_TEMPLATE_INSTANTIATION(class DominatorTreeBase<BasicBlock>);
 
@@ -69,6 +74,13 @@ public:
 
   DominatorTree() : DominatorTreeBase<BasicBlock>(false) {}
 
+  DominatorTree(DominatorTree &&Arg)
+      : Base(std::move(static_cast<Base &>(Arg))) {}
+  DominatorTree &operator=(DominatorTree &&RHS) {
+    Base::operator=(std::move(static_cast<Base &>(RHS)));
+    return *this;
+  }
+
   /// \brief Returns *false* if the other dominator tree matches this dominator
   /// tree.
   inline bool compare(const DominatorTree &Other) const {
@@ -96,10 +108,6 @@ public:
   bool dominates(const Instruction *Def, const BasicBlock *BB) const;
   bool dominates(const BasicBlockEdge &BBE, const Use &U) const;
   bool dominates(const BasicBlockEdge &BBE, const BasicBlock *BB) const;
-
-  inline DomTreeNode *operator[](BasicBlock *BB) const {
-    return getNode(BB);
-  }
 
   // Ensure base class overloads are visible.
   using Base::isReachableFromEntry;
@@ -159,6 +167,43 @@ template <> struct GraphTraits<DominatorTree*>
 };
 
 /// \brief Analysis pass which computes a \c DominatorTree.
+class DominatorTreeAnalysis {
+public:
+  /// \brief Provide the result typedef for this analysis pass.
+  typedef DominatorTree Result;
+
+  /// \brief Opaque, unique identifier for this analysis pass.
+  static void *ID() { return (void *)&PassID; }
+
+  /// \brief Run the analysis pass over a function and produce a dominator tree.
+  DominatorTree run(Function &F);
+
+  /// \brief Provide access to a name for this pass for debugging purposes.
+  static StringRef name() { return "DominatorTreeAnalysis"; }
+
+private:
+  static char PassID;
+};
+
+/// \brief Printer pass for the \c DominatorTree.
+class DominatorTreePrinterPass {
+  raw_ostream &OS;
+
+public:
+  explicit DominatorTreePrinterPass(raw_ostream &OS);
+  PreservedAnalyses run(Function &F, AnalysisManager<Function> *AM);
+
+  static StringRef name() { return "DominatorTreePrinterPass"; }
+};
+
+/// \brief Verifier pass for the \c DominatorTree.
+struct DominatorTreeVerifierPass {
+  PreservedAnalyses run(Function &F, AnalysisManager<Function> *AM);
+
+  static StringRef name() { return "DominatorTreeVerifierPass"; }
+};
+
+/// \brief Legacy analysis pass which computes a \c DominatorTree.
 class DominatorTreeWrapperPass : public FunctionPass {
   DominatorTree DT;
 
@@ -182,7 +227,7 @@ public:
 
   void releaseMemory() override { DT.releaseMemory(); }
 
-  void print(raw_ostream &OS, const Module *M = 0) const override;
+  void print(raw_ostream &OS, const Module *M = nullptr) const override;
 };
 
 } // End llvm namespace

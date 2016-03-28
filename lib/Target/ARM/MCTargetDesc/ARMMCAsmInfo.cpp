@@ -12,14 +12,20 @@
 //===----------------------------------------------------------------------===//
 
 #include "ARMMCAsmInfo.h"
+#include "llvm/ADT/Triple.h"
 #include "llvm/Support/CommandLine.h"
 
 using namespace llvm;
 
 void ARMMCAsmInfoDarwin::anchor() { }
 
-ARMMCAsmInfoDarwin::ARMMCAsmInfoDarwin() {
-  Data64bitsDirective = 0;
+ARMMCAsmInfoDarwin::ARMMCAsmInfoDarwin(StringRef TT) {
+  Triple TheTriple(TT);
+  if ((TheTriple.getArch() == Triple::armeb) ||
+      (TheTriple.getArch() == Triple::thumbeb))
+    IsLittleEndian = false;
+
+  Data64bitsDirective = nullptr;
   CommentString = "@";
   Code16Directive = ".code\t16";
   Code32Directive = ".code\t32";
@@ -35,20 +41,31 @@ ARMMCAsmInfoDarwin::ARMMCAsmInfoDarwin() {
 
 void ARMELFMCAsmInfo::anchor() { }
 
-ARMELFMCAsmInfo::ARMELFMCAsmInfo() {
+ARMELFMCAsmInfo::ARMELFMCAsmInfo(StringRef TT) {
+  Triple TheTriple(TT);
+  if ((TheTriple.getArch() == Triple::armeb) ||
+      (TheTriple.getArch() == Triple::thumbeb))
+    IsLittleEndian = false;
+
   // ".comm align is in bytes but .align is pow-2."
   AlignmentIsInBytes = false;
 
-  Data64bitsDirective = 0;
+  Data64bitsDirective = nullptr;
   CommentString = "@";
   Code16Directive = ".code\t16";
   Code32Directive = ".code\t32";
 
-  HasLEB128 = true;
   SupportsDebugInformation = true;
 
   // Exceptions handling
-  ExceptionsType = ExceptionHandling::ARM;
+  switch (TheTriple.getOS()) {
+  case Triple::NetBSD:
+    ExceptionsType = ExceptionHandling::DwarfCFI;
+    break;
+  default:
+    ExceptionsType = ExceptionHandling::ARM;
+    break;
+  }
 
   // foo(plt) instead of foo@plt
   UseParensForSymbolVariant = true;
@@ -65,3 +82,33 @@ void ARMELFMCAsmInfo::setUseIntegratedAssembler(bool Value) {
     DwarfRegNumForCFI = true;
   }
 }
+
+void ARMCOFFMCAsmInfoMicrosoft::anchor() { }
+
+ARMCOFFMCAsmInfoMicrosoft::ARMCOFFMCAsmInfoMicrosoft() {
+  AlignmentIsInBytes = false;
+
+  PrivateGlobalPrefix = "$M";
+  PrivateLabelPrefix = "$M";
+}
+
+void ARMCOFFMCAsmInfoGNU::anchor() { }
+
+ARMCOFFMCAsmInfoGNU::ARMCOFFMCAsmInfoGNU() {
+  AlignmentIsInBytes = false;
+  HasSingleParameterDotFile = true;
+
+  CommentString = "@";
+  Code16Directive = ".code\t16";
+  Code32Directive = ".code\t32";
+  PrivateGlobalPrefix = ".L";
+  PrivateLabelPrefix = ".L";
+
+  SupportsDebugInformation = true;
+  ExceptionsType = ExceptionHandling::None;
+  UseParensForSymbolVariant = true;
+
+  UseIntegratedAssembler = false;
+  DwarfRegNumForCFI = true;
+}
+

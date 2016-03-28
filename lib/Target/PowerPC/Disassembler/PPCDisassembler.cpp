@@ -12,33 +12,32 @@
 #include "llvm/MC/MCFixedLenDisassembler.h"
 #include "llvm/MC/MCInst.h"
 #include "llvm/MC/MCSubtargetInfo.h"
-#include "llvm/Support/MemoryObject.h"
 #include "llvm/Support/TargetRegistry.h"
 
 using namespace llvm;
+
+#define DEBUG_TYPE "ppc-disassembler"
 
 typedef MCDisassembler::DecodeStatus DecodeStatus;
 
 namespace {
 class PPCDisassembler : public MCDisassembler {
 public:
-  PPCDisassembler(const MCSubtargetInfo &STI)
-    : MCDisassembler(STI) {}
+  PPCDisassembler(const MCSubtargetInfo &STI, MCContext &Ctx)
+    : MCDisassembler(STI, Ctx) {}
   virtual ~PPCDisassembler() {}
 
-  // Override MCDisassembler.
-  virtual DecodeStatus getInstruction(MCInst &instr,
-                                      uint64_t &size,
-                                      const MemoryObject &region,
-                                      uint64_t address,
-                                      raw_ostream &vStream,
-                                      raw_ostream &cStream) const override;
+  DecodeStatus getInstruction(MCInst &Instr, uint64_t &Size,
+                              ArrayRef<uint8_t> Bytes, uint64_t Address,
+                              raw_ostream &VStream,
+                              raw_ostream &CStream) const override;
 };
 } // end anonymous namespace
 
 static MCDisassembler *createPPCDisassembler(const Target &T,
-                                             const MCSubtargetInfo &STI) {
-  return new PPCDisassembler(STI);
+                                             const MCSubtargetInfo &STI,
+                                             MCContext &Ctx) {
+  return new PPCDisassembler(STI, Ctx);
 }
 
 extern "C" void LLVMInitializePowerPCDisassembler() {
@@ -110,6 +109,26 @@ static const unsigned VSRegs[] = {
   PPC::VSH20, PPC::VSH21, PPC::VSH22, PPC::VSH23,
   PPC::VSH24, PPC::VSH25, PPC::VSH26, PPC::VSH27,
   PPC::VSH28, PPC::VSH29, PPC::VSH30, PPC::VSH31
+};
+
+static const unsigned VSFRegs[] = {
+  PPC::F0, PPC::F1, PPC::F2, PPC::F3,
+  PPC::F4, PPC::F5, PPC::F6, PPC::F7,
+  PPC::F8, PPC::F9, PPC::F10, PPC::F11,
+  PPC::F12, PPC::F13, PPC::F14, PPC::F15,
+  PPC::F16, PPC::F17, PPC::F18, PPC::F19,
+  PPC::F20, PPC::F21, PPC::F22, PPC::F23,
+  PPC::F24, PPC::F25, PPC::F26, PPC::F27,
+  PPC::F28, PPC::F29, PPC::F30, PPC::F31,
+
+  PPC::VF0, PPC::VF1, PPC::VF2, PPC::VF3,
+  PPC::VF4, PPC::VF5, PPC::VF6, PPC::VF7,
+  PPC::VF8, PPC::VF9, PPC::VF10, PPC::VF11,
+  PPC::VF12, PPC::VF13, PPC::VF14, PPC::VF15,
+  PPC::VF16, PPC::VF17, PPC::VF18, PPC::VF19,
+  PPC::VF20, PPC::VF21, PPC::VF22, PPC::VF23,
+  PPC::VF24, PPC::VF25, PPC::VF26, PPC::VF27,
+  PPC::VF28, PPC::VF29, PPC::VF30, PPC::VF31
 };
 
 static const unsigned GPRegs[] = {
@@ -187,6 +206,12 @@ static DecodeStatus DecodeVSRCRegisterClass(MCInst &Inst, uint64_t RegNo,
                                             uint64_t Address,
                                             const void *Decoder) {
   return decodeRegisterClass(Inst, RegNo, VSRegs);
+}
+
+static DecodeStatus DecodeVSFRCRegisterClass(MCInst &Inst, uint64_t RegNo,
+                                            uint64_t Address,
+                                            const void *Decoder) {
+  return decodeRegisterClass(Inst, RegNo, VSFRegs);
 }
 
 static DecodeStatus DecodeGPRCRegisterClass(MCInst &Inst, uint64_t RegNo,
@@ -296,23 +321,19 @@ static DecodeStatus decodeCRBitMOperand(MCInst &Inst, uint64_t Imm,
 #include "PPCGenDisassemblerTables.inc"
 
 DecodeStatus PPCDisassembler::getInstruction(MCInst &MI, uint64_t &Size,
-                                                 const MemoryObject &Region,
-                                                 uint64_t Address,
-                                                 raw_ostream &os,
-                                                 raw_ostream &cs) const {
+                                             ArrayRef<uint8_t> Bytes,
+                                             uint64_t Address, raw_ostream &OS,
+                                             raw_ostream &CS) const {
   // Get the four bytes of the instruction.
-  uint8_t Bytes[4];
   Size = 4;
-  if (Region.readBytes(Address, Size, Bytes) == -1) {
+  if (Bytes.size() < 4) {
     Size = 0;
     return MCDisassembler::Fail;
   }
 
   // The instruction is big-endian encoded.
-  uint32_t Inst = (Bytes[0] << 24) |
-                  (Bytes[1] << 16) |
-                  (Bytes[2] <<  8) |
-                  (Bytes[3] <<  0);
+  uint32_t Inst =
+      (Bytes[0] << 24) | (Bytes[1] << 16) | (Bytes[2] << 8) | (Bytes[3] << 0);
 
   return decodeInstruction(DecoderTable32, MI, Inst, Address, this, STI);
 }

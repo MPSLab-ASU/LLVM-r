@@ -34,7 +34,7 @@ Most of the tools build and work.  ``bugpoint`` does build, but does
 not work.
 
 Additional information about the LLVM directory structure and tool chain
-can be found on the main `Getting Started <GettingStarted.html>`_ page.
+can be found on the main :doc:`GettingStarted` page.
 
 
 Requirements
@@ -57,8 +57,8 @@ You will also need the `CMake <http://www.cmake.org/>`_ build system since it
 generates the project files you will use to build with.
 
 If you would like to run the LLVM tests you will need `Python
-<http://www.python.org/>`_. Versions 2.4-2.7 are known to work. You will need
-`GnuWin32 <http://gnuwin32.sourceforge.net/>`_ tools, too.
+<http://www.python.org/>`_. Version 2.7 and newer are known to work. You will
+need `GnuWin32 <http://gnuwin32.sourceforge.net/>`_ tools, too.
 
 Do not install the LLVM directory tree into a path containing spaces (e.g.
 ``C:\Documents and Settings\...``) as the configure step will fail.
@@ -97,8 +97,11 @@ Here's the short story for getting up and running quickly with LLVM:
      using LLVM.  Another important option is ``LLVM_TARGETS_TO_BUILD``,
      which controls the LLVM target architectures that are included on the
      build.
-   * See the `LLVM CMake guide <CMake.html>`_ for detailed information about
+   * See the :doc:`LLVM CMake guide <CMake>` for detailed information about
      how to configure the LLVM build.
+   * CMake generates project files for all build types. To select a specific
+     build type, use the Configuration manager from the VS IDE or the 
+     ``/property:Configuration`` command line option when using MSBuild.
 
 6. Start Visual Studio
 
@@ -215,8 +218,8 @@ An Example Using the LLVM Tool Chain
 Common Problems
 ===============
 If you are having problems building or using LLVM, or if you have any other
-general questions about LLVM, please consult the `Frequently Asked Questions
-<FAQ.html>`_ page.
+general questions about LLVM, please consult the :doc:`Frequently Asked Questions
+<FAQ>` page.
 
 
 Links

@@ -62,12 +62,15 @@
 // CHECK-NEXT:     0x9E         R_386_PC16       und_symbol 0x0
 // Relocation 28 (und_symbol-bar2) is of type R_386_PC8
 // CHECK-NEXT:     0xA0         R_386_PC8        und_symbol 0x0
+// CHECK-NEXT:     0xA3         R_386_GOTOFF     und_symbol 0x0
+// Relocation 29 (zed@PLT) is of type R_386_PLT32 and uses the symbol
+// CHECK-NEXT:     0xA9         R_386_PLT32      zed 0x0
 // CHECK-NEXT:   }
 // CHECK-NEXT: ]
 
 // Symbol 4 is zed
 // CHECK:        Symbol {
-// CHECK:          Name: zed (53)
+// CHECK:          Name: zed
 // CHECK-NEXT:     Value: 0x0
 // CHECK-NEXT:     Size: 0
 // CHECK-NEXT:     Binding: Local
@@ -126,6 +129,9 @@ bar2:
         leal und_symbol-bar2(%edx),%ecx
         .word und_symbol-bar2
         .byte und_symbol-bar2
+
+        leal 1 + und_symbol@GOTOFF, %edi
+        movl zed@PLT(%eax), %eax
 
         .section        zedsec,"awT",@progbits
 zed:

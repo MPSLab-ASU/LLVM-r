@@ -2,7 +2,10 @@ add_llvm_library(LLVMProfileData
   InstrProf.cpp
   InstrProfReader.cpp
   InstrProfWriter.cpp
-
-  LINK_LIBS
-  LLVMSupport
-)
+  CoverageMapping.cpp
+  CoverageMappingWriter.cpp
+  CoverageMappingReader.cpp
+  SampleProf.cpp
+  SampleProfReader.cpp
+  SampleProfWriter.cpp
+  )

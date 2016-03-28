@@ -17,9 +17,10 @@
 #include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/IndexedMap.h"
 #include "llvm/ADT/iterator_range.h"
+#include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineInstrBundle.h"
-#include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetRegisterInfo.h"
+#include "llvm/Target/TargetSubtargetInfo.h"
 #include <vector>
 
 namespace llvm {
@@ -39,7 +40,7 @@ public:
   };
 
 private:
-  const TargetMachine &TM;
+  const MachineFunction *MF;
   Delegate *TheDelegate;
 
   /// IsSSA - True when the machine function is in SSA form and virtual
@@ -50,6 +51,9 @@ private:
   /// Basic block live-in lists, kill flags, and implicit defs may not be
   /// accurate when after this flag is cleared.
   bool TracksLiveness;
+
+  /// True if subregister liveness is tracked.
+  bool TracksSubRegLiveness;
 
   /// VRegInfo - Information we keep for each virtual register.
   ///
@@ -69,7 +73,7 @@ private:
 
   /// PhysRegUseDefLists - This is an array of the head of the use/def list for
   /// physical registers.
-  MachineOperand **PhysRegUseDefLists;
+  std::vector<MachineOperand *> PhysRegUseDefLists;
 
   /// getRegUseDefListHead - Return the head pointer for the register use/def
   /// list for the specified virtual or physical register.
@@ -122,11 +126,10 @@ private:
   MachineRegisterInfo(const MachineRegisterInfo&) LLVM_DELETED_FUNCTION;
   void operator=(const MachineRegisterInfo&) LLVM_DELETED_FUNCTION;
 public:
-  explicit MachineRegisterInfo(const TargetMachine &TM);
-  ~MachineRegisterInfo();
+  explicit MachineRegisterInfo(const MachineFunction *MF);
 
   const TargetRegisterInfo *getTargetRegisterInfo() const {
-    return TM.getRegisterInfo();
+    return MF->getSubtarget().getRegisterInfo();
   }
 
   void resetDelegate(Delegate *delegate) {
@@ -135,7 +138,7 @@ public:
     // notifications, we will need to change to using a list.
     assert(TheDelegate == delegate &&
            "Only the current delegate can perform reset!");
-    TheDelegate = 0;
+    TheDelegate = nullptr;
   }
 
   void setDelegate(Delegate *delegate) {
@@ -178,6 +181,12 @@ public:
   /// This should be called by late passes that invalidate the liveness
   /// information.
   void invalidateLiveness() { TracksLiveness = false; }
+
+  bool tracksSubRegLiveness() const { return TracksSubRegLiveness; }
+
+  void enableSubRegLiveness(bool Enable = true) {
+    TracksSubRegLiveness = Enable;
+  }
 
   //===--------------------------------------------------------------------===//
   // Register Info
@@ -223,7 +232,7 @@ public:
   reg_iterator reg_begin(unsigned RegNo) const {
     return reg_iterator(getRegUseDefListHead(RegNo));
   }
-  static reg_iterator reg_end() { return reg_iterator(0); }
+  static reg_iterator reg_end() { return reg_iterator(nullptr); }
 
   inline iterator_range<reg_iterator>  reg_operands(unsigned Reg) const {
     return iterator_range<reg_iterator>(reg_begin(Reg), reg_end());
@@ -236,7 +245,9 @@ public:
   reg_instr_iterator reg_instr_begin(unsigned RegNo) const {
     return reg_instr_iterator(getRegUseDefListHead(RegNo));
   }
-  static reg_instr_iterator reg_instr_end() { return reg_instr_iterator(0); }
+  static reg_instr_iterator reg_instr_end() {
+    return reg_instr_iterator(nullptr);
+  }
 
   inline iterator_range<reg_instr_iterator>
   reg_instructions(unsigned Reg) const {
@@ -251,7 +262,9 @@ public:
   reg_bundle_iterator reg_bundle_begin(unsigned RegNo) const {
     return reg_bundle_iterator(getRegUseDefListHead(RegNo));
   }
-  static reg_bundle_iterator reg_bundle_end() { return reg_bundle_iterator(0); }
+  static reg_bundle_iterator reg_bundle_end() {
+    return reg_bundle_iterator(nullptr);
+  }
 
   inline iterator_range<reg_bundle_iterator> reg_bundles(unsigned Reg) const {
     return iterator_range<reg_bundle_iterator>(reg_bundle_begin(Reg),
@@ -269,7 +282,9 @@ public:
   reg_nodbg_iterator reg_nodbg_begin(unsigned RegNo) const {
     return reg_nodbg_iterator(getRegUseDefListHead(RegNo));
   }
-  static reg_nodbg_iterator reg_nodbg_end() { return reg_nodbg_iterator(0); }
+  static reg_nodbg_iterator reg_nodbg_end() {
+    return reg_nodbg_iterator(nullptr);
+  }
 
   inline iterator_range<reg_nodbg_iterator>
   reg_nodbg_operands(unsigned Reg) const {
@@ -286,7 +301,7 @@ public:
     return reg_instr_nodbg_iterator(getRegUseDefListHead(RegNo));
   }
   static reg_instr_nodbg_iterator reg_instr_nodbg_end() {
-    return reg_instr_nodbg_iterator(0);
+    return reg_instr_nodbg_iterator(nullptr);
   }
 
   inline iterator_range<reg_instr_nodbg_iterator>
@@ -304,7 +319,7 @@ public:
     return reg_bundle_nodbg_iterator(getRegUseDefListHead(RegNo));
   }
   static reg_bundle_nodbg_iterator reg_bundle_nodbg_end() {
-    return reg_bundle_nodbg_iterator(0);
+    return reg_bundle_nodbg_iterator(nullptr);
   }
 
   inline iterator_range<reg_bundle_nodbg_iterator> 
@@ -325,7 +340,7 @@ public:
   def_iterator def_begin(unsigned RegNo) const {
     return def_iterator(getRegUseDefListHead(RegNo));
   }
-  static def_iterator def_end() { return def_iterator(0); }
+  static def_iterator def_end() { return def_iterator(nullptr); }
 
   inline iterator_range<def_iterator> def_operands(unsigned Reg) const {
     return iterator_range<def_iterator>(def_begin(Reg), def_end());
@@ -338,7 +353,9 @@ public:
   def_instr_iterator def_instr_begin(unsigned RegNo) const {
     return def_instr_iterator(getRegUseDefListHead(RegNo));
   }
-  static def_instr_iterator def_instr_end() { return def_instr_iterator(0); }
+  static def_instr_iterator def_instr_end() {
+    return def_instr_iterator(nullptr);
+  }
 
   inline iterator_range<def_instr_iterator>
   def_instructions(unsigned Reg) const {
@@ -353,7 +370,9 @@ public:
   def_bundle_iterator def_bundle_begin(unsigned RegNo) const {
     return def_bundle_iterator(getRegUseDefListHead(RegNo));
   }
-  static def_bundle_iterator def_bundle_end() { return def_bundle_iterator(0); }
+  static def_bundle_iterator def_bundle_end() {
+    return def_bundle_iterator(nullptr);
+  }
 
   inline iterator_range<def_bundle_iterator> def_bundles(unsigned Reg) const {
     return iterator_range<def_bundle_iterator>(def_bundle_begin(Reg),
@@ -379,7 +398,7 @@ public:
   use_iterator use_begin(unsigned RegNo) const {
     return use_iterator(getRegUseDefListHead(RegNo));
   }
-  static use_iterator use_end() { return use_iterator(0); }
+  static use_iterator use_end() { return use_iterator(nullptr); }
 
   inline iterator_range<use_iterator> use_operands(unsigned Reg) const {
     return iterator_range<use_iterator>(use_begin(Reg), use_end());
@@ -392,7 +411,9 @@ public:
   use_instr_iterator use_instr_begin(unsigned RegNo) const {
     return use_instr_iterator(getRegUseDefListHead(RegNo));
   }
-  static use_instr_iterator use_instr_end() { return use_instr_iterator(0); }
+  static use_instr_iterator use_instr_end() {
+    return use_instr_iterator(nullptr);
+  }
 
   inline iterator_range<use_instr_iterator>
   use_instructions(unsigned Reg) const {
@@ -407,7 +428,9 @@ public:
   use_bundle_iterator use_bundle_begin(unsigned RegNo) const {
     return use_bundle_iterator(getRegUseDefListHead(RegNo));
   }
-  static use_bundle_iterator use_bundle_end() { return use_bundle_iterator(0); }
+  static use_bundle_iterator use_bundle_end() {
+    return use_bundle_iterator(nullptr);
+  }
 
   inline iterator_range<use_bundle_iterator> use_bundles(unsigned Reg) const {
     return iterator_range<use_bundle_iterator>(use_bundle_begin(Reg),
@@ -434,7 +457,9 @@ public:
   use_nodbg_iterator use_nodbg_begin(unsigned RegNo) const {
     return use_nodbg_iterator(getRegUseDefListHead(RegNo));
   }
-  static use_nodbg_iterator use_nodbg_end() { return use_nodbg_iterator(0); }
+  static use_nodbg_iterator use_nodbg_end() {
+    return use_nodbg_iterator(nullptr);
+  }
 
   inline iterator_range<use_nodbg_iterator>
   use_nodbg_operands(unsigned Reg) const {
@@ -451,7 +476,7 @@ public:
     return use_instr_nodbg_iterator(getRegUseDefListHead(RegNo));
   }
   static use_instr_nodbg_iterator use_instr_nodbg_end() {
-    return use_instr_nodbg_iterator(0);
+    return use_instr_nodbg_iterator(nullptr);
   }
 
   inline iterator_range<use_instr_nodbg_iterator>
@@ -469,7 +494,7 @@ public:
     return use_bundle_nodbg_iterator(getRegUseDefListHead(RegNo));
   }
   static use_bundle_nodbg_iterator use_bundle_nodbg_end() {
-    return use_bundle_nodbg_iterator(0);
+    return use_bundle_nodbg_iterator(nullptr);
   }
 
   inline iterator_range<use_bundle_nodbg_iterator>
@@ -499,8 +524,12 @@ public:
   ///
   /// That function will return NULL if the virtual registers have incompatible
   /// constraints.
+  ///
+  /// Note that if ToReg is a physical register the function will replace and
+  /// apply sub registers to ToReg in order to obtain a final/proper physical
+  /// register.
   void replaceRegWith(unsigned FromReg, unsigned ToReg);
-
+  
   /// getVRegDef - Return the machine instr that defines the specified virtual
   /// register or null if none is found.  This assumes that the code is in SSA
   /// form, so there should only be one definition.
@@ -748,6 +777,10 @@ public:
                         const TargetRegisterInfo &TRI,
                         const TargetInstrInfo &TII);
 
+  /// Returns a mask covering all bits that can appear in lane masks of
+  /// subregisters of the virtual register @p Reg.
+  unsigned getMaxLaneMaskForVReg(unsigned Reg) const;
+
   /// defusechain_iterator - This class provides iterator support for machine
   /// operands in the function that use or define a specific register.  If
   /// ReturnUses is true it returns uses of registers, if ReturnDefs is true it
@@ -779,7 +812,7 @@ public:
       if (!ReturnUses) {
         if (Op) {
           if (Op->isUse())
-            Op = 0;
+            Op = nullptr;
           else
             assert(!Op->isDebug() && "Can't have debug defs");
         }
@@ -797,7 +830,7 @@ public:
                           MachineInstr, ptrdiff_t>::pointer pointer;
 
     defusechain_iterator(const defusechain_iterator &I) : Op(I.Op) {}
-    defusechain_iterator() : Op(0) {}
+    defusechain_iterator() : Op(nullptr) {}
 
     bool operator==(const defusechain_iterator &x) const {
       return Op == x.Op;
@@ -807,7 +840,7 @@ public:
     }
 
     /// atEnd - return true if this iterator is equal to reg_end() on the value.
-    bool atEnd() const { return Op == 0; }
+    bool atEnd() const { return Op == nullptr; }
 
     // Iterator traversal: forward iteration only
     defusechain_iterator &operator++() {          // Preincrement
@@ -882,7 +915,7 @@ public:
       if (!ReturnUses) {
         if (Op) {
           if (Op->isUse())
-            Op = 0;
+            Op = nullptr;
           else
             assert(!Op->isDebug() && "Can't have debug defs");
         }
@@ -900,7 +933,7 @@ public:
                           MachineInstr, ptrdiff_t>::pointer pointer;
 
     defusechain_instr_iterator(const defusechain_instr_iterator &I) : Op(I.Op){}
-    defusechain_instr_iterator() : Op(0) {}
+    defusechain_instr_iterator() : Op(nullptr) {}
 
     bool operator==(const defusechain_instr_iterator &x) const {
       return Op == x.Op;
@@ -910,7 +943,7 @@ public:
     }
 
     /// atEnd - return true if this iterator is equal to reg_end() on the value.
-    bool atEnd() const { return Op == 0; }
+    bool atEnd() const { return Op == nullptr; }
 
     // Iterator traversal: forward iteration only
     defusechain_instr_iterator &operator++() {          // Preincrement
@@ -957,7 +990,7 @@ class PSetIterator {
   const int *PSet;
   unsigned Weight;
 public:
-  PSetIterator(): PSet(0), Weight(0) {}
+  PSetIterator(): PSet(nullptr), Weight(0) {}
   PSetIterator(unsigned RegUnit, const MachineRegisterInfo *MRI) {
     const TargetRegisterInfo *TRI = MRI->getTargetRegisterInfo();
     if (TargetRegisterInfo::isVirtualRegister(RegUnit)) {
@@ -970,7 +1003,7 @@ public:
       Weight = TRI->getRegUnitWeight(RegUnit);
     }
     if (*PSet == -1)
-      PSet = 0;
+      PSet = nullptr;
   }
   bool isValid() const { return PSet; }
 
@@ -982,7 +1015,7 @@ public:
     assert(isValid() && "Invalid PSetIterator.");
     ++PSet;
     if (*PSet == -1)
-      PSet = 0;
+      PSet = nullptr;
   }
 };
 

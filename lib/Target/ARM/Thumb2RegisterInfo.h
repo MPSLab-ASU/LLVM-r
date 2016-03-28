@@ -12,12 +12,10 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef THUMB2REGISTERINFO_H
-#define THUMB2REGISTERINFO_H
+#ifndef LLVM_LIB_TARGET_ARM_THUMB2REGISTERINFO_H
+#define LLVM_LIB_TARGET_ARM_THUMB2REGISTERINFO_H
 
-#include "ARM.h"
 #include "ARMBaseRegisterInfo.h"
-#include "llvm/Target/TargetRegisterInfo.h"
 
 namespace llvm {
 
@@ -37,4 +35,4 @@ public:
 };
 }
 
-#endif // THUMB2REGISTERINFO_H
+#endif

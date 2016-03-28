@@ -11,7 +11,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#define DEBUG_TYPE "loop-reroll"
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallSet.h"
@@ -35,6 +34,8 @@
 #include "llvm/Transforms/Utils/LoopUtils.h"
 
 using namespace llvm;
+
+#define DEBUG_TYPE "loop-reroll"
 
 STATISTIC(NumRerolledLoops, "Number of rerolled loops");
 
@@ -214,9 +215,7 @@ protected:
       typedef SmallVector<SimpleLoopReduction, 16> SmallReductionVector;
 
       // Add a new possible reduction.
-      void addSLR(SimpleLoopReduction &SLR) {
-        PossibleReds.push_back(SLR);
-      }
+      void addSLR(SimpleLoopReduction &SLR) { PossibleReds.push_back(SLR); }
 
       // Setup to track possible reductions corresponding to the provided
       // rerolling scale. Only reductions with a number of non-PHI instructions
@@ -224,7 +223,8 @@ protected:
       // are filled in:
       //   - A set of all possible instructions in eligible reductions.
       //   - A set of all PHIs in eligible reductions
-      //   - A set of all reduced values (last instructions) in eligible reductions.
+      //   - A set of all reduced values (last instructions) in eligible
+      //     reductions.
       void restrictToScale(uint64_t Scale,
                            SmallInstructionSet &PossibleRedSet,
                            SmallInstructionSet &PossibleRedPHISet,
@@ -237,13 +237,12 @@ protected:
           if (PossibleReds[i].size() % Scale == 0) {
             PossibleRedLastSet.insert(PossibleReds[i].getReducedValue());
             PossibleRedPHISet.insert(PossibleReds[i].getPHI());
-      
+
             PossibleRedSet.insert(PossibleReds[i].getPHI());
             PossibleRedIdx[PossibleReds[i].getPHI()] = i;
-            for (SimpleLoopReduction::iterator J = PossibleReds[i].begin(),
-                 JE = PossibleReds[i].end(); J != JE; ++J) {
-              PossibleRedSet.insert(*J);
-              PossibleRedIdx[*J] = i;
+            for (Instruction *J : PossibleReds[i]) {
+              PossibleRedSet.insert(J);
+              PossibleRedIdx[J] = i;
             }
           }
       }
@@ -486,7 +485,7 @@ void LoopReroll::collectInLoopUserSet(Loop *L,
           if (PN->getIncomingBlock(U) == L->getHeader())
             continue;
         }
-  
+
         if (L->contains(User) && !Exclude.count(User)) {
           Queue.push_back(User);
         }
@@ -658,16 +657,15 @@ bool LoopReroll::ReductionTracker::validateSelected() {
        RI != RIE; ++RI) {
     int i = *RI;
     int PrevIter = 0, BaseCount = 0, Count = 0;
-    for (SimpleLoopReduction::iterator J = PossibleReds[i].begin(),
-         JE = PossibleReds[i].end(); J != JE; ++J) {
-	// Note that all instructions in the chain must have been found because
-	// all instructions in the function must have been assigned to some
-	// iteration.
-      int Iter = PossibleRedIter[*J];
+    for (Instruction *J : PossibleReds[i]) {
+      // Note that all instructions in the chain must have been found because
+      // all instructions in the function must have been assigned to some
+      // iteration.
+      int Iter = PossibleRedIter[J];
       if (Iter != PrevIter && Iter != PrevIter + 1 &&
           !PossibleReds[i].getReducedValue()->isAssociative()) {
         DEBUG(dbgs() << "LRR: Out-of-order non-associative reduction: " <<
-                        *J << "\n");
+                        J << "\n");
         return false;
       }
 
@@ -880,7 +878,7 @@ bool LoopReroll::reroll(Instruction *IV, Loop *L, BasicBlock *Header,
           // needed because otherwise isSafeToSpeculativelyExecute returns
           // false on PHI nodes.
           if (!isSimpleLoadStore(J2) && !isSafeToSpeculativelyExecute(J2, DL))
-            FutureSideEffects = true; 
+            FutureSideEffects = true;
         }
 
         ++J2;
@@ -923,8 +921,10 @@ bool LoopReroll::reroll(Instruction *IV, Loop *L, BasicBlock *Header,
       // them, and this matching fails. As an exception, we allow the alias
       // set tracker to handle regular (simple) load/store dependencies.
       if (FutureSideEffects &&
-            ((!isSimpleLoadStore(J1) && !isSafeToSpeculativelyExecute(J1)) ||
-             (!isSimpleLoadStore(J2) && !isSafeToSpeculativelyExecute(J2)))) {
+            ((!isSimpleLoadStore(J1) &&
+              !isSafeToSpeculativelyExecute(J1, DL)) ||
+             (!isSimpleLoadStore(J2) &&
+              !isSafeToSpeculativelyExecute(J2, DL)))) {
         DEBUG(dbgs() << "LRR: iteration root match failed at " << *J1 <<
                         " vs. " << *J2 <<
                         " (side effects prevent reordering)\n");
@@ -945,13 +945,13 @@ bool LoopReroll::reroll(Instruction *IV, Loop *L, BasicBlock *Header,
       bool InReduction = Reductions.isPairInSame(J1, J2);
 
       if (!(InReduction && J1->isAssociative())) {
-        bool Swapped = false, SomeOpMatched = false;;
+        bool Swapped = false, SomeOpMatched = false;
         for (unsigned j = 0; j < J1->getNumOperands() && !MatchFailed; ++j) {
           Value *Op2 = J2->getOperand(j);
 
-	  // If this is part of a reduction (and the operation is not
-	  // associatve), then we match all operands, but not those that are
-	  // part of the reduction.
+          // If this is part of a reduction (and the operation is not
+          // associatve), then we match all operands, but not those that are
+          // part of the reduction.
           if (InReduction)
             if (Instruction *Op2I = dyn_cast<Instruction>(Op2))
               if (Reductions.isPairInSame(J2, Op2I))
@@ -965,11 +965,11 @@ bool LoopReroll::reroll(Instruction *IV, Loop *L, BasicBlock *Header,
             Op2 = IV;
 
           if (J1->getOperand(Swapped ? unsigned(!j) : j) != Op2) {
-	    // If we've not already decided to swap the matched operands, and
-	    // we've not already matched our first operand (note that we could
-	    // have skipped matching the first operand because it is part of a
-	    // reduction above), and the instruction is commutative, then try
-	    // the swapped match.
+            // If we've not already decided to swap the matched operands, and
+            // we've not already matched our first operand (note that we could
+            // have skipped matching the first operand because it is part of a
+            // reduction above), and the instruction is commutative, then try
+            // the swapped match.
             if (!Swapped && J1->isCommutative() && !SomeOpMatched &&
                 J1->getOperand(!j) == Op2) {
               Swapped = true;
@@ -1066,7 +1066,7 @@ bool LoopReroll::reroll(Instruction *IV, Loop *L, BasicBlock *Header,
       continue;
     }
 
-    ++J; 
+    ++J;
   }
 
   // Insert the new induction variable.
@@ -1107,9 +1107,9 @@ bool LoopReroll::reroll(Instruction *IV, Loop *L, BasicBlock *Header,
           ICMinus1 = Expander.expandCodeFor(ICMinus1SCEV, NewIV->getType(),
                                             Preheader->getTerminator());
         }
- 
-        Value *Cond = new ICmpInst(BI, CmpInst::ICMP_EQ, NewIV, ICMinus1,
-                                   "exitcond");
+
+        Value *Cond =
+            new ICmpInst(BI, CmpInst::ICMP_EQ, NewIV, ICMinus1, "exitcond");
         BI->setCondition(Cond);
 
         if (BI->getSuccessor(1) != Header)
@@ -1133,7 +1133,7 @@ bool LoopReroll::runOnLoop(Loop *L, LPPassManager &LPM) {
   SE = &getAnalysis<ScalarEvolution>();
   TLI = &getAnalysis<TargetLibraryInfo>();
   DataLayoutPass *DLP = getAnalysisIfAvailable<DataLayoutPass>();
-  DL = DLP ? &DLP->getDataLayout() : 0;
+  DL = DLP ? &DLP->getDataLayout() : nullptr;
   DT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree();
 
   BasicBlock *Header = L->getHeader();
@@ -1179,4 +1179,3 @@ bool LoopReroll::runOnLoop(Loop *L, LPPassManager &LPM) {
 
   return Changed;
 }
-

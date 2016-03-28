@@ -7,6 +7,7 @@ add_llvm_unittest(SupportTests
   AllocatorTest.cpp
   ArrayRecyclerTest.cpp
   BlockFrequencyTest.cpp
+  BranchProbabilityTest.cpp
   Casting.cpp
   CommandLineTest.cpp
   CompressionTest.cpp
@@ -15,19 +16,24 @@ add_llvm_unittest(SupportTests
   EndianTest.cpp
   ErrorOrTest.cpp
   FileOutputBufferTest.cpp
+  IteratorTest.cpp
   LEB128Test.cpp
   LineIteratorTest.cpp
   LockFileManagerTest.cpp
+  MD5Test.cpp
   ManagedStatic.cpp
   MathExtrasTest.cpp
-  MD5Test.cpp
   MemoryBufferTest.cpp
   MemoryTest.cpp
   Path.cpp
   ProcessTest.cpp
   ProgramTest.cpp
   RegexTest.cpp
+  ScaledNumberTest.cpp
   SourceMgrTest.cpp
+  SpecialCaseListTest.cpp
+  StreamingMemoryObject.cpp
+  StringPool.cpp
   SwapByteOrderTest.cpp
   ThreadLocalTest.cpp
   TimeValueTest.cpp
@@ -37,3 +43,8 @@ add_llvm_unittest(SupportTests
   formatted_raw_ostream_test.cpp
   raw_ostream_test.cpp
   )
+
+# ManagedStatic.cpp uses <pthread>.
+if(LLVM_ENABLE_THREADS AND HAVE_LIBPTHREAD)
+  target_link_libraries(SupportTests pthread)
+endif()

@@ -14,7 +14,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#define DEBUG_TYPE "x86-vzeroupper"
 #include "X86.h"
 #include "X86InstrInfo.h"
 #include "X86Subtarget.h"
@@ -27,6 +26,8 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetInstrInfo.h"
 using namespace llvm;
+
+#define DEBUG_TYPE "x86-vzeroupper"
 
 STATISTIC(NumVZU, "Number of vzeroupper instructions inserted");
 
@@ -246,22 +247,27 @@ void VZeroUpperInserter::processBasicBlock(MachineBasicBlock &MBB) {
 /// runOnMachineFunction - Loop over all of the basic blocks, inserting
 /// vzero upper instructions before function calls.
 bool VZeroUpperInserter::runOnMachineFunction(MachineFunction &MF) {
-  if (MF.getTarget().getSubtarget<X86Subtarget>().hasAVX512())
+  const X86Subtarget &ST = MF.getTarget().getSubtarget<X86Subtarget>();
+  if (!ST.hasAVX() || ST.hasAVX512())
     return false;
-  TII = MF.getTarget().getInstrInfo();
+  TII = MF.getSubtarget().getInstrInfo();
   MachineRegisterInfo &MRI = MF.getRegInfo();
   EverMadeChange = false;
+
+  bool FnHasLiveInYmm = checkFnHasLiveInYmm(MRI);
 
   // Fast check: if the function doesn't use any ymm registers, we don't need
   // to insert any VZEROUPPER instructions.  This is constant-time, so it is
   // cheap in the common case of no ymm use.
-  bool YMMUsed = false;
-  const TargetRegisterClass *RC = &X86::VR256RegClass;
-  for (TargetRegisterClass::iterator i = RC->begin(), e = RC->end();
-       i != e; i++) {
-    if (!MRI.reg_nodbg_empty(*i)) {
-      YMMUsed = true;
-      break;
+  bool YMMUsed = FnHasLiveInYmm;
+  if (!YMMUsed) {
+    const TargetRegisterClass *RC = &X86::VR256RegClass;
+    for (TargetRegisterClass::iterator i = RC->begin(), e = RC->end(); i != e;
+         i++) {
+      if (!MRI.reg_nodbg_empty(*i)) {
+        YMMUsed = true;
+        break;
+      }
     }
   }
   if (!YMMUsed) {
@@ -280,7 +286,7 @@ bool VZeroUpperInserter::runOnMachineFunction(MachineFunction &MF) {
 
   // If any YMM regs are live in to this function, add the entry block to the
   // DirtySuccessors list
-  if (checkFnHasLiveInYmm(MRI))
+  if (FnHasLiveInYmm)
     addDirtySuccessor(MF.front());
 
   // Re-visit all blocks that are successors of EXITS_DIRTY bsocks. Add

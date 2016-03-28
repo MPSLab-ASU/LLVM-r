@@ -13,11 +13,14 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm-readobj.h"
+#include "ARMWinEHPrinter.h"
 #include "Error.h"
 #include "ObjDumper.h"
 #include "StreamWriter.h"
+#include "Win64EHDumper.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallString.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/Object/COFF.h"
 #include "llvm/Object/ObjectFile.h"
 #include "llvm/Support/COFF.h"
@@ -28,9 +31,9 @@
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/Win64EH.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/Support/system_error.h"
 #include <algorithm>
 #include <cstring>
+#include <system_error>
 #include <time.h>
 
 using namespace llvm;
@@ -47,56 +50,50 @@ public:
     cacheRelocations();
   }
 
-  virtual void printFileHeaders() override;
-  virtual void printSections() override;
-  virtual void printRelocations() override;
-  virtual void printSymbols() override;
-  virtual void printDynamicSymbols() override;
-  virtual void printUnwindInfo() override;
+  void printFileHeaders() override;
+  void printSections() override;
+  void printRelocations() override;
+  void printSymbols() override;
+  void printDynamicSymbols() override;
+  void printUnwindInfo() override;
+  void printCOFFImports() override;
+  void printCOFFExports() override;
+  void printCOFFDirectives() override;
+  void printCOFFBaseReloc() override;
 
 private:
   void printSymbol(const SymbolRef &Sym);
   void printRelocation(const SectionRef &Section, const RelocationRef &Reloc);
   void printDataDirectory(uint32_t Index, const std::string &FieldName);
-  void printX64UnwindInfo();
 
+  void printDOSHeader(const dos_header *DH);
   template <class PEHeader> void printPEHeader(const PEHeader *Hdr);
   void printBaseOfDataField(const pe32_header *Hdr);
   void printBaseOfDataField(const pe32plus_header *Hdr);
 
-  void printRuntimeFunction(
-    const RuntimeFunction& RTF,
-    uint64_t OffsetInSection,
-    const std::vector<RelocationRef> &Rels);
-
-  void printUnwindInfo(
-    const Win64EH::UnwindInfo& UI,
-    uint64_t OffsetInSection,
-    const std::vector<RelocationRef> &Rels);
-
-  void printUnwindCode(const Win64EH::UnwindInfo &UI, ArrayRef<UnwindCode> UCs);
-
   void printCodeViewLineTables(const SectionRef &Section);
+
+  void printCodeViewSymbolsSubsection(StringRef Subsection,
+                                      const SectionRef &Section,
+                                      uint32_t Offset);
 
   void cacheRelocations();
 
-  error_code getSectionContents(
-    const std::vector<RelocationRef> &Rels,
-    uint64_t Offset,
-    ArrayRef<uint8_t> &Contents,
-    uint64_t &Addr);
-
-  error_code getSection(
-    const std::vector<RelocationRef> &Rels,
-    uint64_t Offset,
-    const coff_section **Section,
-    uint64_t *AddrPtr);
+  std::error_code resolveSymbol(const coff_section *Section, uint64_t Offset,
+                                SymbolRef &Sym);
+  std::error_code resolveSymbolName(const coff_section *Section,
+                                    uint64_t Offset, StringRef &Name);
+  void printImportedSymbols(iterator_range<imported_symbol_iterator> Range);
+  void printDelayImportedSymbols(
+      const DelayImportDirectoryEntryRef &I,
+      iterator_range<imported_symbol_iterator> Range);
 
   typedef DenseMap<const coff_section*, std::vector<RelocationRef> > RelocMapTy;
 
   const llvm::object::COFFObjectFile *Obj;
   RelocMapTy RelocMap;
-  std::vector<RelocationRef> EmptyRelocs;
+  StringRef CVFileIndexToStringOffsetTable;
+  StringRef CVStringTable;
 };
 
 } // namespace
@@ -104,8 +101,9 @@ private:
 
 namespace llvm {
 
-error_code createCOFFDumper(const object::ObjectFile *Obj, StreamWriter &Writer,
-                            std::unique_ptr<ObjDumper> &Result) {
+std::error_code createCOFFDumper(const object::ObjectFile *Obj,
+                                 StreamWriter &Writer,
+                                 std::unique_ptr<ObjDumper> &Result) {
   const COFFObjectFile *COFFObj = dyn_cast<COFFObjectFile>(Obj);
   if (!COFFObj)
     return readobj_error::unsupported_obj_file_format;
@@ -116,110 +114,34 @@ error_code createCOFFDumper(const object::ObjectFile *Obj, StreamWriter &Writer,
 
 } // namespace llvm
 
-
-// Returns the name of the unwind code.
-static StringRef getUnwindCodeTypeName(uint8_t Code) {
-  switch(Code) {
-  default: llvm_unreachable("Invalid unwind code");
-  case UOP_PushNonVol: return "PUSH_NONVOL";
-  case UOP_AllocLarge: return "ALLOC_LARGE";
-  case UOP_AllocSmall: return "ALLOC_SMALL";
-  case UOP_SetFPReg: return "SET_FPREG";
-  case UOP_SaveNonVol: return "SAVE_NONVOL";
-  case UOP_SaveNonVolBig: return "SAVE_NONVOL_FAR";
-  case UOP_SaveXMM128: return "SAVE_XMM128";
-  case UOP_SaveXMM128Big: return "SAVE_XMM128_FAR";
-  case UOP_PushMachFrame: return "PUSH_MACHFRAME";
-  }
-}
-
-// Returns the name of a referenced register.
-static StringRef getUnwindRegisterName(uint8_t Reg) {
-  switch(Reg) {
-  default: llvm_unreachable("Invalid register");
-  case 0: return "RAX";
-  case 1: return "RCX";
-  case 2: return "RDX";
-  case 3: return "RBX";
-  case 4: return "RSP";
-  case 5: return "RBP";
-  case 6: return "RSI";
-  case 7: return "RDI";
-  case 8: return "R8";
-  case 9: return "R9";
-  case 10: return "R10";
-  case 11: return "R11";
-  case 12: return "R12";
-  case 13: return "R13";
-  case 14: return "R14";
-  case 15: return "R15";
-  }
-}
-
-// Calculates the number of array slots required for the unwind code.
-static unsigned getNumUsedSlots(const UnwindCode &UnwindCode) {
-  switch (UnwindCode.getUnwindOp()) {
-  default: llvm_unreachable("Invalid unwind code");
-  case UOP_PushNonVol:
-  case UOP_AllocSmall:
-  case UOP_SetFPReg:
-  case UOP_PushMachFrame:
-    return 1;
-  case UOP_SaveNonVol:
-  case UOP_SaveXMM128:
-    return 2;
-  case UOP_SaveNonVolBig:
-  case UOP_SaveXMM128Big:
-    return 3;
-  case UOP_AllocLarge:
-    return (UnwindCode.getOpInfo() == 0) ? 2 : 3;
-  }
-}
-
-// Given a symbol sym this functions returns the address and section of it.
-static error_code resolveSectionAndAddress(const COFFObjectFile *Obj,
-                                           const SymbolRef &Sym,
-                                           const coff_section *&ResolvedSection,
-                                           uint64_t &ResolvedAddr) {
-  if (error_code EC = Sym.getAddress(ResolvedAddr))
-    return EC;
-
-  section_iterator iter(Obj->section_begin());
-  if (error_code EC = Sym.getSection(iter))
-    return EC;
-
-  ResolvedSection = Obj->getCOFFSection(*iter);
-  return object_error::success;
-}
-
-// Given a vector of relocations for a section and an offset into this section
-// the function returns the symbol used for the relocation at the offset.
-static error_code resolveSymbol(const std::vector<RelocationRef> &Rels,
-                                uint64_t Offset, SymbolRef &Sym) {
-  for (std::vector<RelocationRef>::const_iterator RelI = Rels.begin(),
-                                                  RelE = Rels.end();
-                                                  RelI != RelE; ++RelI) {
-    uint64_t Ofs;
-    if (error_code EC = RelI->getOffset(Ofs))
+// Given a a section and an offset into this section the function returns the
+// symbol used for the relocation at the offset.
+std::error_code COFFDumper::resolveSymbol(const coff_section *Section,
+                                          uint64_t Offset, SymbolRef &Sym) {
+  const auto &Relocations = RelocMap[Section];
+  for (const auto &Relocation : Relocations) {
+    uint64_t RelocationOffset;
+    if (std::error_code EC = Relocation.getOffset(RelocationOffset))
       return EC;
 
-    if (Ofs == Offset) {
-      Sym = *RelI->getSymbol();
+    if (RelocationOffset == Offset) {
+      Sym = *Relocation.getSymbol();
       return readobj_error::success;
     }
   }
-
   return readobj_error::unknown_symbol;
 }
 
-// Given a vector of relocations for a section and an offset into this section
-// the function returns the name of the symbol used for the relocation at the
-// offset.
-static error_code resolveSymbolName(const std::vector<RelocationRef> &Rels,
-                                    uint64_t Offset, StringRef &Name) {
-  SymbolRef Sym;
-  if (error_code EC = resolveSymbol(Rels, Offset, Sym)) return EC;
-  if (error_code EC = Sym.getName(Name)) return EC;
+// Given a section and an offset into this section the function returns the name
+// of the symbol used for the relocation at the offset.
+std::error_code COFFDumper::resolveSymbolName(const coff_section *Section,
+                                              uint64_t Offset,
+                                              StringRef &Name) {
+  SymbolRef Symbol;
+  if (std::error_code EC = resolveSymbol(Section, Offset, Symbol))
+    return EC;
+  if (std::error_code EC = Symbol.getName(Name))
+    return EC;
   return object_error::success;
 }
 
@@ -287,7 +209,9 @@ static const EnumEntry<COFF::DLLCharacteristics> PEDLLCharacteristics[] = {
   LLVM_READOBJ_ENUM_ENT(COFF, IMAGE_DLL_CHARACTERISTICS_NO_ISOLATION         ),
   LLVM_READOBJ_ENUM_ENT(COFF, IMAGE_DLL_CHARACTERISTICS_NO_SEH               ),
   LLVM_READOBJ_ENUM_ENT(COFF, IMAGE_DLL_CHARACTERISTICS_NO_BIND              ),
+  LLVM_READOBJ_ENUM_ENT(COFF, IMAGE_DLL_CHARACTERISTICS_APPCONTAINER         ),
   LLVM_READOBJ_ENUM_ENT(COFF, IMAGE_DLL_CHARACTERISTICS_WDM_DRIVER           ),
+  LLVM_READOBJ_ENUM_ENT(COFF, IMAGE_DLL_CHARACTERISTICS_GUARD_CF             ),
   LLVM_READOBJ_ENUM_ENT(COFF, IMAGE_DLL_CHARACTERISTICS_TERMINAL_SERVER_AWARE),
 };
 
@@ -403,119 +327,14 @@ WeakExternalCharacteristics[] = {
   { "Alias"    , COFF::IMAGE_WEAK_EXTERN_SEARCH_ALIAS     }
 };
 
-static const EnumEntry<unsigned> UnwindFlags[] = {
-  { "ExceptionHandler", Win64EH::UNW_ExceptionHandler },
-  { "TerminateHandler", Win64EH::UNW_TerminateHandler },
-  { "ChainInfo"       , Win64EH::UNW_ChainInfo        }
-};
-
-static const EnumEntry<unsigned> UnwindOpInfo[] = {
-  { "RAX",  0 },
-  { "RCX",  1 },
-  { "RDX",  2 },
-  { "RBX",  3 },
-  { "RSP",  4 },
-  { "RBP",  5 },
-  { "RSI",  6 },
-  { "RDI",  7 },
-  { "R8",   8 },
-  { "R9",   9 },
-  { "R10", 10 },
-  { "R11", 11 },
-  { "R12", 12 },
-  { "R13", 13 },
-  { "R14", 14 },
-  { "R15", 15 }
-};
-
-// Some additional COFF structures not defined by llvm::object.
-namespace {
-  struct coff_aux_file_record {
-    char FileName[18];
-  };
-} // namespace
-
-static uint64_t getOffsetOfLSDA(const Win64EH::UnwindInfo& UI) {
-  return static_cast<const char*>(UI.getLanguageSpecificData())
-         - reinterpret_cast<const char*>(&UI);
-}
-
-static uint32_t getLargeSlotValue(ArrayRef<UnwindCode> UCs) {
-  if (UCs.size() < 3)
-    return 0;
-
-  return UCs[1].FrameOffset + (static_cast<uint32_t>(UCs[2].FrameOffset) << 16);
-}
-
-template<typename T>
-static error_code getSymbolAuxData(const COFFObjectFile *Obj,
-                                   const coff_symbol *Symbol, const T* &Aux) {
+template <typename T>
+static std::error_code getSymbolAuxData(const COFFObjectFile *Obj,
+                                        COFFSymbolRef Symbol,
+                                        uint8_t AuxSymbolIdx, const T *&Aux) {
   ArrayRef<uint8_t> AuxData = Obj->getSymbolAuxData(Symbol);
+  AuxData = AuxData.slice(AuxSymbolIdx * Obj->getSymbolTableEntrySize());
   Aux = reinterpret_cast<const T*>(AuxData.data());
   return readobj_error::success;
-}
-
-static std::string formatSymbol(const std::vector<RelocationRef> &Rels,
-                                uint64_t Offset, uint32_t Disp) {
-  std::string Buffer;
-  raw_string_ostream Str(Buffer);
-
-  StringRef Sym;
-  if (resolveSymbolName(Rels, Offset, Sym)) {
-    Str << format(" (0x%" PRIX64 ")", Offset);
-    return Str.str();
-  }
-
-  Str << Sym;
-  if (Disp > 0) {
-    Str << format(" +0x%X (0x%" PRIX64 ")", Disp, Offset);
-  } else {
-    Str << format(" (0x%" PRIX64 ")", Offset);
-  }
-
-  return Str.str();
-}
-
-// Given a vector of relocations for a section and an offset into this section
-// the function resolves the symbol used for the relocation at the offset and
-// returns the section content and the address inside the content pointed to
-// by the symbol.
-error_code COFFDumper::getSectionContents(
-    const std::vector<RelocationRef> &Rels, uint64_t Offset,
-    ArrayRef<uint8_t> &Contents, uint64_t &Addr) {
-
-  SymbolRef Sym;
-  const coff_section *Section;
-
-  if (error_code EC = resolveSymbol(Rels, Offset, Sym))
-    return EC;
-  if (error_code EC = resolveSectionAndAddress(Obj, Sym, Section, Addr))
-    return EC;
-  if (error_code EC = Obj->getSectionContents(Section, Contents))
-    return EC;
-
-  return object_error::success;
-}
-
-error_code COFFDumper::getSection(
-    const std::vector<RelocationRef> &Rels, uint64_t Offset,
-    const coff_section **SectionPtr, uint64_t *AddrPtr) {
-
-  SymbolRef Sym;
-  if (error_code EC = resolveSymbol(Rels, Offset, Sym))
-    return EC;
-
-  const coff_section *Section;
-  uint64_t Addr;
-  if (error_code EC = resolveSectionAndAddress(Obj, Sym, Section, Addr))
-    return EC;
-
-  if (SectionPtr)
-    *SectionPtr = Section;
-  if (AddrPtr)
-    *AddrPtr = Addr;
-
-  return object_error::success;
 }
 
 void COFFDumper::cacheRelocations() {
@@ -540,41 +359,60 @@ void COFFDumper::printDataDirectory(uint32_t Index, const std::string &FieldName
 }
 
 void COFFDumper::printFileHeaders() {
-  // Print COFF header
-  const coff_file_header *COFFHeader = 0;
-  if (error(Obj->getCOFFHeader(COFFHeader)))
-    return;
-
-  time_t TDS = COFFHeader->TimeDateStamp;
+  time_t TDS = Obj->getTimeDateStamp();
   char FormattedTime[20] = { };
   strftime(FormattedTime, 20, "%Y-%m-%d %H:%M:%S", gmtime(&TDS));
 
   {
     DictScope D(W, "ImageFileHeader");
-    W.printEnum  ("Machine", COFFHeader->Machine,
+    W.printEnum  ("Machine", Obj->getMachine(),
                     makeArrayRef(ImageFileMachineType));
-    W.printNumber("SectionCount", COFFHeader->NumberOfSections);
-    W.printHex   ("TimeDateStamp", FormattedTime, COFFHeader->TimeDateStamp);
-    W.printHex   ("PointerToSymbolTable", COFFHeader->PointerToSymbolTable);
-    W.printNumber("SymbolCount", COFFHeader->NumberOfSymbols);
-    W.printNumber("OptionalHeaderSize", COFFHeader->SizeOfOptionalHeader);
-    W.printFlags ("Characteristics", COFFHeader->Characteristics,
+    W.printNumber("SectionCount", Obj->getNumberOfSections());
+    W.printHex   ("TimeDateStamp", FormattedTime, Obj->getTimeDateStamp());
+    W.printHex   ("PointerToSymbolTable", Obj->getPointerToSymbolTable());
+    W.printNumber("SymbolCount", Obj->getNumberOfSymbols());
+    W.printNumber("OptionalHeaderSize", Obj->getSizeOfOptionalHeader());
+    W.printFlags ("Characteristics", Obj->getCharacteristics(),
                     makeArrayRef(ImageFileCharacteristics));
   }
 
   // Print PE header. This header does not exist if this is an object file and
   // not an executable.
-  const pe32_header *PEHeader = 0;
+  const pe32_header *PEHeader = nullptr;
   if (error(Obj->getPE32Header(PEHeader)))
     return;
   if (PEHeader)
     printPEHeader<pe32_header>(PEHeader);
 
-  const pe32plus_header *PEPlusHeader = 0;
+  const pe32plus_header *PEPlusHeader = nullptr;
   if (error(Obj->getPE32PlusHeader(PEPlusHeader)))
     return;
   if (PEPlusHeader)
     printPEHeader<pe32plus_header>(PEPlusHeader);
+
+  if (const dos_header *DH = Obj->getDOSHeader())
+    printDOSHeader(DH);
+}
+
+void COFFDumper::printDOSHeader(const dos_header *DH) {
+  DictScope D(W, "DOSHeader");
+  W.printString("Magic", StringRef(DH->Magic, sizeof(DH->Magic)));
+  W.printNumber("UsedBytesInTheLastPage", DH->UsedBytesInTheLastPage);
+  W.printNumber("FileSizeInPages", DH->FileSizeInPages);
+  W.printNumber("NumberOfRelocationItems", DH->NumberOfRelocationItems);
+  W.printNumber("HeaderSizeInParagraphs", DH->HeaderSizeInParagraphs);
+  W.printNumber("MinimumExtraParagraphs", DH->MinimumExtraParagraphs);
+  W.printNumber("MaximumExtraParagraphs", DH->MaximumExtraParagraphs);
+  W.printNumber("InitialRelativeSS", DH->InitialRelativeSS);
+  W.printNumber("InitialSP", DH->InitialSP);
+  W.printNumber("Checksum", DH->Checksum);
+  W.printNumber("InitialIP", DH->InitialIP);
+  W.printNumber("InitialRelativeCS", DH->InitialRelativeCS);
+  W.printNumber("AddressOfRelocationTable", DH->AddressOfRelocationTable);
+  W.printNumber("OverlayNumber", DH->OverlayNumber);
+  W.printNumber("OEMid", DH->OEMid);
+  W.printNumber("OEMinfo", DH->OEMinfo);
+  W.printNumber("AddressOfNewExeHeader", DH->AddressOfNewExeHeader);
 }
 
 template <class PEHeader>
@@ -602,7 +440,7 @@ void COFFDumper::printPEHeader(const PEHeader *Hdr) {
   W.printNumber("SizeOfImage", Hdr->SizeOfImage);
   W.printNumber("SizeOfHeaders", Hdr->SizeOfHeaders);
   W.printEnum  ("Subsystem", Hdr->Subsystem, makeArrayRef(PEWindowsSubsystem));
-  W.printFlags ("Subsystem", Hdr->DLLCharacteristics,
+  W.printFlags ("Characteristics", Hdr->DLLCharacteristics,
                 makeArrayRef(PEDLLCharacteristics));
   W.printNumber("SizeOfStackReserve", Hdr->SizeOfStackReserve);
   W.printNumber("SizeOfStackCommit", Hdr->SizeOfStackCommit);
@@ -638,11 +476,10 @@ void COFFDumper::printCodeViewLineTables(const SectionRef &Section) {
 
   SmallVector<StringRef, 10> FunctionNames;
   StringMap<StringRef> FunctionLineTables;
-  StringRef FileIndexToStringOffsetTable;
-  StringRef StringTable;
 
   ListScope D(W, "CodeViewLineTables");
   {
+    // FIXME: Add more offset correctness checks.
     DataExtractor DE(Data, true, 4);
     uint32_t Offset = 0,
              Magic = DE.getU32(&Offset);
@@ -672,6 +509,9 @@ void COFFDumper::printCodeViewLineTables(const SectionRef &Section) {
       W.printBinaryBlock("Contents", Contents);
 
       switch (SubSectionType) {
+      case COFF::DEBUG_SYMBOL_SUBSECTION:
+        printCodeViewSymbolsSubsection(Contents, Section, Offset);
+        break;
       case COFF::DEBUG_LINE_TABLE_SUBSECTION: {
         // Holds a PC to file:line table.  Some data to parse this subsection is
         // stored in the other subsections, so just check sanity and store the
@@ -685,8 +525,8 @@ void COFFDumper::printCodeViewLineTables(const SectionRef &Section) {
         }
 
         StringRef FunctionName;
-        if (error(resolveSymbolName(RelocMap[Obj->getCOFFSection(Section)],
-                                    Offset, FunctionName)))
+        if (error(resolveSymbolName(Obj->getCOFFSection(Section), Offset,
+                                    FunctionName)))
           return;
         W.printString("FunctionName", FunctionName);
         if (FunctionLineTables.count(FunctionName) != 0) {
@@ -700,24 +540,25 @@ void COFFDumper::printCodeViewLineTables(const SectionRef &Section) {
         break;
       }
       case COFF::DEBUG_STRING_TABLE_SUBSECTION:
-        if (PayloadSize == 0 || StringTable.data() != 0 ||
+        if (PayloadSize == 0 || CVStringTable.data() != nullptr ||
             Contents.back() != '\0') {
           // Empty or duplicate or non-null-terminated subsection.
           error(object_error::parse_failed);
           return;
         }
-        StringTable = Contents;
+        CVStringTable = Contents;
         break;
       case COFF::DEBUG_INDEX_SUBSECTION:
         // Holds the translation table from file indices
         // to offsets in the string table.
 
-        if (PayloadSize == 0 || FileIndexToStringOffsetTable.data() != 0) {
+        if (PayloadSize == 0 ||
+            CVFileIndexToStringOffsetTable.data() != nullptr) {
           // Empty or duplicate subsection.
           error(object_error::parse_failed);
           return;
         }
-        FileIndexToStringOffsetTable = Contents;
+        CVFileIndexToStringOffsetTable = Contents;
         break;
       }
       Offset += PayloadSize;
@@ -752,7 +593,7 @@ void COFFDumper::printCodeViewLineTables(const SectionRef &Section) {
 
       uint32_t FilenameOffset;
       {
-        DataExtractor SDE(FileIndexToStringOffsetTable, true, 4);
+        DataExtractor SDE(CVFileIndexToStringOffsetTable, true, 4);
         uint32_t OffsetInSDE = OffsetInIndex;
         if (!SDE.isValidOffset(OffsetInSDE)) {
           error(object_error::parse_failed);
@@ -761,15 +602,15 @@ void COFFDumper::printCodeViewLineTables(const SectionRef &Section) {
         FilenameOffset = SDE.getU32(&OffsetInSDE);
       }
 
-      if (FilenameOffset == 0 || FilenameOffset + 1 >= StringTable.size() ||
-          StringTable.data()[FilenameOffset - 1] != '\0') {
+      if (FilenameOffset == 0 || FilenameOffset + 1 >= CVStringTable.size() ||
+          CVStringTable.data()[FilenameOffset - 1] != '\0') {
         // Each string in an F3 subsection should be preceded by a null
         // character.
         error(object_error::parse_failed);
         return;
       }
 
-      StringRef Filename(StringTable.data() + FilenameOffset);
+      StringRef Filename(CVStringTable.data() + FilenameOffset);
       ListScope S(W, "FilenameSegment");
       W.printString("Filename", Filename);
       for (unsigned J = 0; J != SegmentLength && DE.isValidOffset(Offset);
@@ -788,6 +629,80 @@ void COFFDumper::printCodeViewLineTables(const SectionRef &Section) {
       }
     }
   }
+}
+
+void COFFDumper::printCodeViewSymbolsSubsection(StringRef Subsection,
+                                                const SectionRef &Section,
+                                                uint32_t OffsetInSection) {
+  if (Subsection.size() == 0) {
+    error(object_error::parse_failed);
+    return;
+  }
+  DataExtractor DE(Subsection, true, 4);
+  uint32_t Offset = 0;
+
+  // Function-level subsections have "procedure start" and "procedure end"
+  // commands that should come in pairs and surround relevant info.
+  bool InFunctionScope = false;
+  while (DE.isValidOffset(Offset)) {
+    // Read subsection segments one by one.
+    uint16_t Size = DE.getU16(&Offset);
+    // The section size includes the size of the type identifier.
+    if (Size < 2 || !DE.isValidOffsetForDataOfSize(Offset, Size)) {
+      error(object_error::parse_failed);
+      return;
+    }
+    Size -= 2;
+    uint16_t Type = DE.getU16(&Offset);
+    switch (Type) {
+    case COFF::DEBUG_SYMBOL_TYPE_PROC_START: {
+      DictScope S(W, "ProcStart");
+      if (InFunctionScope || Size < 36) {
+        error(object_error::parse_failed);
+        return;
+      }
+      InFunctionScope = true;
+
+      // We're currently interested in a limited subset of fields in this
+      // segment, just ignore the rest of the fields for now.
+      uint8_t Unused[12];
+      DE.getU8(&Offset, Unused, 12);
+      uint32_t CodeSize = DE.getU32(&Offset);
+      DE.getU8(&Offset, Unused, 12);
+      StringRef SectionName;
+      if (error(resolveSymbolName(Obj->getCOFFSection(Section),
+                                  OffsetInSection + Offset, SectionName)))
+        return;
+      Offset += 4;
+      DE.getU8(&Offset, Unused, 3);
+      StringRef DisplayName = DE.getCStr(&Offset);
+      if (!DE.isValidOffset(Offset)) {
+        error(object_error::parse_failed);
+        return;
+      }
+      W.printString("DisplayName", DisplayName);
+      W.printString("Section", SectionName);
+      W.printHex("CodeSize", CodeSize);
+
+      break;
+    }
+    case COFF::DEBUG_SYMBOL_TYPE_PROC_END: {
+      W.startLine() << "ProcEnd\n";
+      if (!InFunctionScope || Size > 0) {
+        error(object_error::parse_failed);
+        return;
+      }
+      InFunctionScope = false;
+      break;
+    }
+    default:
+      Offset += Size;
+      break;
+    }
+  }
+
+  if (InFunctionScope)
+    error(object_error::parse_failed);
 }
 
 void COFFDumper::printSections() {
@@ -825,8 +740,7 @@ void COFFDumper::printSections() {
     if (opts::SectionSymbols) {
       ListScope D(W, "Symbols");
       for (const SymbolRef &Symbol : Obj->symbols()) {
-        bool Contained = false;
-        if (Sec.containsSymbol(Symbol, Contained) || !Contained)
+        if (!Sec.containsSymbol(Symbol))
           continue;
 
         printSymbol(Symbol);
@@ -836,7 +750,8 @@ void COFFDumper::printSections() {
     if (Name == ".debug$S" && opts::CodeViewLineTables)
       printCodeViewLineTables(Sec);
 
-    if (opts::SectionData) {
+    if (opts::SectionData &&
+        !(Section->Characteristics & COFF::IMAGE_SCN_CNT_UNINITIALIZED_DATA)) {
       StringRef Data;
       if (error(Sec.getContents(Data)))
         break;
@@ -880,7 +795,6 @@ void COFFDumper::printRelocation(const SectionRef &Section,
   uint64_t RelocType;
   SmallString<32> RelocName;
   StringRef SymbolName;
-  StringRef Contents;
   if (error(Reloc.getOffset(Offset)))
     return;
   if (error(Reloc.getType(RelocType)))
@@ -888,21 +802,19 @@ void COFFDumper::printRelocation(const SectionRef &Section,
   if (error(Reloc.getTypeName(RelocName)))
     return;
   symbol_iterator Symbol = Reloc.getSymbol();
-  if (error(Symbol->getName(SymbolName)))
-    return;
-  if (error(Section.getContents(Contents)))
+  if (Symbol != Obj->symbol_end() && error(Symbol->getName(SymbolName)))
     return;
 
   if (opts::ExpandRelocs) {
     DictScope Group(W, "Relocation");
     W.printHex("Offset", Offset);
     W.printNumber("Type", RelocName, RelocType);
-    W.printString("Symbol", SymbolName.size() > 0 ? SymbolName : "-");
+    W.printString("Symbol", SymbolName.empty() ? "-" : SymbolName);
   } else {
     raw_ostream& OS = W.startLine();
     OS << W.hex(Offset)
        << " " << RelocName
-       << " " << (SymbolName.size() > 0 ? SymbolName : "-")
+       << " " << (SymbolName.empty() ? "-" : SymbolName)
        << "\n";
   }
 }
@@ -916,12 +828,30 @@ void COFFDumper::printSymbols() {
 
 void COFFDumper::printDynamicSymbols() { ListScope Group(W, "DynamicSymbols"); }
 
+static ErrorOr<StringRef>
+getSectionName(const llvm::object::COFFObjectFile *Obj, int32_t SectionNumber,
+               const coff_section *Section) {
+  if (Section) {
+    StringRef SectionName;
+    if (std::error_code EC = Obj->getSectionName(Section, SectionName))
+      return EC;
+    return SectionName;
+  }
+  if (SectionNumber == llvm::COFF::IMAGE_SYM_DEBUG)
+    return StringRef("IMAGE_SYM_DEBUG");
+  if (SectionNumber == llvm::COFF::IMAGE_SYM_ABSOLUTE)
+    return StringRef("IMAGE_SYM_ABSOLUTE");
+  if (SectionNumber == llvm::COFF::IMAGE_SYM_UNDEFINED)
+    return StringRef("IMAGE_SYM_UNDEFINED");
+  return StringRef("");
+}
+
 void COFFDumper::printSymbol(const SymbolRef &Sym) {
   DictScope D(W, "Symbol");
 
-  const coff_symbol *Symbol = Obj->getCOFFSymbol(Sym);
+  COFFSymbolRef Symbol = Obj->getCOFFSymbol(Sym);
   const coff_section *Section;
-  if (error_code EC = Obj->getSection(Symbol->SectionNumber, Section)) {
+  if (std::error_code EC = Obj->getSection(Symbol.getSectionNumber(), Section)) {
     W.startLine() << "Invalid section number: " << EC.message() << "\n";
     W.flush();
     return;
@@ -932,23 +862,25 @@ void COFFDumper::printSymbol(const SymbolRef &Sym) {
     SymbolName = "";
 
   StringRef SectionName = "";
-  if (Section)
-    Obj->getSectionName(Section, SectionName);
+  ErrorOr<StringRef> Res =
+      getSectionName(Obj, Symbol.getSectionNumber(), Section);
+  if (Res)
+    SectionName = *Res;
 
   W.printString("Name", SymbolName);
-  W.printNumber("Value", Symbol->Value);
-  W.printNumber("Section", SectionName, Symbol->SectionNumber);
-  W.printEnum  ("BaseType", Symbol->getBaseType(), makeArrayRef(ImageSymType));
-  W.printEnum  ("ComplexType", Symbol->getComplexType(),
+  W.printNumber("Value", Symbol.getValue());
+  W.printNumber("Section", SectionName, Symbol.getSectionNumber());
+  W.printEnum  ("BaseType", Symbol.getBaseType(), makeArrayRef(ImageSymType));
+  W.printEnum  ("ComplexType", Symbol.getComplexType(),
                                                    makeArrayRef(ImageSymDType));
-  W.printEnum  ("StorageClass", Symbol->StorageClass,
+  W.printEnum  ("StorageClass", Symbol.getStorageClass(),
                                                    makeArrayRef(ImageSymClass));
-  W.printNumber("AuxSymbolCount", Symbol->NumberOfAuxSymbols);
+  W.printNumber("AuxSymbolCount", Symbol.getNumberOfAuxSymbols());
 
-  for (unsigned I = 0; I < Symbol->NumberOfAuxSymbols; ++I) {
-    if (Symbol->isFunctionDefinition()) {
+  for (uint8_t I = 0; I < Symbol.getNumberOfAuxSymbols(); ++I) {
+    if (Symbol.isFunctionDefinition()) {
       const coff_aux_function_definition *Aux;
-      if (error(getSymbolAuxData(Obj, Symbol + I, Aux)))
+      if (error(getSymbolAuxData(Obj, Symbol, I, Aux)))
         break;
 
       DictScope AS(W, "AuxFunctionDef");
@@ -956,18 +888,16 @@ void COFFDumper::printSymbol(const SymbolRef &Sym) {
       W.printNumber("TotalSize", Aux->TotalSize);
       W.printHex("PointerToLineNumber", Aux->PointerToLinenumber);
       W.printHex("PointerToNextFunction", Aux->PointerToNextFunction);
-      W.printBinary("Unused", makeArrayRef(Aux->Unused));
 
-    } else if (Symbol->isWeakExternal()) {
+    } else if (Symbol.isAnyUndefined()) {
       const coff_aux_weak_external *Aux;
-      if (error(getSymbolAuxData(Obj, Symbol + I, Aux)))
+      if (error(getSymbolAuxData(Obj, Symbol, I, Aux)))
         break;
 
-      const coff_symbol *Linked;
+      ErrorOr<COFFSymbolRef> Linked = Obj->getSymbol(Aux->TagIndex);
       StringRef LinkedName;
-      error_code EC;
-      if ((EC = Obj->getSymbol(Aux->TagIndex, Linked)) ||
-          (EC = Obj->getSymbolName(Linked, LinkedName))) {
+      std::error_code EC = Linked.getError();
+      if (EC || (EC = Obj->getSymbolName(*Linked, LinkedName))) {
         LinkedName = "";
         error(EC);
       }
@@ -976,53 +906,60 @@ void COFFDumper::printSymbol(const SymbolRef &Sym) {
       W.printNumber("Linked", LinkedName, Aux->TagIndex);
       W.printEnum  ("Search", Aux->Characteristics,
                     makeArrayRef(WeakExternalCharacteristics));
-      W.printBinary("Unused", makeArrayRef(Aux->Unused));
 
-    } else if (Symbol->isFileRecord()) {
-      const coff_aux_file_record *Aux;
-      if (error(getSymbolAuxData(Obj, Symbol + I, Aux)))
+    } else if (Symbol.isFileRecord()) {
+      const char *FileName;
+      if (error(getSymbolAuxData(Obj, Symbol, I, FileName)))
         break;
 
       DictScope AS(W, "AuxFileRecord");
-      W.printString("FileName", StringRef(Aux->FileName));
 
-    } else if (Symbol->isSectionDefinition()) {
+      StringRef Name(FileName, Symbol.getNumberOfAuxSymbols() *
+                                   Obj->getSymbolTableEntrySize());
+      W.printString("FileName", Name.rtrim(StringRef("\0", 1)));
+      break;
+    } else if (Symbol.isSectionDefinition()) {
       const coff_aux_section_definition *Aux;
-      if (error(getSymbolAuxData(Obj, Symbol + I, Aux)))
+      if (error(getSymbolAuxData(Obj, Symbol, I, Aux)))
         break;
+
+      int32_t AuxNumber = Aux->getNumber(Symbol.isBigObj());
 
       DictScope AS(W, "AuxSectionDef");
       W.printNumber("Length", Aux->Length);
       W.printNumber("RelocationCount", Aux->NumberOfRelocations);
       W.printNumber("LineNumberCount", Aux->NumberOfLinenumbers);
       W.printHex("Checksum", Aux->CheckSum);
-      W.printNumber("Number", Aux->Number);
+      W.printNumber("Number", AuxNumber);
       W.printEnum("Selection", Aux->Selection, makeArrayRef(ImageCOMDATSelect));
-      W.printBinary("Unused", makeArrayRef(Aux->Unused));
 
       if (Section && Section->Characteristics & COFF::IMAGE_SCN_LNK_COMDAT
           && Aux->Selection == COFF::IMAGE_COMDAT_SELECT_ASSOCIATIVE) {
         const coff_section *Assoc;
-        StringRef AssocName;
-        error_code EC;
-        if ((EC = Obj->getSection(Aux->Number, Assoc)) ||
-            (EC = Obj->getSectionName(Assoc, AssocName))) {
+        StringRef AssocName = "";
+        std::error_code EC = Obj->getSection(AuxNumber, Assoc);
+        ErrorOr<StringRef> Res = getSectionName(Obj, AuxNumber, Assoc);
+        if (Res)
+          AssocName = *Res;
+        if (!EC)
+          EC = Res.getError();
+        if (EC) {
           AssocName = "";
           error(EC);
         }
 
-        W.printNumber("AssocSection", AssocName, Aux->Number);
+        W.printNumber("AssocSection", AssocName, AuxNumber);
       }
-    } else if (Symbol->isCLRToken()) {
+    } else if (Symbol.isCLRToken()) {
       const coff_aux_clr_token *Aux;
-      if (error(getSymbolAuxData(Obj, Symbol + I, Aux)))
+      if (error(getSymbolAuxData(Obj, Symbol, I, Aux)))
         break;
 
-      const coff_symbol *ReferredSym;
+      ErrorOr<COFFSymbolRef> ReferredSym =
+          Obj->getSymbol(Aux->SymbolTableIndex);
       StringRef ReferredName;
-      error_code EC;
-      if ((EC = Obj->getSymbol(Aux->SymbolTableIndex, ReferredSym)) ||
-          (EC = Obj->getSymbolName(ReferredSym, ReferredName))) {
+      std::error_code EC = ReferredSym.getError();
+      if (EC || (EC = Obj->getSymbolName(*ReferredSym, ReferredName))) {
         ReferredName = "";
         error(EC);
       }
@@ -1031,7 +968,6 @@ void COFFDumper::printSymbol(const SymbolRef &Sym) {
       W.printNumber("AuxType", Aux->AuxType);
       W.printNumber("Reserved", Aux->Reserved);
       W.printNumber("SymbolTableIndex", ReferredName, Aux->SymbolTableIndex);
-      W.printBinary("Unused", makeArrayRef(Aux->Unused));
 
     } else {
       W.startLine() << "<unhandled auxiliary record>\n";
@@ -1040,186 +976,153 @@ void COFFDumper::printSymbol(const SymbolRef &Sym) {
 }
 
 void COFFDumper::printUnwindInfo() {
-  const coff_file_header *Header;
-  if (error(Obj->getCOFFHeader(Header)))
-    return;
-
   ListScope D(W, "UnwindInformation");
-  if (Header->Machine != COFF::IMAGE_FILE_MACHINE_AMD64) {
-    W.startLine() << "Unsupported image machine type "
-              "(currently only AMD64 is supported).\n";
-    return;
+  switch (Obj->getMachine()) {
+  case COFF::IMAGE_FILE_MACHINE_AMD64: {
+    Win64EH::Dumper Dumper(W);
+    Win64EH::Dumper::SymbolResolver
+    Resolver = [](const object::coff_section *Section, uint64_t Offset,
+                  SymbolRef &Symbol, void *user_data) -> std::error_code {
+      COFFDumper *Dumper = reinterpret_cast<COFFDumper *>(user_data);
+      return Dumper->resolveSymbol(Section, Offset, Symbol);
+    };
+    Win64EH::Dumper::Context Ctx(*Obj, Resolver, this);
+    Dumper.printData(Ctx);
+    break;
   }
-
-  printX64UnwindInfo();
+  case COFF::IMAGE_FILE_MACHINE_ARMNT: {
+    ARM::WinEH::Decoder Decoder(W);
+    Decoder.dumpProcedureData(*Obj);
+    break;
+  }
+  default:
+    W.printEnum("unsupported Image Machine", Obj->getMachine(),
+                makeArrayRef(ImageFileMachineType));
+    break;
+  }
 }
 
-void COFFDumper::printX64UnwindInfo() {
-  for (const SectionRef &Section : Obj->sections()) {
+void COFFDumper::printImportedSymbols(
+    iterator_range<imported_symbol_iterator> Range) {
+  for (const ImportedSymbolRef &I : Range) {
+    StringRef Sym;
+    if (error(I.getSymbolName(Sym))) return;
+    uint16_t Ordinal;
+    if (error(I.getOrdinal(Ordinal))) return;
+    W.printNumber("Symbol", Sym, Ordinal);
+  }
+}
+
+void COFFDumper::printDelayImportedSymbols(
+    const DelayImportDirectoryEntryRef &I,
+    iterator_range<imported_symbol_iterator> Range) {
+  int Index = 0;
+  for (const ImportedSymbolRef &S : Range) {
+    DictScope Import(W, "Import");
+    StringRef Sym;
+    if (error(S.getSymbolName(Sym))) return;
+    uint16_t Ordinal;
+    if (error(S.getOrdinal(Ordinal))) return;
+    W.printNumber("Symbol", Sym, Ordinal);
+    uint64_t Addr;
+    if (error(I.getImportAddress(Index++, Addr))) return;
+    W.printHex("Address", Addr);
+  }
+}
+
+void COFFDumper::printCOFFImports() {
+  // Regular imports
+  for (const ImportDirectoryEntryRef &I : Obj->import_directories()) {
+    DictScope Import(W, "Import");
     StringRef Name;
+    if (error(I.getName(Name))) return;
+    W.printString("Name", Name);
+    uint32_t Addr;
+    if (error(I.getImportLookupTableRVA(Addr))) return;
+    W.printHex("ImportLookupTableRVA", Addr);
+    if (error(I.getImportAddressTableRVA(Addr))) return;
+    W.printHex("ImportAddressTableRVA", Addr);
+    printImportedSymbols(I.imported_symbols());
+  }
+
+  // Delay imports
+  for (const DelayImportDirectoryEntryRef &I : Obj->delay_import_directories()) {
+    DictScope Import(W, "DelayImport");
+    StringRef Name;
+    if (error(I.getName(Name))) return;
+    W.printString("Name", Name);
+    const delay_import_directory_table_entry *Table;
+    if (error(I.getDelayImportTable(Table))) return;
+    W.printHex("Attributes", Table->Attributes);
+    W.printHex("ModuleHandle", Table->ModuleHandle);
+    W.printHex("ImportAddressTable", Table->DelayImportAddressTable);
+    W.printHex("ImportNameTable", Table->DelayImportNameTable);
+    W.printHex("BoundDelayImportTable", Table->BoundDelayImportTable);
+    W.printHex("UnloadDelayImportTable", Table->UnloadDelayImportTable);
+    printDelayImportedSymbols(I, I.imported_symbols());
+  }
+}
+
+void COFFDumper::printCOFFExports() {
+  for (const ExportDirectoryEntryRef &E : Obj->export_directories()) {
+    DictScope Export(W, "Export");
+
+    StringRef Name;
+    uint32_t Ordinal, RVA;
+
+    if (error(E.getSymbolName(Name)))
+      continue;
+    if (error(E.getOrdinal(Ordinal)))
+      continue;
+    if (error(E.getExportRVA(RVA)))
+      continue;
+
+    W.printNumber("Ordinal", Ordinal);
+    W.printString("Name", Name);
+    W.printHex("RVA", RVA);
+  }
+}
+
+void COFFDumper::printCOFFDirectives() {
+  for (const SectionRef &Section : Obj->sections()) {
+    StringRef Contents;
+    StringRef Name;
+
     if (error(Section.getName(Name)))
       continue;
-    if (Name != ".pdata" && !Name.startswith(".pdata$"))
+    if (Name != ".drectve")
       continue;
 
-    const coff_section *PData = Obj->getCOFFSection(Section);
+    if (error(Section.getContents(Contents)))
+      return;
 
-    ArrayRef<uint8_t> Contents;
-    if (error(Obj->getSectionContents(PData, Contents)) || Contents.empty())
+    W.printString("Directive(s)", Contents);
+  }
+}
+
+static StringRef getBaseRelocTypeName(uint8_t Type) {
+  switch (Type) {
+  case COFF::IMAGE_REL_BASED_ABSOLUTE: return "ABSOLUTE";
+  case COFF::IMAGE_REL_BASED_HIGH: return "HIGH";
+  case COFF::IMAGE_REL_BASED_LOW: return "LOW";
+  case COFF::IMAGE_REL_BASED_HIGHLOW: return "HIGHLOW";
+  case COFF::IMAGE_REL_BASED_HIGHADJ: return "HIGHADJ";
+  case COFF::IMAGE_REL_BASED_DIR64: return "DIR64";
+  default: return "unknown (" + llvm::utostr(Type) + ")";
+  }
+}
+
+void COFFDumper::printCOFFBaseReloc() {
+  ListScope D(W, "BaseReloc");
+  for (const BaseRelocRef &I : Obj->base_relocs()) {
+    uint8_t Type;
+    uint32_t RVA;
+    if (error(I.getRVA(RVA)))
       continue;
-
-    ArrayRef<RuntimeFunction> RFs(
-      reinterpret_cast<const RuntimeFunction *>(Contents.data()),
-      Contents.size() / sizeof(RuntimeFunction));
-
-    for (const RuntimeFunction *I = RFs.begin(), *E = RFs.end(); I < E; ++I) {
-      const uint64_t OffsetInSection = std::distance(RFs.begin(), I)
-                                     * sizeof(RuntimeFunction);
-
-      printRuntimeFunction(*I, OffsetInSection, RelocMap[PData]);
-    }
+    if (error(I.getType(Type)))
+      continue;
+    DictScope Import(W, "Entry");
+    W.printString("Type", getBaseRelocTypeName(Type));
+    W.printHex("Address", RVA);
   }
-}
-
-void COFFDumper::printRuntimeFunction(
-    const RuntimeFunction& RTF,
-    uint64_t OffsetInSection,
-    const std::vector<RelocationRef> &Rels) {
-
-  DictScope D(W, "RuntimeFunction");
-  W.printString("StartAddress",
-                formatSymbol(Rels, OffsetInSection + 0, RTF.StartAddress));
-  W.printString("EndAddress",
-                formatSymbol(Rels, OffsetInSection + 4, RTF.EndAddress));
-  W.printString("UnwindInfoAddress",
-                formatSymbol(Rels, OffsetInSection + 8, RTF.UnwindInfoOffset));
-
-  const coff_section* XData = 0;
-  uint64_t UnwindInfoOffset = 0;
-  if (error(getSection(Rels, OffsetInSection + 8, &XData, &UnwindInfoOffset)))
-    return;
-
-  ArrayRef<uint8_t> XContents;
-  if (error(Obj->getSectionContents(XData, XContents)) || XContents.empty())
-    return;
-
-  UnwindInfoOffset += RTF.UnwindInfoOffset;
-  if (UnwindInfoOffset > XContents.size())
-    return;
-
-  const Win64EH::UnwindInfo *UI =
-    reinterpret_cast<const Win64EH::UnwindInfo *>(
-      XContents.data() + UnwindInfoOffset);
-
-  printUnwindInfo(*UI, UnwindInfoOffset, RelocMap[XData]);
-}
-
-void COFFDumper::printUnwindInfo(
-    const Win64EH::UnwindInfo& UI,
-    uint64_t OffsetInSection,
-    const std::vector<RelocationRef> &Rels) {
-  DictScope D(W, "UnwindInfo");
-  W.printNumber("Version", UI.getVersion());
-  W.printFlags("Flags", UI.getFlags(), makeArrayRef(UnwindFlags));
-  W.printNumber("PrologSize", UI.PrologSize);
-  if (UI.getFrameRegister() != 0) {
-    W.printEnum("FrameRegister", UI.getFrameRegister(),
-                makeArrayRef(UnwindOpInfo));
-    W.printHex("FrameOffset", UI.getFrameOffset());
-  } else {
-    W.printString("FrameRegister", StringRef("-"));
-    W.printString("FrameOffset", StringRef("-"));
-  }
-
-  W.printNumber("UnwindCodeCount", UI.NumCodes);
-  {
-    ListScope CodesD(W, "UnwindCodes");
-    ArrayRef<UnwindCode> UCs(&UI.UnwindCodes[0], UI.NumCodes);
-    for (const UnwindCode *I = UCs.begin(), *E = UCs.end(); I < E; ++I) {
-      unsigned UsedSlots = getNumUsedSlots(*I);
-      if (UsedSlots > UCs.size()) {
-        errs() << "Corrupt unwind data";
-        return;
-      }
-      printUnwindCode(UI, ArrayRef<UnwindCode>(I, E));
-      I += UsedSlots - 1;
-    }
-  }
-
-  uint64_t LSDAOffset = OffsetInSection + getOffsetOfLSDA(UI);
-  if (UI.getFlags() & (UNW_ExceptionHandler | UNW_TerminateHandler)) {
-    W.printString("Handler", formatSymbol(Rels, LSDAOffset,
-                                        UI.getLanguageSpecificHandlerOffset()));
-  } else if (UI.getFlags() & UNW_ChainInfo) {
-    const RuntimeFunction *Chained = UI.getChainedFunctionEntry();
-    if (Chained) {
-      DictScope D(W, "Chained");
-      W.printString("StartAddress", formatSymbol(Rels, LSDAOffset + 0,
-                                                        Chained->StartAddress));
-      W.printString("EndAddress", formatSymbol(Rels, LSDAOffset + 4,
-                                                          Chained->EndAddress));
-      W.printString("UnwindInfoAddress", formatSymbol(Rels, LSDAOffset + 8,
-                                                    Chained->UnwindInfoOffset));
-    }
-  }
-}
-
-// Prints one unwind code. Because an unwind code can occupy up to 3 slots in
-// the unwind codes array, this function requires that the correct number of
-// slots is provided.
-void COFFDumper::printUnwindCode(const Win64EH::UnwindInfo& UI,
-                                 ArrayRef<UnwindCode> UCs) {
-  assert(UCs.size() >= getNumUsedSlots(UCs[0]));
-
-  W.startLine() << format("0x%02X: ", unsigned(UCs[0].u.CodeOffset))
-                << getUnwindCodeTypeName(UCs[0].getUnwindOp());
-
-  uint32_t AllocSize = 0;
-
-  switch (UCs[0].getUnwindOp()) {
-  case UOP_PushNonVol:
-    outs() << " reg=" << getUnwindRegisterName(UCs[0].getOpInfo());
-    break;
-
-  case UOP_AllocLarge:
-    if (UCs[0].getOpInfo() == 0) {
-      AllocSize = UCs[1].FrameOffset * 8;
-    } else {
-      AllocSize = getLargeSlotValue(UCs);
-    }
-    outs() << " size=" << AllocSize;
-    break;
-  case UOP_AllocSmall:
-    outs() << " size=" << ((UCs[0].getOpInfo() + 1) * 8);
-    break;
-  case UOP_SetFPReg:
-    if (UI.getFrameRegister() == 0) {
-      outs() << " reg=<invalid>";
-    } else {
-      outs() << " reg=" << getUnwindRegisterName(UI.getFrameRegister())
-             << format(", offset=0x%X", UI.getFrameOffset() * 16);
-    }
-    break;
-  case UOP_SaveNonVol:
-    outs() << " reg=" << getUnwindRegisterName(UCs[0].getOpInfo())
-           << format(", offset=0x%X", UCs[1].FrameOffset * 8);
-    break;
-  case UOP_SaveNonVolBig:
-    outs() << " reg=" << getUnwindRegisterName(UCs[0].getOpInfo())
-           << format(", offset=0x%X", getLargeSlotValue(UCs));
-    break;
-  case UOP_SaveXMM128:
-    outs() << " reg=XMM" << static_cast<uint32_t>(UCs[0].getOpInfo())
-           << format(", offset=0x%X", UCs[1].FrameOffset * 16);
-    break;
-  case UOP_SaveXMM128Big:
-    outs() << " reg=XMM" << static_cast<uint32_t>(UCs[0].getOpInfo())
-           << format(", offset=0x%X", getLargeSlotValue(UCs));
-    break;
-  case UOP_PushMachFrame:
-    outs() << " errcode=" << (UCs[0].getOpInfo() == 0 ? "no" : "yes");
-    break;
-  }
-
-  outs() << "\n";
 }

@@ -1,4 +1,4 @@
-; RUN: llc < %s -mtriple=thumbv8 -print-machineinstrs=if-converter -o /dev/null 2>&1 | FileCheck %s
+; RUN: llc < %s -mtriple=thumbv8 -print-machineinstrs=if-converter -arm-atomic-cfg-tidy=0 -o /dev/null 2>&1 | FileCheck %s
 
 %struct.S = type { i8* (i8*)*, [1 x i8] }
 define internal zeroext i8 @bar(%struct.S* %x, %struct.S* nocapture %y) nounwind readonly {
@@ -38,5 +38,5 @@ return:
   ret i8 1
 }
 
-!0 = metadata !{metadata !"branch_weights", i32 4, i32 12}
-!1 = metadata !{metadata !"branch_weights", i32 8, i32 16}
+!0 = !{!"branch_weights", i32 4, i32 12}
+!1 = !{!"branch_weights", i32 8, i32 16}

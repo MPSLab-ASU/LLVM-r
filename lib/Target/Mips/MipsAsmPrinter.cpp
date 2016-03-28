@@ -12,7 +12,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#define DEBUG_TYPE "mips-asm-printer"
 #include "InstPrinter/MipsInstPrinter.h"
 #include "MCTargetDesc/MipsBaseInfo.h"
 #include "MCTargetDesc/MipsMCNaCl.h"
@@ -52,15 +51,19 @@
 
 using namespace llvm;
 
-MipsTargetStreamer &MipsAsmPrinter::getTargetStreamer() {
+#define DEBUG_TYPE "mips-asm-printer"
+
+MipsTargetStreamer &MipsAsmPrinter::getTargetStreamer() const {
   return static_cast<MipsTargetStreamer &>(*OutStreamer.getTargetStreamer());
 }
 
 bool MipsAsmPrinter::runOnMachineFunction(MachineFunction &MF) {
+  Subtarget = &TM.getSubtarget<MipsSubtarget>();
+
   // Initialize TargetLoweringObjectFile.
-  if (Subtarget->allowMixed16_32())
-    const_cast<TargetLoweringObjectFile&>(getObjFileLowering())
+  const_cast<TargetLoweringObjectFile &>(getObjFileLowering())
       .Initialize(OutContext, TM);
+
   MipsFI = MF.getInfo<MipsFunctionInfo>();
   if (Subtarget->inMips16Mode())
     for (std::map<
@@ -90,7 +93,46 @@ bool MipsAsmPrinter::lowerOperand(const MachineOperand &MO, MCOperand &MCOp) {
 
 #include "MipsGenMCPseudoLowering.inc"
 
+// Lower PseudoReturn/PseudoIndirectBranch/PseudoIndirectBranch64 to JR, JR_MM,
+// JALR, or JALR64 as appropriate for the target
+void MipsAsmPrinter::emitPseudoIndirectBranch(MCStreamer &OutStreamer,
+                                              const MachineInstr *MI) {
+  bool HasLinkReg = false;
+  MCInst TmpInst0;
+
+  if (Subtarget->hasMips64r6()) {
+    // MIPS64r6 should use (JALR64 ZERO_64, $rs)
+    TmpInst0.setOpcode(Mips::JALR64);
+    HasLinkReg = true;
+  } else if (Subtarget->hasMips32r6()) {
+    // MIPS32r6 should use (JALR ZERO, $rs)
+    TmpInst0.setOpcode(Mips::JALR);
+    HasLinkReg = true;
+  } else if (Subtarget->inMicroMipsMode())
+    // microMIPS should use (JR_MM $rs)
+    TmpInst0.setOpcode(Mips::JR_MM);
+  else {
+    // Everything else should use (JR $rs)
+    TmpInst0.setOpcode(Mips::JR);
+  }
+
+  MCOperand MCOp;
+
+  if (HasLinkReg) {
+    unsigned ZeroReg = Subtarget->isGP64bit() ? Mips::ZERO_64 : Mips::ZERO;
+    TmpInst0.addOperand(MCOperand::CreateReg(ZeroReg));
+  }
+
+  lowerOperand(MI->getOperand(0), MCOp);
+  TmpInst0.addOperand(MCOp);
+
+  EmitToStreamer(OutStreamer, TmpInst0);
+}
+
 void MipsAsmPrinter::EmitInstruction(const MachineInstr *MI) {
+  MipsTargetStreamer &TS = getTargetStreamer();
+  TS.forbidModuleDirective();
+
   if (MI->isDebugValue()) {
     SmallString<128> Str;
     raw_svector_ostream OS(Str);
@@ -140,6 +182,14 @@ void MipsAsmPrinter::EmitInstruction(const MachineInstr *MI) {
     if (emitPseudoExpansionLowering(OutStreamer, &*I))
       continue;
 
+    if (I->getOpcode() == Mips::PseudoReturn ||
+        I->getOpcode() == Mips::PseudoReturn64 ||
+        I->getOpcode() == Mips::PseudoIndirectBranch ||
+        I->getOpcode() == Mips::PseudoIndirectBranch64) {
+      emitPseudoIndirectBranch(OutStreamer, &*I);
+      continue;
+    }
+
     // The inMips16Mode() test is not permanent.
     // Some instructions are marked as pseudo right now which
     // would make the test fail for the wrong reason but
@@ -147,7 +197,8 @@ void MipsAsmPrinter::EmitInstruction(const MachineInstr *MI) {
     // removing another test for this situation downstream in the
     // callchain.
     //
-    if (I->isPseudo() && !Subtarget->inMips16Mode())
+    if (I->isPseudo() && !Subtarget->inMips16Mode()
+        && !isLongBranchPseudo(I->getOpcode()))
       llvm_unreachable("Pseudo opcode found in EmitInstruction()");
 
     MCInst TmpInst0;
@@ -215,7 +266,8 @@ void MipsAsmPrinter::printSavedRegsBitmask() {
     if (Mips::GPR32RegClass.contains(Reg))
       break;
 
-    unsigned RegNum = TM.getRegisterInfo()->getEncodingValue(Reg);
+    unsigned RegNum =
+        TM.getSubtargetImpl()->getRegisterInfo()->getEncodingValue(Reg);
     if (Mips::AFGR64RegClass.contains(Reg)) {
       FPUBitmask |= (3 << RegNum);
       CSFPRegsSize += AFGR64RegSize;
@@ -230,7 +282,8 @@ void MipsAsmPrinter::printSavedRegsBitmask() {
   // Set CPU Bitmask.
   for (; i != e; ++i) {
     unsigned Reg = CSI[i].getReg();
-    unsigned RegNum = TM.getRegisterInfo()->getEncodingValue(Reg);
+    unsigned RegNum =
+        TM.getSubtargetImpl()->getRegisterInfo()->getEncodingValue(Reg);
     CPUBitmask |= (1 << RegNum);
   }
 
@@ -255,7 +308,7 @@ void MipsAsmPrinter::printSavedRegsBitmask() {
 
 /// Frame Directive
 void MipsAsmPrinter::emitFrameDirective() {
-  const TargetRegisterInfo &RI = *TM.getRegisterInfo();
+  const TargetRegisterInfo &RI = *TM.getSubtargetImpl()->getRegisterInfo();
 
   unsigned stackReg  = RI.getFrameRegister(*MF);
   unsigned returnReg = RI.getRARegister();
@@ -266,11 +319,11 @@ void MipsAsmPrinter::emitFrameDirective() {
 
 /// Emit Set directives.
 const char *MipsAsmPrinter::getCurrentABIString() const {
-  switch (Subtarget->getTargetABI()) {
-  case MipsSubtarget::O32:  return "abi32";
-  case MipsSubtarget::N32:  return "abiN32";
-  case MipsSubtarget::N64:  return "abi64";
-  case MipsSubtarget::EABI: return "eabi32"; // TODO: handle eabi64
+  switch (Subtarget->getABI().GetEnumValue()) {
+  case MipsABIInfo::ABI::O32:  return "abi32";
+  case MipsABIInfo::ABI::N32:  return "abiN32";
+  case MipsABIInfo::ABI::N64:  return "abi64";
+  case MipsABIInfo::ABI::EABI: return "eabi32"; // TODO: handle eabi64
   default: llvm_unreachable("Unknown Mips ABI");
   }
 }
@@ -285,9 +338,8 @@ void MipsAsmPrinter::EmitFunctionEntryLabel() {
 
   if (Subtarget->inMicroMipsMode())
     TS.emitDirectiveSetMicroMips();
-  // leave out until FSF available gas has micromips changes
-  //  else
-  //    TS.emitDirectiveSetNoMicroMips();
+  else
+    TS.emitDirectiveSetNoMicroMips();
 
   if (Subtarget->inMips16Mode())
     TS.emitDirectiveSetMips16();
@@ -421,14 +473,12 @@ bool MipsAsmPrinter::PrintAsmOperand(const MachineInstr *MI, unsigned OpNum,
       return false;
     case 'z': {
       // $0 if zero, regular printing otherwise
-      if (MO.getType() != MachineOperand::MO_Immediate)
-        return true;
-      int64_t Val = MO.getImm();
-      if (Val)
-        O << Val;
-      else
+      if (MO.getType() == MachineOperand::MO_Immediate && MO.getImm() == 0) {
         O << "$0";
-      return false;
+        return false;
+      }
+      // If not, call printOperand as normal.
+      break;
     }
     case 'D': // Second part of a double word register operand
     case 'L': // Low order register of a double word register operand
@@ -510,7 +560,7 @@ bool MipsAsmPrinter::PrintAsmMemoryOperand(const MachineInstr *MI,
 
 void MipsAsmPrinter::printOperand(const MachineInstr *MI, int opNum,
                                   raw_ostream &O) {
-  const DataLayout *DL = TM.getDataLayout();
+  const DataLayout *DL = TM.getSubtargetImpl()->getDataLayout();
   const MachineOperand &MO = MI->getOperand(opNum);
   bool closeP = false;
 
@@ -595,6 +645,18 @@ printMemOperand(const MachineInstr *MI, int opNum, raw_ostream &O) {
   // Load/Store memory operands -- imm($reg)
   // If PIC target the target is loaded as the
   // pattern lw $25,%call16($28)
+
+  // opNum can be invalid if instruction has reglist as operand.
+  // MemOperand is always last operand of instruction (base + offset).
+  switch (MI->getOpcode()) {
+  default:
+    break;
+  case Mips::SWM32_MM:
+  case Mips::LWM32_MM:
+    opNum = MI->getNumOperands() - 2;
+    break;
+  }
+
   printOperand(MI, opNum+1, O);
   O << "(";
   printOperand(MI, opNum, O);
@@ -618,18 +680,37 @@ printFCCOperand(const MachineInstr *MI, int opNum, raw_ostream &O,
   O << Mips::MipsFCCToString((Mips::CondCode)MO.getImm());
 }
 
+void MipsAsmPrinter::
+printRegisterList(const MachineInstr *MI, int opNum, raw_ostream &O) {
+  for (int i = opNum, e = MI->getNumOperands(); i != e; ++i) {
+    if (i != opNum) O << ", ";
+    printOperand(MI, i, O);
+  }
+}
+
 void MipsAsmPrinter::EmitStartOfAsmFile(Module &M) {
-  // TODO: Need to add -mabicalls and -mno-abicalls flags.
-  // Currently we assume that -mabicalls is the default.
-  getTargetStreamer().emitDirectiveAbiCalls();
-  Reloc::Model RM = Subtarget->getRelocationModel();
-  if (RM == Reloc::Static && !Subtarget->hasMips64())
-    getTargetStreamer().emitDirectiveOptionPic0();
+  bool IsABICalls = Subtarget->isABICalls();
+  if (IsABICalls) {
+    getTargetStreamer().emitDirectiveAbiCalls();
+    Reloc::Model RM = TM.getRelocationModel();
+    // FIXME: This condition should be a lot more complicated that it is here.
+    //        Ideally it should test for properties of the ABI and not the ABI
+    //        itself.
+    //        For the moment, I'm only correcting enough to make MIPS-IV work.
+    if (RM == Reloc::Static && !Subtarget->isABI_N64())
+      getTargetStreamer().emitDirectiveOptionPic0();
+  }
 
   // Tell the assembler which ABI we are using
   std::string SectionName = std::string(".mdebug.") + getCurrentABIString();
   OutStreamer.SwitchSection(OutContext.getELFSection(
       SectionName, ELF::SHT_PROGBITS, 0, SectionKind::getDataRel()));
+
+  // NaN: At the moment we only support:
+  // 1. .nan legacy (default)
+  // 2. .nan 2008
+  Subtarget->isNaN2008() ? getTargetStreamer().emitDirectiveNaN2008()
+    : getTargetStreamer().emitDirectiveNaNLegacy();
 
   // TODO: handle O64 ABI
 
@@ -643,6 +724,46 @@ void MipsAsmPrinter::EmitStartOfAsmFile(Module &M) {
           OutContext.getELFSection(".gcc_compiled_long64", ELF::SHT_PROGBITS, 0,
                                    SectionKind::getDataRel()));
   }
+
+  getTargetStreamer().updateABIInfo(*Subtarget);
+
+  // We should always emit a '.module fp=...' but binutils 2.24 does not accept
+  // it. We therefore emit it when it contradicts the ABI defaults (-mfpxx or
+  // -mfp64) and omit it otherwise.
+  if (Subtarget->isABI_O32() && (Subtarget->isABI_FPXX() ||
+                                 Subtarget->isFP64bit()))
+    getTargetStreamer().emitDirectiveModuleFP();
+
+  // We should always emit a '.module [no]oddspreg' but binutils 2.24 does not
+  // accept it. We therefore emit it when it contradicts the default or an
+  // option has changed the default (i.e. FPXX) and omit it otherwise.
+  if (Subtarget->isABI_O32() && (!Subtarget->useOddSPReg() ||
+                                 Subtarget->isABI_FPXX()))
+    getTargetStreamer().emitDirectiveModuleOddSPReg(Subtarget->useOddSPReg(),
+                                                    Subtarget->isABI_O32());
+}
+
+void MipsAsmPrinter::emitInlineAsmStart(
+    const MCSubtargetInfo &StartInfo) const {
+  MipsTargetStreamer &TS = getTargetStreamer();
+
+  // GCC's choice of assembler options for inline assembly code ('at', 'macro'
+  // and 'reorder') is different from LLVM's choice for generated code ('noat',
+  // 'nomacro' and 'noreorder').
+  // In order to maintain compatibility with inline assembly code which depends
+  // on GCC's assembler options being used, we have to switch to those options
+  // for the duration of the inline assembly block and then switch back.
+  TS.emitDirectiveSetPush();
+  TS.emitDirectiveSetAt();
+  TS.emitDirectiveSetMacro();
+  TS.emitDirectiveSetReorder();
+  OutStreamer.AddBlankLine();
+}
+
+void MipsAsmPrinter::emitInlineAsmEnd(const MCSubtargetInfo &StartInfo,
+                                      const MCSubtargetInfo *EndInfo) const {
+  OutStreamer.AddBlankLine();
+  getTargetStreamer().emitDirectiveSetPop();
 }
 
 void MipsAsmPrinter::EmitJal(MCSymbol *Symbol) {
@@ -824,7 +945,7 @@ void MipsAsmPrinter::EmitFPCallStub(
   const MCSectionELF *M = OutContext.getELFSection(
       ".mips16.call.fp." + std::string(Symbol), ELF::SHT_PROGBITS,
       ELF::SHF_ALLOC | ELF::SHF_EXECINSTR, SectionKind::getText());
-  OutStreamer.SwitchSection(M, 0);
+  OutStreamer.SwitchSection(M, nullptr);
   //
   // .align 2
   //
@@ -838,7 +959,7 @@ void MipsAsmPrinter::EmitFPCallStub(
   TS.emitDirectiveSetNoMicroMips();
   //
   // .ent __call_stub_fp_xxxx
-  // .type	__call_stub_fp_xxxx,@function
+  // .type  __call_stub_fp_xxxx,@function
   //  __call_stub_fp_xxxx:
   //
   std::string x = "__call_stub_fp_" + std::string(Symbol);
@@ -853,7 +974,7 @@ void MipsAsmPrinter::EmitFPCallStub(
   // called otherwise. when the full stub generation is moved here
   // we need to deal with pic.
   //
-  if (Subtarget->getRelocationModel() == Reloc::PIC_)
+  if (TM.getRelocationModel() == Reloc::PIC_)
     llvm_unreachable("should not be here if we are compiling pic");
   TS.emitDirectiveSetReorder();
   //
@@ -939,6 +1060,12 @@ void MipsAsmPrinter::NaClAlignIndirectJumpTargets(MachineFunction &MF) {
     if (MBB->hasAddressTaken())
       MBB->setAlignment(MIPS_NACL_BUNDLE_ALIGN);
   }
+}
+
+bool MipsAsmPrinter::isLongBranchPseudo(int Opcode) const {
+  return (Opcode == Mips::LONG_BRANCH_LUi
+          || Opcode == Mips::LONG_BRANCH_ADDiu
+          || Opcode == Mips::LONG_BRANCH_DADDiu);
 }
 
 // Force static initialization.

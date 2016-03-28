@@ -20,23 +20,30 @@
 #include "PPCTargetMachine.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/Statistic.h"
+#include "llvm/CodeGen/LiveIntervalAnalysis.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineMemOperand.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/PseudoSourceValue.h"
+#include "llvm/CodeGen/ScheduleDAG.h"
+#include "llvm/CodeGen/SlotIndexes.h"
+#include "llvm/CodeGen/StackMaps.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/TargetRegistry.h"
 #include "llvm/Support/raw_ostream.h"
 
+using namespace llvm;
+
+#define DEBUG_TYPE "ppc-instr-info"
+
 #define GET_INSTRMAP_INFO
 #define GET_INSTRINFO_CTOR_DTOR
 #include "PPCGenInstrInfo.inc"
-
-using namespace llvm;
 
 static cl::
 opt<bool> DisableCTRLoopAnal("disable-ppc-ctrloop-analysis", cl::Hidden,
@@ -45,26 +52,35 @@ opt<bool> DisableCTRLoopAnal("disable-ppc-ctrloop-analysis", cl::Hidden,
 static cl::opt<bool> DisableCmpOpt("disable-ppc-cmp-opt",
 cl::desc("Disable compare instruction optimization"), cl::Hidden);
 
+static cl::opt<bool> DisableVSXFMAMutate("disable-ppc-vsx-fma-mutation",
+cl::desc("Disable VSX FMA instruction mutation"), cl::Hidden);
+
+static cl::opt<bool> VSXSelfCopyCrash("crash-on-ppc-vsx-self-copy",
+cl::desc("Causes the backend to crash instead of generating a nop VSX copy"),
+cl::Hidden);
+
 // Pin the vtable to this file.
 void PPCInstrInfo::anchor() {}
 
-PPCInstrInfo::PPCInstrInfo(PPCTargetMachine &tm)
-  : PPCGenInstrInfo(PPC::ADJCALLSTACKDOWN, PPC::ADJCALLSTACKUP),
-    TM(tm), RI(*TM.getSubtargetImpl()) {}
+PPCInstrInfo::PPCInstrInfo(PPCSubtarget &STI)
+    : PPCGenInstrInfo(PPC::ADJCALLSTACKDOWN, PPC::ADJCALLSTACKUP),
+      Subtarget(STI), RI(STI) {}
 
 /// CreateTargetHazardRecognizer - Return the hazard recognizer to use for
 /// this target when scheduling the DAG.
-ScheduleHazardRecognizer *PPCInstrInfo::CreateTargetHazardRecognizer(
-  const TargetMachine *TM,
-  const ScheduleDAG *DAG) const {
-  unsigned Directive = TM->getSubtarget<PPCSubtarget>().getDarwinDirective();
+ScheduleHazardRecognizer *
+PPCInstrInfo::CreateTargetHazardRecognizer(const TargetSubtargetInfo *STI,
+                                           const ScheduleDAG *DAG) const {
+  unsigned Directive =
+      static_cast<const PPCSubtarget *>(STI)->getDarwinDirective();
   if (Directive == PPC::DIR_440 || Directive == PPC::DIR_A2 ||
       Directive == PPC::DIR_E500mc || Directive == PPC::DIR_E5500) {
-    const InstrItineraryData *II = TM->getInstrItineraryData();
+    const InstrItineraryData *II =
+        static_cast<const PPCSubtarget *>(STI)->getInstrItineraryData();
     return new ScoreboardHazardRecognizer(II, DAG);
   }
 
-  return TargetInstrInfo::CreateTargetHazardRecognizer(TM, DAG);
+  return TargetInstrInfo::CreateTargetHazardRecognizer(STI, DAG);
 }
 
 /// CreateTargetPostRAHazardRecognizer - Return the postRA hazard recognizer
@@ -72,17 +88,18 @@ ScheduleHazardRecognizer *PPCInstrInfo::CreateTargetHazardRecognizer(
 ScheduleHazardRecognizer *PPCInstrInfo::CreateTargetPostRAHazardRecognizer(
   const InstrItineraryData *II,
   const ScheduleDAG *DAG) const {
-  unsigned Directive = TM.getSubtarget<PPCSubtarget>().getDarwinDirective();
+  unsigned Directive =
+      DAG->TM.getSubtarget<PPCSubtarget>().getDarwinDirective();
 
-  if (Directive == PPC::DIR_PWR7)
+  if (Directive == PPC::DIR_PWR7 || Directive == PPC::DIR_PWR8)
     return new PPCDispatchGroupSBHazardRecognizer(II, DAG);
 
   // Most subtargets use a PPC970 recognizer.
   if (Directive != PPC::DIR_440 && Directive != PPC::DIR_A2 &&
       Directive != PPC::DIR_E500mc && Directive != PPC::DIR_E5500) {
-    assert(TM.getInstrInfo() && "No InstrInfo?");
+    assert(DAG->TII && "No InstrInfo?");
 
-    return new PPCHazardRecognizer970(TM);
+    return new PPCHazardRecognizer970(*DAG);
   }
 
   return new ScoreboardHazardRecognizer(II, DAG);
@@ -117,7 +134,7 @@ int PPCInstrInfo::getOperandLatency(const InstrItineraryData *ItinData,
 
     // On some cores, there is an additional delay between writing to a condition
     // register, and using it from a branch.
-    unsigned Directive = TM.getSubtarget<PPCSubtarget>().getDarwinDirective();
+    unsigned Directive = Subtarget.getDarwinDirective();
     switch (Directive) {
     default: break;
     case PPC::DIR_7400:
@@ -130,6 +147,7 @@ int PPCInstrInfo::getOperandLatency(const InstrItineraryData *ItinData,
     case PPC::DIR_PWR6:
     case PPC::DIR_PWR6X:
     case PPC::DIR_PWR7:
+    case PPC::DIR_PWR8:
       Latency += 2;
       break;
     }
@@ -213,14 +231,16 @@ PPCInstrInfo::commuteInstruction(MachineInstr *MI, bool NewMI) const {
 
   // Normal instructions can be commuted the obvious way.
   if (MI->getOpcode() != PPC::RLWIMI &&
-      MI->getOpcode() != PPC::RLWIMIo &&
-      MI->getOpcode() != PPC::RLWIMI8 &&
-      MI->getOpcode() != PPC::RLWIMI8o)
+      MI->getOpcode() != PPC::RLWIMIo)
     return TargetInstrInfo::commuteInstruction(MI, NewMI);
+  // Note that RLWIMI can be commuted as a 32-bit instruction, but not as a
+  // 64-bit instruction (so we don't handle PPC::RLWIMI8 here), because
+  // changing the relative order of the mask operands might change what happens
+  // to the high-bits of the mask (and, thus, the result).
 
   // Cannot commute if it has a non-zero rotate count.
   if (MI->getOperand(3).getImm() != 0)
-    return 0;
+    return nullptr;
 
   // If we have a zero rotate count, we have:
   //   M = mask(MB,ME)
@@ -282,20 +302,41 @@ PPCInstrInfo::commuteInstruction(MachineInstr *MI, bool NewMI) const {
   return MI;
 }
 
+bool PPCInstrInfo::findCommutedOpIndices(MachineInstr *MI, unsigned &SrcOpIdx1,
+                                         unsigned &SrcOpIdx2) const {
+  // For VSX A-Type FMA instructions, it is the first two operands that can be
+  // commuted, however, because the non-encoded tied input operand is listed
+  // first, the operands to swap are actually the second and third.
+
+  int AltOpc = PPC::getAltVSXFMAOpcode(MI->getOpcode());
+  if (AltOpc == -1)
+    return TargetInstrInfo::findCommutedOpIndices(MI, SrcOpIdx1, SrcOpIdx2);
+
+  SrcOpIdx1 = 2;
+  SrcOpIdx2 = 3;
+  return true;
+}
+
 void PPCInstrInfo::insertNoop(MachineBasicBlock &MBB,
                               MachineBasicBlock::iterator MI) const {
   // This function is used for scheduling, and the nop wanted here is the type
   // that terminates dispatch groups on the POWER cores.
-  unsigned Directive = TM.getSubtarget<PPCSubtarget>().getDarwinDirective();
+  unsigned Directive = Subtarget.getDarwinDirective();
   unsigned Opcode;
   switch (Directive) {
   default:            Opcode = PPC::NOP; break;
   case PPC::DIR_PWR6: Opcode = PPC::NOP_GT_PWR6; break;
   case PPC::DIR_PWR7: Opcode = PPC::NOP_GT_PWR7; break;
+  case PPC::DIR_PWR8: Opcode = PPC::NOP_GT_PWR7; break; /* FIXME: Update when P8 InstrScheduling model is ready */
   }
 
   DebugLoc DL;
   BuildMI(MBB, MI, DL, get(Opcode));
+}
+
+/// getNoopForMachoTarget - Return the noop instruction to use for a noop.
+void PPCInstrInfo::getNoopForMachoTarget(MCInst &NopInst) const {
+  NopInst.setOpcode(PPC::NOP);
 }
 
 // Branch analysis.
@@ -305,7 +346,7 @@ bool PPCInstrInfo::AnalyzeBranch(MachineBasicBlock &MBB,MachineBasicBlock *&TBB,
                                  MachineBasicBlock *&FBB,
                                  SmallVectorImpl<MachineOperand> &Cond,
                                  bool AllowModify) const {
-  bool isPPC64 = TM.getSubtargetImpl()->isPPC64();
+  bool isPPC64 = Subtarget.isPPC64();
 
   // If the block has no terminators, it just falls into the block after it.
   MachineBasicBlock::iterator I = MBB.end();
@@ -511,10 +552,10 @@ PPCInstrInfo::InsertBranch(MachineBasicBlock &MBB, MachineBasicBlock *TBB,
   assert((Cond.size() == 2 || Cond.size() == 0) &&
          "PPC branch conditions have two components!");
 
-  bool isPPC64 = TM.getSubtargetImpl()->isPPC64();
+  bool isPPC64 = Subtarget.isPPC64();
 
   // One-way branch.
-  if (FBB == 0) {
+  if (!FBB) {
     if (Cond.empty())   // Unconditional branch
       BuildMI(&MBB, DL, get(PPC::B)).addMBB(TBB);
     else if (Cond[1].getReg() == PPC::CTR || Cond[1].getReg() == PPC::CTR8)
@@ -552,7 +593,7 @@ bool PPCInstrInfo::canInsertSelect(const MachineBasicBlock &MBB,
                 const SmallVectorImpl<MachineOperand> &Cond,
                 unsigned TrueReg, unsigned FalseReg,
                 int &CondCycles, int &TrueCycles, int &FalseCycles) const {
-  if (!TM.getSubtargetImpl()->hasISEL())
+  if (!Subtarget.hasISEL())
     return false;
 
   if (Cond.size() != 2)
@@ -596,7 +637,7 @@ void PPCInstrInfo::insertSelect(MachineBasicBlock &MBB,
   assert(Cond.size() == 2 &&
          "PPC branch conditions have two components!");
 
-  assert(TM.getSubtargetImpl()->hasISEL() &&
+  assert(Subtarget.hasISEL() &&
          "Cannot insert select on target without ISEL support");
 
   // Get the register classes.
@@ -658,15 +699,15 @@ void PPCInstrInfo::copyPhysReg(MachineBasicBlock &MBB,
                                unsigned DestReg, unsigned SrcReg,
                                bool KillSrc) const {
   // We can end up with self copies and similar things as a result of VSX copy
-  // legalization. Promote (or just ignore) them here.
+  // legalization. Promote them here.
   const TargetRegisterInfo *TRI = &getRegisterInfo();
   if (PPC::F8RCRegClass.contains(DestReg) &&
       PPC::VSLRCRegClass.contains(SrcReg)) {
     unsigned SuperReg =
       TRI->getMatchingSuperReg(DestReg, PPC::sub_64, &PPC::VSRCRegClass);
 
-    if (SrcReg == SuperReg)
-      return;
+    if (VSXSelfCopyCrash && SrcReg == SuperReg)
+      llvm_unreachable("nop VSX copy");
 
     DestReg = SuperReg;
   } else if (PPC::VRRCRegClass.contains(DestReg) &&
@@ -674,8 +715,8 @@ void PPCInstrInfo::copyPhysReg(MachineBasicBlock &MBB,
     unsigned SuperReg =
       TRI->getMatchingSuperReg(DestReg, PPC::sub_128, &PPC::VSRCRegClass);
 
-    if (SrcReg == SuperReg)
-      return;
+    if (VSXSelfCopyCrash && SrcReg == SuperReg)
+      llvm_unreachable("nop VSX copy");
 
     DestReg = SuperReg;
   } else if (PPC::F8RCRegClass.contains(SrcReg) &&
@@ -683,8 +724,8 @@ void PPCInstrInfo::copyPhysReg(MachineBasicBlock &MBB,
     unsigned SuperReg =
       TRI->getMatchingSuperReg(SrcReg, PPC::sub_64, &PPC::VSRCRegClass);
 
-    if (DestReg == SuperReg)
-      return;
+    if (VSXSelfCopyCrash && DestReg == SuperReg)
+      llvm_unreachable("nop VSX copy");
 
     SrcReg = SuperReg;
   } else if (PPC::VRRCRegClass.contains(SrcReg) &&
@@ -692,8 +733,8 @@ void PPCInstrInfo::copyPhysReg(MachineBasicBlock &MBB,
     unsigned SuperReg =
       TRI->getMatchingSuperReg(SrcReg, PPC::sub_128, &PPC::VSRCRegClass);
 
-    if (DestReg == SuperReg)
-      return;
+    if (VSXSelfCopyCrash && DestReg == SuperReg)
+      llvm_unreachable("nop VSX copy");
 
     SrcReg = SuperReg;
   }
@@ -710,13 +751,17 @@ void PPCInstrInfo::copyPhysReg(MachineBasicBlock &MBB,
   else if (PPC::VRRCRegClass.contains(DestReg, SrcReg))
     Opc = PPC::VOR;
   else if (PPC::VSRCRegClass.contains(DestReg, SrcReg))
-    // FIXME: There are really two different ways this can be done, and we
-    // should pick the better one depending on the situation:
+    // There are two different ways this can be done:
     //   1. xxlor : This has lower latency (on the P7), 2 cycles, but can only
     //      issue in VSU pipeline 0.
     //   2. xmovdp/xmovsp: This has higher latency (on the P7), 6 cycles, but
     //      can go to either pipeline.
+    // We'll always use xxlor here, because in practically all cases where
+    // copies are generated, they are close enough to some use that the
+    // lower-latency form is preferable.
     Opc = PPC::XXLOR;
+  else if (PPC::VSFRCRegClass.contains(DestReg, SrcReg))
+    Opc = PPC::XXLORf;
   else if (PPC::CRBITRCRegClass.contains(DestReg, SrcReg))
     Opc = PPC::CROR;
   else
@@ -788,8 +833,14 @@ PPCInstrInfo::StoreRegToStackSlot(MachineFunction &MF,
                                                getKillRegState(isKill)),
                                        FrameIdx));
     NonRI = true;
+  } else if (PPC::VSFRCRegClass.hasSubClassEq(RC)) {
+    NewMIs.push_back(addFrameReference(BuildMI(MF, DL, get(PPC::STXSDX))
+                                       .addReg(SrcReg,
+                                               getKillRegState(isKill)),
+                                       FrameIdx));
+    NonRI = true;
   } else if (PPC::VRSAVERCRegClass.hasSubClassEq(RC)) {
-    assert(TM.getSubtargetImpl()->isDarwin() &&
+    assert(Subtarget.isDarwin() &&
            "VRSAVE only needs spill/restore on Darwin");
     NewMIs.push_back(addFrameReference(BuildMI(MF, DL, get(PPC::SPILL_VRSAVE))
                                        .addReg(SrcReg,
@@ -879,8 +930,12 @@ PPCInstrInfo::LoadRegFromStackSlot(MachineFunction &MF, DebugLoc DL,
     NewMIs.push_back(addFrameReference(BuildMI(MF, DL, get(PPC::LXVD2X), DestReg),
                                        FrameIdx));
     NonRI = true;
+  } else if (PPC::VSFRCRegClass.hasSubClassEq(RC)) {
+    NewMIs.push_back(addFrameReference(BuildMI(MF, DL, get(PPC::LXSDX), DestReg),
+                                       FrameIdx));
+    NonRI = true;
   } else if (PPC::VRSAVERCRegClass.hasSubClassEq(RC)) {
-    assert(TM.getSubtargetImpl()->isDarwin() &&
+    assert(Subtarget.isDarwin() &&
            "VRSAVE only needs spill/restore on Darwin");
     NewMIs.push_back(addFrameReference(BuildMI(MF, DL,
                                                get(PPC::RESTORE_VRSAVE),
@@ -994,7 +1049,7 @@ bool PPCInstrInfo::FoldImmediate(MachineInstr *UseMI, MachineInstr *DefMI,
 
   unsigned ZeroReg;
   if (UseInfo->isLookupPtrRegClass()) {
-    bool isPPC64 = TM.getSubtargetImpl()->isPPC64();
+    bool isPPC64 = Subtarget.isPPC64();
     ZeroReg = isPPC64 ? PPC::ZERO8 : PPC::ZERO;
   } else {
     ZeroReg = UseInfo->RegClass == PPC::G8RC_NOX0RegClassID ?
@@ -1059,9 +1114,9 @@ bool PPCInstrInfo::PredicateInstruction(
                      MachineInstr *MI,
                      const SmallVectorImpl<MachineOperand> &Pred) const {
   unsigned OpC = MI->getOpcode();
-  if (OpC == PPC::BLR) {
+  if (OpC == PPC::BLR || OpC == PPC::BLR8) {
     if (Pred[1].getReg() == PPC::CTR8 || Pred[1].getReg() == PPC::CTR) {
-      bool isPPC64 = TM.getSubtargetImpl()->isPPC64();
+      bool isPPC64 = Subtarget.isPPC64();
       MI->setDesc(get(Pred[0].getImm() ?
                       (isPPC64 ? PPC::BDNZLR8 : PPC::BDNZLR) :
                       (isPPC64 ? PPC::BDZLR8  : PPC::BDZLR)));
@@ -1083,7 +1138,7 @@ bool PPCInstrInfo::PredicateInstruction(
     return true;
   } else if (OpC == PPC::B) {
     if (Pred[1].getReg() == PPC::CTR8 || Pred[1].getReg() == PPC::CTR) {
-      bool isPPC64 = TM.getSubtargetImpl()->isPPC64();
+      bool isPPC64 = Subtarget.isPPC64();
       MI->setDesc(get(Pred[0].getImm() ?
                       (isPPC64 ? PPC::BDNZ8 : PPC::BDNZ) :
                       (isPPC64 ? PPC::BDZ8  : PPC::BDZ)));
@@ -1121,7 +1176,7 @@ bool PPCInstrInfo::PredicateInstruction(
       llvm_unreachable("Cannot predicate bctr[l] on the ctr register");
 
     bool setLR = OpC == PPC::BCTRL || OpC == PPC::BCTRL8;
-    bool isPPC64 = TM.getSubtargetImpl()->isPPC64();
+    bool isPPC64 = Subtarget.isPPC64();
 
     if (Pred[0].getImm() == PPC::PRED_BIT_SET) {
       MI->setDesc(get(isPPC64 ? (setLR ? PPC::BCCTRL8 : PPC::BCCTR8) :
@@ -1223,6 +1278,7 @@ bool PPCInstrInfo::isPredicable(MachineInstr *MI) const {
     return false;
   case PPC::B:
   case PPC::BLR:
+  case PPC::BLR8:
   case PPC::BCTR:
   case PPC::BCTR8:
   case PPC::BCTRL:
@@ -1282,7 +1338,7 @@ bool PPCInstrInfo::optimizeCompareInstr(MachineInstr *CmpInstr,
   // for equality checks (as those don't depend on the sign). On PPC64,
   // we are restricted to equality for unsigned 64-bit comparisons and for
   // signed 32-bit comparisons the applicability is more restricted.
-  bool isPPC64 = TM.getSubtargetImpl()->isPPC64();
+  bool isPPC64 = Subtarget.isPPC64();
   bool is32BitSignedCompare   = OpC ==  PPC::CMPWI || OpC == PPC::CMPW;
   bool is32BitUnsignedCompare = OpC == PPC::CMPLWI || OpC == PPC::CMPLW;
   bool is64BitUnsignedCompare = OpC == PPC::CMPLDI || OpC == PPC::CMPLD;
@@ -1360,10 +1416,10 @@ bool PPCInstrInfo::optimizeCompareInstr(MachineInstr *CmpInstr,
   // There are two possible candidates which can be changed to set CR[01].
   // One is MI, the other is a SUB instruction.
   // For CMPrr(r1,r2), we are looking for SUB(r1,r2) or SUB(r2,r1).
-  MachineInstr *Sub = NULL;
+  MachineInstr *Sub = nullptr;
   if (SrcReg2 != 0)
     // MI is not a candidate for CMPrr.
-    MI = NULL;
+    MI = nullptr;
   // FIXME: Conservatively refuse to convert an instruction which isn't in the
   // same BB as the comparison. This is to allow the check below to avoid calls
   // (and other explicit clobbers); instead we should really check for these
@@ -1541,12 +1597,306 @@ unsigned PPCInstrInfo::GetInstSizeInBytes(const MachineInstr *MI) const {
     const MachineFunction *MF = MI->getParent()->getParent();
     const char *AsmStr = MI->getOperand(0).getSymbolName();
     return getInlineAsmLength(AsmStr, *MF->getTarget().getMCAsmInfo());
+  } else if (Opcode == TargetOpcode::STACKMAP) {
+    return MI->getOperand(1).getImm();
+  } else if (Opcode == TargetOpcode::PATCHPOINT) {
+    PatchPointOpers Opers(MI);
+    return Opers.getMetaOper(PatchPointOpers::NBytesPos).getImm();
   } else {
     const MCInstrDesc &Desc = get(Opcode);
     return Desc.getSize();
   }
 }
 
+#undef DEBUG_TYPE
+#define DEBUG_TYPE "ppc-vsx-fma-mutate"
+
+namespace {
+  // PPCVSXFMAMutate pass - For copies between VSX registers and non-VSX registers
+  // (Altivec and scalar floating-point registers), we need to transform the
+  // copies into subregister copies with other restrictions.
+  struct PPCVSXFMAMutate : public MachineFunctionPass {
+    static char ID;
+    PPCVSXFMAMutate() : MachineFunctionPass(ID) {
+      initializePPCVSXFMAMutatePass(*PassRegistry::getPassRegistry());
+    }
+
+    LiveIntervals *LIS;
+
+    const PPCTargetMachine *TM;
+    const PPCInstrInfo *TII;
+
+protected:
+    bool processBlock(MachineBasicBlock &MBB) {
+      bool Changed = false;
+
+      MachineRegisterInfo &MRI = MBB.getParent()->getRegInfo();
+      const TargetRegisterInfo *TRI = &TII->getRegisterInfo();
+      for (MachineBasicBlock::iterator I = MBB.begin(), IE = MBB.end();
+           I != IE; ++I) {
+        MachineInstr *MI = I;
+
+        // The default (A-type) VSX FMA form kills the addend (it is taken from
+        // the target register, which is then updated to reflect the result of
+        // the FMA). If the instruction, however, kills one of the registers
+        // used for the product, then we can use the M-form instruction (which
+        // will take that value from the to-be-defined register).
+
+        int AltOpc = PPC::getAltVSXFMAOpcode(MI->getOpcode());
+        if (AltOpc == -1)
+          continue;
+
+        // This pass is run after register coalescing, and so we're looking for
+        // a situation like this:
+        //   ...
+        //   %vreg5<def> = COPY %vreg9; VSLRC:%vreg5,%vreg9
+        //   %vreg5<def,tied1> = XSMADDADP %vreg5<tied0>, %vreg17, %vreg16,
+        //                         %RM<imp-use>; VSLRC:%vreg5,%vreg17,%vreg16
+        //   ...
+        //   %vreg9<def,tied1> = XSMADDADP %vreg9<tied0>, %vreg17, %vreg19,
+        //                         %RM<imp-use>; VSLRC:%vreg9,%vreg17,%vreg19
+        //   ...
+        // Where we can eliminate the copy by changing from the A-type to the
+        // M-type instruction. Specifically, for this example, this means:
+        //   %vreg5<def,tied1> = XSMADDADP %vreg5<tied0>, %vreg17, %vreg16,
+        //                         %RM<imp-use>; VSLRC:%vreg5,%vreg17,%vreg16
+        // is replaced by:
+        //   %vreg16<def,tied1> = XSMADDMDP %vreg16<tied0>, %vreg18, %vreg9,
+        //                         %RM<imp-use>; VSLRC:%vreg16,%vreg18,%vreg9
+        // and we remove: %vreg5<def> = COPY %vreg9; VSLRC:%vreg5,%vreg9
+
+        SlotIndex FMAIdx = LIS->getInstructionIndex(MI);
+
+        VNInfo *AddendValNo =
+          LIS->getInterval(MI->getOperand(1).getReg()).Query(FMAIdx).valueIn();
+        MachineInstr *AddendMI = LIS->getInstructionFromIndex(AddendValNo->def);
+
+        // The addend and this instruction must be in the same block.
+
+        if (!AddendMI || AddendMI->getParent() != MI->getParent())
+          continue;
+
+        // The addend must be a full copy within the same register class.
+
+        if (!AddendMI->isFullCopy())
+          continue;
+
+        unsigned AddendSrcReg = AddendMI->getOperand(1).getReg();
+        if (TargetRegisterInfo::isVirtualRegister(AddendSrcReg)) {
+          if (MRI.getRegClass(AddendMI->getOperand(0).getReg()) !=
+              MRI.getRegClass(AddendSrcReg))
+            continue;
+        } else {
+          // If AddendSrcReg is a physical register, make sure the destination
+          // register class contains it.
+          if (!MRI.getRegClass(AddendMI->getOperand(0).getReg())
+                ->contains(AddendSrcReg))
+            continue;
+        }
+
+        // In theory, there could be other uses of the addend copy before this
+        // fma.  We could deal with this, but that would require additional
+        // logic below and I suspect it will not occur in any relevant
+        // situations.  Additionally, check whether the copy source is killed
+        // prior to the fma.  In order to replace the addend here with the
+        // source of the copy, it must still be live here.  We can't use
+        // interval testing for a physical register, so as long as we're
+        // walking the MIs we may as well test liveness here.
+        bool OtherUsers = false, KillsAddendSrc = false;
+        for (auto J = std::prev(I), JE = MachineBasicBlock::iterator(AddendMI);
+             J != JE; --J) {
+          if (J->readsVirtualRegister(AddendMI->getOperand(0).getReg())) {
+            OtherUsers = true;
+            break;
+          }
+          if (J->modifiesRegister(AddendSrcReg, TRI) ||
+              J->killsRegister(AddendSrcReg, TRI)) {
+            KillsAddendSrc = true;
+            break;
+          }
+        }
+
+        if (OtherUsers || KillsAddendSrc)
+          continue;
+
+        // Find one of the product operands that is killed by this instruction.
+
+        unsigned KilledProdOp = 0, OtherProdOp = 0;
+        if (LIS->getInterval(MI->getOperand(2).getReg())
+                     .Query(FMAIdx).isKill()) {
+          KilledProdOp = 2;
+          OtherProdOp  = 3;
+        } else if (LIS->getInterval(MI->getOperand(3).getReg())
+                     .Query(FMAIdx).isKill()) {
+          KilledProdOp = 3;
+          OtherProdOp  = 2;
+        }
+
+        // If there are no killed product operands, then this transformation is
+        // likely not profitable.
+        if (!KilledProdOp)
+          continue;
+
+        // For virtual registers, verify that the addend source register
+        // is live here (as should have been assured above).
+        assert((!TargetRegisterInfo::isVirtualRegister(AddendSrcReg) ||
+                LIS->getInterval(AddendSrcReg).liveAt(FMAIdx)) &&
+               "Addend source register is not live!");
+
+        // Transform: (O2 * O3) + O1 -> (O2 * O1) + O3.
+
+        unsigned AddReg = AddendMI->getOperand(1).getReg();
+        unsigned KilledProdReg = MI->getOperand(KilledProdOp).getReg();
+        unsigned OtherProdReg  = MI->getOperand(OtherProdOp).getReg();
+
+        unsigned AddSubReg = AddendMI->getOperand(1).getSubReg();
+        unsigned KilledProdSubReg = MI->getOperand(KilledProdOp).getSubReg();
+        unsigned OtherProdSubReg  = MI->getOperand(OtherProdOp).getSubReg();
+
+        bool AddRegKill = AddendMI->getOperand(1).isKill();
+        bool KilledProdRegKill = MI->getOperand(KilledProdOp).isKill();
+        bool OtherProdRegKill  = MI->getOperand(OtherProdOp).isKill();
+
+        bool AddRegUndef = AddendMI->getOperand(1).isUndef();
+        bool KilledProdRegUndef = MI->getOperand(KilledProdOp).isUndef();
+        bool OtherProdRegUndef  = MI->getOperand(OtherProdOp).isUndef();
+
+        unsigned OldFMAReg = MI->getOperand(0).getReg();
+
+        // The transformation doesn't work well with things like:
+        //    %vreg5 = A-form-op %vreg5, %vreg11, %vreg5;
+        // so leave such things alone.
+        if (OldFMAReg == KilledProdReg)
+          continue;
+
+        assert(OldFMAReg == AddendMI->getOperand(0).getReg() &&
+               "Addend copy not tied to old FMA output!");
+
+        DEBUG(dbgs() << "VSX FMA Mutation:\n    " << *MI;);
+
+        MI->getOperand(0).setReg(KilledProdReg);
+        MI->getOperand(1).setReg(KilledProdReg);
+        MI->getOperand(3).setReg(AddReg);
+        MI->getOperand(2).setReg(OtherProdReg);
+
+        MI->getOperand(0).setSubReg(KilledProdSubReg);
+        MI->getOperand(1).setSubReg(KilledProdSubReg);
+        MI->getOperand(3).setSubReg(AddSubReg);
+        MI->getOperand(2).setSubReg(OtherProdSubReg);
+
+        MI->getOperand(1).setIsKill(KilledProdRegKill);
+        MI->getOperand(3).setIsKill(AddRegKill);
+        MI->getOperand(2).setIsKill(OtherProdRegKill);
+
+        MI->getOperand(1).setIsUndef(KilledProdRegUndef);
+        MI->getOperand(3).setIsUndef(AddRegUndef);
+        MI->getOperand(2).setIsUndef(OtherProdRegUndef);
+
+        MI->setDesc(TII->get(AltOpc));
+
+        DEBUG(dbgs() << " -> " << *MI);
+
+        // The killed product operand was killed here, so we can reuse it now
+        // for the result of the fma.
+
+        LiveInterval &FMAInt = LIS->getInterval(OldFMAReg);
+        VNInfo *FMAValNo = FMAInt.getVNInfoAt(FMAIdx.getRegSlot());
+        for (auto UI = MRI.reg_nodbg_begin(OldFMAReg), UE = MRI.reg_nodbg_end();
+             UI != UE;) {
+          MachineOperand &UseMO = *UI;
+          MachineInstr *UseMI = UseMO.getParent();
+          ++UI;
+
+          // Don't replace the result register of the copy we're about to erase.
+          if (UseMI == AddendMI)
+            continue;
+
+          UseMO.setReg(KilledProdReg);
+          UseMO.setSubReg(KilledProdSubReg);
+        }
+
+        // Extend the live intervals of the killed product operand to hold the
+        // fma result.
+
+        LiveInterval &NewFMAInt = LIS->getInterval(KilledProdReg);
+        for (LiveInterval::iterator AI = FMAInt.begin(), AE = FMAInt.end();
+             AI != AE; ++AI) {
+          // Don't add the segment that corresponds to the original copy.
+          if (AI->valno == AddendValNo)
+            continue;
+
+          VNInfo *NewFMAValNo =
+            NewFMAInt.getNextValue(AI->start,
+                                   LIS->getVNInfoAllocator());
+
+          NewFMAInt.addSegment(LiveInterval::Segment(AI->start, AI->end,
+                                                     NewFMAValNo));
+        }
+        DEBUG(dbgs() << "  extended: " << NewFMAInt << '\n');
+
+        FMAInt.removeValNo(FMAValNo);
+        DEBUG(dbgs() << "  trimmed:  " << FMAInt << '\n');
+
+        // Remove the (now unused) copy.
+
+        DEBUG(dbgs() << "  removing: " << *AddendMI << '\n');
+        LIS->RemoveMachineInstrFromMaps(AddendMI);
+        AddendMI->eraseFromParent();
+
+        Changed = true;
+      }
+
+      return Changed;
+    }
+
+public:
+    bool runOnMachineFunction(MachineFunction &MF) override {
+      TM = static_cast<const PPCTargetMachine *>(&MF.getTarget());
+      // If we don't have VSX then go ahead and return without doing
+      // anything.
+      if (!TM->getSubtargetImpl()->hasVSX())
+        return false;
+
+      LIS = &getAnalysis<LiveIntervals>();
+
+      TII = TM->getSubtargetImpl()->getInstrInfo();
+
+      bool Changed = false;
+
+      if (DisableVSXFMAMutate)
+        return Changed;
+
+      for (MachineFunction::iterator I = MF.begin(); I != MF.end();) {
+        MachineBasicBlock &B = *I++;
+        if (processBlock(B))
+          Changed = true;
+      }
+
+      return Changed;
+    }
+
+    void getAnalysisUsage(AnalysisUsage &AU) const override {
+      AU.addRequired<LiveIntervals>();
+      AU.addPreserved<LiveIntervals>();
+      AU.addRequired<SlotIndexes>();
+      AU.addPreserved<SlotIndexes>();
+      MachineFunctionPass::getAnalysisUsage(AU);
+    }
+  };
+}
+
+INITIALIZE_PASS_BEGIN(PPCVSXFMAMutate, DEBUG_TYPE,
+                      "PowerPC VSX FMA Mutation", false, false)
+INITIALIZE_PASS_DEPENDENCY(LiveIntervals)
+INITIALIZE_PASS_DEPENDENCY(SlotIndexes)
+INITIALIZE_PASS_END(PPCVSXFMAMutate, DEBUG_TYPE,
+                    "PowerPC VSX FMA Mutation", false, false)
+
+char &llvm::PPCVSXFMAMutateID = PPCVSXFMAMutate::ID;
+
+char PPCVSXFMAMutate::ID = 0;
+FunctionPass*
+llvm::createPPCVSXFMAMutatePass() { return new PPCVSXFMAMutate(); }
 
 #undef DEBUG_TYPE
 #define DEBUG_TYPE "ppc-vsx-copy"
@@ -1657,9 +2007,12 @@ protected:
     }
 
 public:
-    virtual bool runOnMachineFunction(MachineFunction &MF) {
+    bool runOnMachineFunction(MachineFunction &MF) override {
       TM = static_cast<const PPCTargetMachine *>(&MF.getTarget());
-      TII = TM->getInstrInfo();
+      // If we don't have VSX on the subtarget, don't do anything.
+      if (!TM->getSubtargetImpl()->hasVSX())
+        return false;
+      TII = TM->getSubtargetImpl()->getInstrInfo();
 
       bool Changed = false;
 
@@ -1672,7 +2025,7 @@ public:
       return Changed;
     }
 
-    virtual void getAnalysisUsage(AnalysisUsage &AU) const {
+    void getAnalysisUsage(AnalysisUsage &AU) const override {
       MachineFunctionPass::getAnalysisUsage(AU);
     }
   };
@@ -1684,6 +2037,83 @@ INITIALIZE_PASS(PPCVSXCopy, DEBUG_TYPE,
 char PPCVSXCopy::ID = 0;
 FunctionPass*
 llvm::createPPCVSXCopyPass() { return new PPCVSXCopy(); }
+
+#undef DEBUG_TYPE
+#define DEBUG_TYPE "ppc-vsx-copy-cleanup"
+
+namespace llvm {
+  void initializePPCVSXCopyCleanupPass(PassRegistry&);
+}
+
+namespace {
+  // PPCVSXCopyCleanup pass - We sometimes end up generating self copies of VSX
+  // registers (mostly because the ABI code still places all values into the
+  // "traditional" floating-point and vector registers). Remove them here.
+  struct PPCVSXCopyCleanup : public MachineFunctionPass {
+    static char ID;
+    PPCVSXCopyCleanup() : MachineFunctionPass(ID) {
+      initializePPCVSXCopyCleanupPass(*PassRegistry::getPassRegistry());
+    }
+
+    const PPCTargetMachine *TM;
+    const PPCInstrInfo *TII;
+
+protected:
+    bool processBlock(MachineBasicBlock &MBB) {
+      bool Changed = false;
+
+      SmallVector<MachineInstr *, 4> ToDelete;
+      for (MachineBasicBlock::iterator I = MBB.begin(), IE = MBB.end();
+           I != IE; ++I) {
+        MachineInstr *MI = I;
+        if (MI->getOpcode() == PPC::XXLOR &&
+            MI->getOperand(0).getReg() == MI->getOperand(1).getReg() &&
+            MI->getOperand(0).getReg() == MI->getOperand(2).getReg())
+          ToDelete.push_back(MI);
+      }
+
+      if (!ToDelete.empty())
+        Changed = true;
+
+      for (unsigned i = 0, ie = ToDelete.size(); i != ie; ++i) {
+        DEBUG(dbgs() << "Removing VSX self-copy: " << *ToDelete[i]);
+        ToDelete[i]->eraseFromParent();
+      }
+
+      return Changed;
+    }
+
+public:
+    bool runOnMachineFunction(MachineFunction &MF) override {
+      TM = static_cast<const PPCTargetMachine *>(&MF.getTarget());
+      // If we don't have VSX don't bother doing anything here.
+      if (!TM->getSubtargetImpl()->hasVSX())
+        return false;
+      TII = TM->getSubtargetImpl()->getInstrInfo();
+
+      bool Changed = false;
+
+      for (MachineFunction::iterator I = MF.begin(); I != MF.end();) {
+        MachineBasicBlock &B = *I++;
+        if (processBlock(B))
+          Changed = true;
+      }
+
+      return Changed;
+    }
+
+    void getAnalysisUsage(AnalysisUsage &AU) const override {
+      MachineFunctionPass::getAnalysisUsage(AU);
+    }
+  };
+}
+
+INITIALIZE_PASS(PPCVSXCopyCleanup, DEBUG_TYPE,
+                "PowerPC VSX Copy Cleanup", false, false)
+
+char PPCVSXCopyCleanup::ID = 0;
+FunctionPass*
+llvm::createPPCVSXCopyCleanupPass() { return new PPCVSXCopyCleanup(); }
 
 #undef DEBUG_TYPE
 #define DEBUG_TYPE "ppc-early-ret"
@@ -1715,7 +2145,8 @@ protected:
       I = ReturnMBB.SkipPHIsAndLabels(I);
 
       // The block must be essentially empty except for the blr.
-      if (I == ReturnMBB.end() || I->getOpcode() != PPC::BLR ||
+      if (I == ReturnMBB.end() ||
+          (I->getOpcode() != PPC::BLR && I->getOpcode() != PPC::BLR8) ||
           I != ReturnMBB.getLastNonDebugInstr())
         return Changed;
 
@@ -1728,7 +2159,7 @@ protected:
             if (J->getOperand(0).getMBB() == &ReturnMBB) {
               // This is an unconditional branch to the return. Replace the
               // branch with a blr.
-              BuildMI(**PI, J, J->getDebugLoc(), TII->get(PPC::BLR));
+              BuildMI(**PI, J, J->getDebugLoc(), TII->get(I->getOpcode()));
               MachineBasicBlock::iterator K = J--;
               K->eraseFromParent();
               BlockChanged = true;
@@ -1814,9 +2245,9 @@ protected:
     }
 
 public:
-    virtual bool runOnMachineFunction(MachineFunction &MF) {
+    bool runOnMachineFunction(MachineFunction &MF) override {
       TM = static_cast<const PPCTargetMachine *>(&MF.getTarget());
-      TII = TM->getInstrInfo();
+      TII = TM->getSubtargetImpl()->getInstrInfo();
 
       bool Changed = false;
 
@@ -1834,7 +2265,7 @@ public:
       return Changed;
     }
 
-    virtual void getAnalysisUsage(AnalysisUsage &AU) const {
+    void getAnalysisUsage(AnalysisUsage &AU) const override {
       MachineFunctionPass::getAnalysisUsage(AU);
     }
   };

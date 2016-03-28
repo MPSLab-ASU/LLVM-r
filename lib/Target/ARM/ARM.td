@@ -73,6 +73,11 @@ def FeatureCrypto : SubtargetFeature<"crypto", "HasCrypto", "true",
 def FeatureCRC : SubtargetFeature<"crc", "HasCRC", "true",
                           "Enable support for CRC instructions">;
 
+// Cyclone has preferred instructions for zeroing VFP registers, which can
+// execute in 0 cycles.
+def FeatureZCZeroing : SubtargetFeature<"zcz", "HasZeroCycleZeroing", "true",
+                                        "Has zero-cycle zeroing instructions">;
+
 // Some processors have FP multiply-accumulate instructions that don't
 // play nicely with other VFP / NEON instructions, and it's generally better
 // to just not use them.
@@ -223,6 +228,15 @@ def ProcA15      : SubtargetFeature<"a15", "ARMProcFamily", "CortexA15",
                                     FeatureAvoidPartialCPSR,
                                     FeatureTrustZone, FeatureVirtualization]>;
 
+def ProcA17     : SubtargetFeature<"a17", "ARMProcFamily", "CortexA17",
+                                   "Cortex-A17 ARM processors",
+                                   [FeatureVMLxForwarding,
+                                    FeatureT2XtPk, FeatureVFP4,
+                                    FeatureHWDiv, FeatureHWDivARM,
+                                    FeatureAvoidPartialCPSR,
+                                    FeatureVirtualization,
+                                    FeatureTrustZone]>;
+
 def ProcA53     : SubtargetFeature<"a53", "ARMProcFamily", "CortexA53",
                                    "Cortex-A53 ARM processors",
                                    [FeatureHWDiv, FeatureHWDivARM,
@@ -254,13 +268,6 @@ def ProcKrait   : SubtargetFeature<"krait", "ARMProcFamily", "Krait",
                                     FeatureVFP4,
                                     FeatureHWDiv,
                                     FeatureHWDivARM]>;
-
-
-def FeatureAPCS  : SubtargetFeature<"apcs", "TargetABI", "ARM_ABI_APCS",
-                                   "Use the APCS ABI">;
-
-def FeatureAAPCS : SubtargetFeature<"aapcs", "TargetABI", "ARM_ABI_AAPCS",
-                                   "Use the AAPCS ABI">;
 
 
 class ProcNoItin<string Name, list<SubtargetFeature> Features>
@@ -342,12 +349,8 @@ def : ProcessorModel<"cortex-a8",   CortexA8Model,
                                      FeatureAClass]>;
 def : ProcessorModel<"cortex-a9",   CortexA9Model,
                                     [ProcA9, HasV7Ops, FeatureNEON, FeatureDB,
-                                     FeatureDSPThumb2, FeatureHasRAS,
+                                     FeatureDSPThumb2, FeatureHasRAS, FeatureMP,
                                      FeatureAClass]>;
-def : ProcessorModel<"cortex-a9-mp", CortexA9Model,
-                                    [ProcA9, HasV7Ops, FeatureNEON, FeatureDB,
-                                     FeatureDSPThumb2, FeatureMP,
-                                     FeatureHasRAS, FeatureAClass]>;
 
 // FIXME: A12 has currently the same Schedule model as A9
 def : ProcessorModel<"cortex-a12", CortexA9Model,
@@ -358,6 +361,19 @@ def : ProcessorModel<"cortex-a12", CortexA9Model,
 // FIXME: A15 has currently the same ProcessorModel as A9.
 def : ProcessorModel<"cortex-a15",   CortexA9Model,
                                     [ProcA15, HasV7Ops, FeatureNEON, FeatureDB,
+                                     FeatureDSPThumb2, FeatureHasRAS,
+                                     FeatureAClass]>;
+
+// FIXME: A17 has currently the same Schedule model as A9
+def : ProcessorModel<"cortex-a17",  CortexA9Model,
+                                    [ProcA17, HasV7Ops, FeatureNEON, FeatureDB,
+                                     FeatureDSPThumb2, FeatureMP,
+                                     FeatureHasRAS, FeatureAClass]>;
+
+// FIXME: krait has currently the same Schedule model as A9
+def : ProcessorModel<"krait",       CortexA9Model,
+                                    [ProcKrait, HasV7Ops,
+                                     FeatureNEON, FeatureDB,
                                      FeatureDSPThumb2, FeatureHasRAS,
                                      FeatureAClass]>;
 
@@ -380,6 +396,12 @@ def : ProcNoItin<"cortex-m4",       [HasV7Ops,
                                      FeatureT2XtPk, FeatureVFP4,
                                      FeatureVFPOnlySP, FeatureD16,
                                      FeatureMClass]>;
+def : ProcNoItin<"cortex-m7",       [HasV7Ops,
+                                     FeatureThumb2, FeatureNoARM, FeatureDB,
+                                     FeatureHWDiv, FeatureDSPThumb2,
+                                     FeatureT2XtPk, FeatureFPARMv8,
+                                     FeatureD16, FeatureMClass]>;
+
 
 // Swift uArch Processors.
 def : ProcessorModel<"swift",       SwiftModel,
@@ -395,12 +417,12 @@ def : ProcNoItin<"cortex-a57",      [ProcA57, HasV8Ops, FeatureAClass,
                                     FeatureDB, FeatureFPARMv8,
                                     FeatureNEON, FeatureDSPThumb2]>;
 
-// FIXME: krait has currently the same Schedule model as A9
-def : ProcessorModel<"krait",       CortexA9Model,
-                                    [ProcKrait, HasV7Ops,
-                                     FeatureNEON, FeatureDB,
-                                     FeatureDSPThumb2, FeatureHasRAS,
-                                     FeatureAClass]>;
+// Cyclone is very similar to swift
+def : ProcessorModel<"cyclone",     SwiftModel,
+                                    [ProcSwift, HasV8Ops, HasV7Ops,
+                                     FeatureCrypto, FeatureFPARMv8,
+                                     FeatureDB,FeatureDSPThumb2,
+                                     FeatureHasRAS, FeatureZCZeroing]>;
 
 //===----------------------------------------------------------------------===//
 // Register File Description

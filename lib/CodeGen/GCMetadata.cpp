@@ -61,10 +61,6 @@ GCModuleInfo::GCModuleInfo()
   initializeGCModuleInfoPass(*PassRegistry::getPassRegistry());
 }
 
-GCModuleInfo::~GCModuleInfo() {
-  clear();
-}
-
 GCStrategy *GCModuleInfo::getOrCreateStrategy(const Module *M,
                                               const std::string &Name) {
   strategy_map_type::iterator NMI = StrategyMap.find(Name);
@@ -74,17 +70,16 @@ GCStrategy *GCModuleInfo::getOrCreateStrategy(const Module *M,
   for (GCRegistry::iterator I = GCRegistry::begin(),
                             E = GCRegistry::end(); I != E; ++I) {
     if (Name == I->getName()) {
-      GCStrategy *S = I->instantiate();
-      S->M = M;
+      std::unique_ptr<GCStrategy> S = I->instantiate();
       S->Name = Name;
-      StrategyMap.GetOrCreateValue(Name).setValue(S);
-      StrategyList.push_back(S);
-      return S;
+      StrategyMap[Name] = S.get();
+      StrategyList.push_back(std::move(S));
+      return StrategyList.back().get();
     }
   }
  
   dbgs() << "unsupported GC: " << Name << "\n";
-  llvm_unreachable(0);
+  llvm_unreachable(nullptr);
 }
 
 GCFunctionInfo &GCModuleInfo::getFunctionInfo(const Function &F) {
@@ -96,17 +91,16 @@ GCFunctionInfo &GCModuleInfo::getFunctionInfo(const Function &F) {
     return *I->second;
   
   GCStrategy *S = getOrCreateStrategy(F.getParent(), F.getGC());
-  GCFunctionInfo *GFI = S->insertFunctionInfo(F);
+  Functions.push_back(make_unique<GCFunctionInfo>(F, *S));
+  GCFunctionInfo *GFI = Functions.back().get();
   FInfoMap[&F] = GFI;
   return *GFI;
 }
 
 void GCModuleInfo::clear() {
+  Functions.clear();
   FInfoMap.clear();
   StrategyMap.clear();
-  
-  for (iterator I = begin(), E = end(); I != E; ++I)
-    delete *I;
   StrategyList.clear();
 }
 

@@ -13,6 +13,7 @@ set(ADTSources
   DenseMapTest.cpp
   DenseSetTest.cpp
   FoldingSet.cpp
+  FunctionRefTest.cpp
   HashingTest.cpp
   ilistTest.cpp
   ImmutableMapTest.cpp
@@ -23,10 +24,10 @@ set(ADTSources
   MakeUniqueTest.cpp
   MapVectorTest.cpp
   OptionalTest.cpp
-  OwningPtrTest.cpp
   PackedVectorTest.cpp
   PointerIntPairTest.cpp
   PointerUnionTest.cpp
+  PostOrderIteratorTest.cpp
   SCCIteratorTest.cpp
   SmallPtrSetTest.cpp
   SmallStringTest.cpp

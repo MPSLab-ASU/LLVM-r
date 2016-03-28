@@ -27,10 +27,13 @@
 #define LLVM_IR_VALUEMAP_H
 
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/IR/TrackingMDRef.h"
 #include "llvm/IR/ValueHandle.h"
 #include "llvm/Support/Mutex.h"
+#include "llvm/Support/UniqueLock.h"
 #include "llvm/Support/type_traits.h"
 #include <iterator>
+#include <memory>
 
 namespace llvm {
 
@@ -45,8 +48,10 @@ class ValueMapConstIterator;
 /// This class defines the default behavior for configurable aspects of
 /// ValueMap<>.  User Configs should inherit from this class to be as compatible
 /// as possible with future versions of ValueMap.
-template<typename KeyT>
+template<typename KeyT, typename MutexT = sys::Mutex>
 struct ValueMapConfig {
+  typedef MutexT mutex_type;
+
   /// If FollowRAUW is true, the ValueMap will update mappings on RAUW. If it's
   /// false, the ValueMap will leave the original mapping in place.
   enum { FollowRAUW = true };
@@ -67,7 +72,7 @@ struct ValueMapConfig {
   /// and onDelete) and not inside other ValueMap methods.  NULL means that no
   /// mutex is necessary.
   template<typename ExtraDataT>
-  static sys::Mutex *getMutex(const ExtraDataT &/*Data*/) { return NULL; }
+  static mutex_type *getMutex(const ExtraDataT &/*Data*/) { return nullptr; }
 };
 
 /// See the file comment.
@@ -76,8 +81,10 @@ class ValueMap {
   friend class ValueMapCallbackVH<KeyT, ValueT, Config>;
   typedef ValueMapCallbackVH<KeyT, ValueT, Config> ValueMapCVH;
   typedef DenseMap<ValueMapCVH, ValueT, DenseMapInfo<ValueMapCVH> > MapT;
+  typedef DenseMap<const Metadata *, TrackingMDRef> MDMapT;
   typedef typename Config::ExtraData ExtraData;
   MapT Map;
+  std::unique_ptr<MDMapT> MDMap;
   ExtraData Data;
   ValueMap(const ValueMap&) LLVM_DELETED_FUNCTION;
   ValueMap& operator=(const ValueMap&) LLVM_DELETED_FUNCTION;
@@ -85,13 +92,21 @@ public:
   typedef KeyT key_type;
   typedef ValueT mapped_type;
   typedef std::pair<KeyT, ValueT> value_type;
+  typedef unsigned size_type;
 
   explicit ValueMap(unsigned NumInitBuckets = 64)
-    : Map(NumInitBuckets), Data() {}
+      : Map(NumInitBuckets), Data() {}
   explicit ValueMap(const ExtraData &Data, unsigned NumInitBuckets = 64)
-    : Map(NumInitBuckets), Data(Data) {}
+      : Map(NumInitBuckets), Data(Data) {}
 
   ~ValueMap() {}
+
+  bool hasMD() const { return MDMap; }
+  MDMapT &MD() {
+    if (!MDMap)
+      MDMap.reset(new MDMapT);
+    return *MDMap;
+  }
 
   typedef ValueMapIterator<MapT, KeyT> iterator;
   typedef ValueMapConstIterator<MapT, KeyT> const_iterator;
@@ -101,16 +116,19 @@ public:
   inline const_iterator end() const { return const_iterator(Map.end()); }
 
   bool empty() const { return Map.empty(); }
-  unsigned size() const { return Map.size(); }
+  size_type size() const { return Map.size(); }
 
   /// Grow the map so that it has at least Size buckets. Does not shrink
   void resize(size_t Size) { Map.resize(Size); }
 
-  void clear() { Map.clear(); }
+  void clear() {
+    Map.clear();
+    MDMap.reset();
+  }
 
-  /// count - Return true if the specified key is in the map.
-  bool count(const KeyT &Val) const {
-    return Map.find_as(Val) != Map.end();
+  /// Return 1 if the specified key is in the map, 0 otherwise.
+  size_type count(const KeyT &Val) const {
+    return Map.find_as(Val) == Map.end() ? 0 : 1;
   }
 
   iterator find(const KeyT &Val) {
@@ -206,28 +224,31 @@ class ValueMapCallbackVH : public CallbackVH {
       : CallbackVH(const_cast<Value*>(static_cast<const Value*>(Key))),
         Map(Map) {}
 
+  // Private constructor used to create empty/tombstone DenseMap keys.
+  ValueMapCallbackVH(Value *V) : CallbackVH(V), Map(nullptr) {}
+
 public:
   KeyT Unwrap() const { return cast_or_null<KeySansPointerT>(getValPtr()); }
 
   void deleted() override {
     // Make a copy that won't get changed even when *this is destroyed.
     ValueMapCallbackVH Copy(*this);
-    sys::Mutex *M = Config::getMutex(Copy.Map->Data);
+    typename Config::mutex_type *M = Config::getMutex(Copy.Map->Data);
+    unique_lock<typename Config::mutex_type> Guard;
     if (M)
-      M->acquire();
+      Guard = unique_lock<typename Config::mutex_type>(*M);
     Config::onDelete(Copy.Map->Data, Copy.Unwrap());  // May destroy *this.
     Copy.Map->Map.erase(Copy);  // Definitely destroys *this.
-    if (M)
-      M->release();
   }
   void allUsesReplacedWith(Value *new_key) override {
     assert(isa<KeySansPointerT>(new_key) &&
            "Invalid RAUW on key of ValueMap<>");
     // Make a copy that won't get changed even when *this is destroyed.
     ValueMapCallbackVH Copy(*this);
-    sys::Mutex *M = Config::getMutex(Copy.Map->Data);
+    typename Config::mutex_type *M = Config::getMutex(Copy.Map->Data);
+    unique_lock<typename Config::mutex_type> Guard;
     if (M)
-      M->acquire();
+      Guard = unique_lock<typename Config::mutex_type>(*M);
 
     KeyT typed_new_key = cast<KeySansPointerT>(new_key);
     // Can destroy *this:
@@ -242,27 +263,24 @@ public:
         Copy.Map->insert(std::make_pair(typed_new_key, Target));
       }
     }
-    if (M)
-      M->release();
   }
 };
 
 template<typename KeyT, typename ValueT, typename Config>
 struct DenseMapInfo<ValueMapCallbackVH<KeyT, ValueT, Config> > {
   typedef ValueMapCallbackVH<KeyT, ValueT, Config> VH;
-  typedef DenseMapInfo<KeyT> PointerInfo;
 
   static inline VH getEmptyKey() {
-    return VH(PointerInfo::getEmptyKey(), NULL);
+    return VH(DenseMapInfo<Value *>::getEmptyKey());
   }
   static inline VH getTombstoneKey() {
-    return VH(PointerInfo::getTombstoneKey(), NULL);
+    return VH(DenseMapInfo<Value *>::getTombstoneKey());
   }
   static unsigned getHashValue(const VH &Val) {
-    return PointerInfo::getHashValue(Val.Unwrap());
+    return DenseMapInfo<KeyT>::getHashValue(Val.Unwrap());
   }
   static unsigned getHashValue(const KeyT &Val) {
-    return PointerInfo::getHashValue(Val);
+    return DenseMapInfo<KeyT>::getHashValue(Val);
   }
   static bool isEqual(const VH &LHS, const VH &RHS) {
     return LHS == RHS;

@@ -54,6 +54,7 @@ class SmallBitVector {
   };
 
 public:
+  typedef unsigned size_type;
   // Encapsulation of a single bit.
   class reference {
     SmallBitVector &TheVector;
@@ -173,7 +174,7 @@ public:
   }
 
   /// count - Returns the number of bits which are set.
-  unsigned count() const {
+  size_type count() const {
     if (isSmall()) {
       uintptr_t Bits = getSmallBits();
       if (NumBaseBits == 32)
@@ -291,8 +292,12 @@ public:
   }
 
   SmallBitVector &set(unsigned Idx) {
-    if (isSmall())
+    if (isSmall()) {
+      assert(Idx <= static_cast<unsigned>(
+                        std::numeric_limits<uintptr_t>::digits) &&
+             "undefined behavior");
       setSmallBits(getSmallBits() | (uintptr_t(1) << Idx));
+    }
     else
       getPointer()->set(Idx);
     return *this;

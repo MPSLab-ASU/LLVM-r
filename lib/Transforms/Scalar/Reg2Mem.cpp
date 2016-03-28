@@ -16,7 +16,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#define DEBUG_TYPE "reg2mem"
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/IR/BasicBlock.h"
@@ -29,6 +28,8 @@
 #include "llvm/Transforms/Utils/Local.h"
 #include <list>
 using namespace llvm;
+
+#define DEBUG_TYPE "reg2mem"
 
 STATISTIC(NumRegsDemoted, "Number of registers demoted");
 STATISTIC(NumPhisDemoted, "Number of phi-nodes demoted");
@@ -72,7 +73,7 @@ bool RegToMem::runOnFunction(Function &F) {
 
   // Insert all new allocas into entry block.
   BasicBlock *BBEntry = &F.getEntryBlock();
-  assert(pred_begin(BBEntry) == pred_end(BBEntry) &&
+  assert(pred_empty(BBEntry) &&
          "Entry block to function must not have predecessors!");
 
   // Find first non-alloca instruction and create insertion point. This is
