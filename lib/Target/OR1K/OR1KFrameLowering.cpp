@@ -25,7 +25,7 @@ using namespace llvm;
 
 bool OR1KFrameLowering::hasFP(const MachineFunction &MF) const {
   const MachineFrameInfo *MFI = MF.getFrameInfo();
-  const TargetRegisterInfo *TRI = MF.getTarget().getRegisterInfo();
+  const TargetRegisterInfo *TRI = MF.getSubtarget().getRegisterInfo();
 
   return (MF.getTarget().Options.DisableFramePointerElim(MF) ||
           MF.getFrameInfo()->hasVarSizedObjects() ||
@@ -37,7 +37,7 @@ bool OR1KFrameLowering::hasFP(const MachineFunction &MF) const {
 /// frame size.
 void OR1KFrameLowering::determineFrameLayout(MachineFunction &MF) const {
   MachineFrameInfo *MFI = MF.getFrameInfo();
-  const TargetRegisterInfo *TRI = MF.getTarget().getRegisterInfo();
+  const TargetRegisterInfo *TRI = MF.getSubtarget().getRegisterInfo();
 
   // Get the number of bytes to allocate from the FrameInfo.
   unsigned FrameSize = MFI->getStackSize();
@@ -45,7 +45,7 @@ void OR1KFrameLowering::determineFrameLayout(MachineFunction &MF) const {
   // Get the alignment.
   unsigned StackAlign = TRI->needsStackRealignment(MF) ?
     MFI->getMaxAlignment() :
-    MF.getTarget().getFrameLowering()->getStackAlignment();
+    MF.getSubtarget().getFrameLowering()->getStackAlignment();
 
   // Get the maximum call frame size of all the calls.
   unsigned maxCallFrameSize = MFI->getMaxCallFrameSize();
@@ -74,7 +74,7 @@ void OR1KFrameLowering::determineFrameLayout(MachineFunction &MF) const {
 // maximum call frame size as the immediate.
 void OR1KFrameLowering::replaceAdjDynAllocPseudo(MachineFunction &MF) const {
   const OR1KInstrInfo &TII =
-    *static_cast<const OR1KInstrInfo*>(MF.getTarget().getInstrInfo());
+    *static_cast<const OR1KInstrInfo*>(MF.getSubtarget().getInstrInfo());
   unsigned MaxCallFrameSize = MF.getFrameInfo()->getMaxCallFrameSize();
 
   for (MachineFunction::iterator MBB = MF.begin(), E = MF.end();
@@ -99,9 +99,9 @@ void OR1KFrameLowering::emitPrologue(MachineFunction &MF) const {
   MachineBasicBlock &MBB   = MF.front();
   MachineFrameInfo *MFI    = MF.getFrameInfo();
   const OR1KInstrInfo &TII =
-    *static_cast<const OR1KInstrInfo*>(MF.getTarget().getInstrInfo());
+    *static_cast<const OR1KInstrInfo*>(MF.getSubtarget().getInstrInfo());
   const OR1KRegisterInfo *TRI =
-    static_cast<const OR1KRegisterInfo*>(MF.getTarget().getRegisterInfo());
+    static_cast<const OR1KRegisterInfo*>(MF.getSubtarget().getRegisterInfo());
   MachineBasicBlock::iterator MBBI = MBB.begin();
   DebugLoc DL = MBBI != MBB.end() ? MBBI->getDebugLoc() : DebugLoc();
   bool IsPIC = MF.getTarget().getRelocationModel() == Reloc::PIC_;
@@ -268,9 +268,9 @@ void OR1KFrameLowering::emitEpilogue(MachineFunction &MF,
   MachineBasicBlock::iterator MBBI = MBB.getLastNonDebugInstr();
   MachineFrameInfo *MFI            = MF.getFrameInfo();
   const OR1KInstrInfo &TII =
-    *static_cast<const OR1KInstrInfo*>(MF.getTarget().getInstrInfo());
+    *static_cast<const OR1KInstrInfo*>(MF.getSubtarget().getInstrInfo());
   const OR1KRegisterInfo *TRI =
-    static_cast<const OR1KRegisterInfo*>(MF.getTarget().getRegisterInfo());
+    static_cast<const OR1KRegisterInfo*>(MF.getSubtarget().getRegisterInfo());
   bool IsPIC = MF.getTarget().getRelocationModel() == Reloc::PIC_;
   bool HasRA = MFI->adjustsStack() || IsPIC;
   DebugLoc dl = MBBI->getDebugLoc();
@@ -328,7 +328,7 @@ processFunctionBeforeCalleeSavedScan(MachineFunction &MF,
   MachineFrameInfo *MFI = MF.getFrameInfo();
   MachineRegisterInfo& MRI = MF.getRegInfo();
   const OR1KRegisterInfo *TRI =
-    static_cast<const OR1KRegisterInfo*>(MF.getTarget().getRegisterInfo());
+    static_cast<const OR1KRegisterInfo*>(MF.getSubtarget().getRegisterInfo());
   bool IsPIC = MF.getTarget().getRelocationModel() == Reloc::PIC_;
 
   int Offset = -4;

@@ -22,8 +22,8 @@ class OR1KTargetMachine;
 
 class OR1KSelectionDAGInfo : public TargetSelectionDAGInfo {
 public:
-  explicit OR1KSelectionDAGInfo(const OR1KTargetMachine &TM);
-  ~OR1KSelectionDAGInfo();
+  explicit OR1KSelectionDAGInfo(const DataLayout &DL);
+  ~OR1KSelectionDAGInfo() {}
 };
 
 }

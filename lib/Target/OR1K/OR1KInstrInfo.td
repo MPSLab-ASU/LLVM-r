@@ -104,7 +104,11 @@ def i32hi16 : PatLeaf<(i32 imm), [{
 def ADDRri : ComplexPattern<i32, 2, "SelectAddr", [frameindex], []>;
 
 // Address operands
-def MEMri : Operand<i32> {
+def OR1KMemAsmOperand : AsmOperandClass {
+ let Name = "Mem";
+}
+def MEMri : Operand<iPTR> {
+  let ParserMatchClass = OR1KMemAsmOperand;
   let PrintMethod = "printMemOperand";
   let EncoderMethod = "getMemoryOpValue";
   let DecoderMethod = "DecodeMemoryValue";
@@ -577,7 +581,7 @@ class NOP_I<bits<2> op2Val, string asmstr>
   let op2 = op2Val;
 }
 
-let neverHasSideEffects = 1 in
+let hasSideEffects = 0 in
   def NOP : NOP_I<0x1, "l.nop">;
 
 def : InstAlias<"l.nop", (NOP 0)>;
@@ -623,7 +627,7 @@ let Uses = [SR], usesCustomInserter = 1, Predicates = [NoCmov] in {
 
 
 // PIC base construction.
-let neverHasSideEffects = 1, isNotDuplicable = 1, Defs = [R9] in
+let hasSideEffects = 0, isNotDuplicable = 1, Defs = [R9] in
   def GETPC : Pseudo<(outs), (ins i32imm:$label),
   "#GETPC $label", []>;
 

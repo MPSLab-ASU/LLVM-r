@@ -30,24 +30,24 @@ struct OR1KRegisterInfo : public OR1KGenRegisterInfo {
   OR1KRegisterInfo(const TargetInstrInfo &tii);
 
   /// Code Generation virtual methods...
-  const uint16_t *getCalleeSavedRegs(const MachineFunction *MF = 0) const;
+  const uint16_t *getCalleeSavedRegs(const MachineFunction *MF = 0) const override;
 
-  BitVector getReservedRegs(const MachineFunction &MF) const;
+  BitVector getReservedRegs(const MachineFunction &MF) const override;
 
-  bool requiresRegisterScavenging(const MachineFunction &MF) const;
+  bool requiresRegisterScavenging(const MachineFunction &MF) const override;
 
   void eliminateFrameIndex(MachineBasicBlock::iterator II,
                            int SPAdj, unsigned FIOperandNum,
-                           RegScavenger *RS = NULL) const;
+                           RegScavenger *RS = NULL) const override;
 
   void processFunctionBeforeFrameFinalized(MachineFunction &MF) const;
 
   bool hasBasePointer(const MachineFunction &MF) const;
-  bool needsStackRealignment(const MachineFunction &MF) const;
+  bool needsStackRealignment(const MachineFunction &MF) const override;
 
   // Debug information queries.
   unsigned getRARegister() const;
-  unsigned getFrameRegister(const MachineFunction &MF) const;
+  unsigned getFrameRegister(const MachineFunction &MF) const override;
   unsigned getBaseRegister() const;
 
   // Exception handling queries.

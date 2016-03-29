@@ -183,7 +183,7 @@ namespace {
     static char ID;
     CGBR() : MachineFunctionPass(ID) {}
 
-    virtual bool runOnMachineFunction(MachineFunction &MF) {
+    bool runOnMachineFunction(MachineFunction &MF) override {
       const OR1KTargetMachine *TM =
         static_cast<const OR1KTargetMachine *>(&MF.getTarget());
 
@@ -203,7 +203,7 @@ namespace {
       MachineBasicBlock::iterator MBBI = FirstMBB.begin();
       DebugLoc DL = FirstMBB.findDebugLoc(MBBI);
       MachineRegisterInfo &RegInfo = MF.getRegInfo();
-      const OR1KInstrInfo *TII = TM->getInstrInfo();
+      const OR1KInstrInfo *TII = TM->getSubtargetImpl()->getInstrInfo();
 
       // This is needed to keep the representation in SSA form
       unsigned Scratch1 = RegInfo.createVirtualRegister(&OR1K::GPRRegClass);
@@ -228,11 +228,11 @@ namespace {
       return true;
     }
 
-    virtual const char *getPassName() const {
+    const char *getPassName() const override {
       return "OR1K PIC Global Base Reg Initialization";
     }
 
-    virtual void getAnalysisUsage(AnalysisUsage &AU) const {
+    void getAnalysisUsage(AnalysisUsage &AU) const override {
       AU.setPreservesCFG();
       MachineFunctionPass::getAnalysisUsage(AU);
     }

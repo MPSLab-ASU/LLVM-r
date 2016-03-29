@@ -41,7 +41,7 @@ namespace {
     explicit OR1KAsmPrinter(TargetMachine &TM, MCStreamer &Streamer)
       : AsmPrinter(TM, Streamer) {}
 
-    virtual const char *getPassName() const {
+    const char *getPassName() const override {
       return "OR1K Assembly Printer";
     }
 
@@ -49,10 +49,10 @@ namespace {
                       raw_ostream &O, const char* Modifier = 0);
     bool PrintAsmOperand(const MachineInstr *MI, unsigned OpNo,
                          unsigned AsmVariant, const char *ExtraCode,
-                         raw_ostream &O);
-    void EmitInstruction(const MachineInstr *MI);
-    virtual bool isBlockOnlyReachableByFallthrough(const MachineBasicBlock*
-                                                   MBB) const;
+                         raw_ostream &O) override;
+    void EmitInstruction(const MachineInstr *MI) override;
+    bool isBlockOnlyReachableByFallthrough(const MachineBasicBlock*
+                                           MBB) const override;
   private:
     void customEmitInstruction(const MachineInstr *MI);
   };

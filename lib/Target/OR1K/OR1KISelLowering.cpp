@@ -38,9 +38,9 @@
 #include "llvm/Support/raw_ostream.h"
 using namespace llvm;
 
-OR1KTargetLowering::OR1KTargetLowering(OR1KTargetMachine &tm) :
-  TargetLowering(tm, new TargetLoweringObjectFileELF()),
-  Subtarget(*tm.getSubtargetImpl()), TM(tm) {
+OR1KTargetLowering::OR1KTargetLowering(const OR1KTargetMachine &TM,
+                                       const OR1KSubtarget &STI) :
+  TargetLowering(TM), Subtarget(STI), TM(TM) {
 
   TD = getDataLayout();
 
@@ -139,10 +139,12 @@ OR1KTargetLowering::OR1KTargetLowering(OR1KTargetMachine &tm) :
   setOperationAction(ISD::SIGN_EXTEND_INREG, MVT::i8,   Expand);
   setOperationAction(ISD::SIGN_EXTEND_INREG, MVT::i16,  Expand);
 
-  // Extended load operations for i1 types must be promoted
-  setLoadExtAction(ISD::EXTLOAD,             MVT::i1,   Promote);
-  setLoadExtAction(ISD::ZEXTLOAD,            MVT::i1,   Promote);
-  setLoadExtAction(ISD::SEXTLOAD,            MVT::i1,   Promote);
+  for (MVT VT : MVT::integer_valuetypes()) {
+    // Extended load operations for i1 types must be promoted
+    setLoadExtAction(ISD::EXTLOAD,      VT,  MVT::i1,   Promote);
+    setLoadExtAction(ISD::ZEXTLOAD,     VT,  MVT::i1,   Promote);
+    setLoadExtAction(ISD::SEXTLOAD,     VT,  MVT::i1,   Promote);
+  }
 
   setOperationAction(ISD::FP_TO_UINT,        MVT::i32,  Expand);
   setOperationAction(ISD::UINT_TO_FP,        MVT::i32,  Expand);
@@ -407,7 +409,7 @@ OR1KTargetLowering::LowerCCCArguments(SDValue Chain,
   // Assign locations to all of the incoming arguments.
   SmallVector<CCValAssign, 16> ArgLocs;
   CCState CCInfo(CallConv, isVarArg, DAG.getMachineFunction(),
-                 getTargetMachine(), ArgLocs, *DAG.getContext());
+                 ArgLocs, *DAG.getContext());
   CCInfo.AnalyzeFormalArguments(Ins, CC_OR1K32);
 
   for (unsigned i = 0, e = ArgLocs.size(); i != e; ++i) {
@@ -503,7 +505,7 @@ OR1KTargetLowering::LowerReturn(SDValue Chain,
 
   // CCState - Info about the registers and stack slot.
   CCState CCInfo(CallConv, isVarArg, DAG.getMachineFunction(),
-                 getTargetMachine(), RVLocs, *DAG.getContext());
+                 RVLocs, *DAG.getContext());
 
   // Analize return values.
   CCInfo.AnalyzeReturn(Outs, RetCC_OR1K32);
@@ -548,7 +550,7 @@ OR1KTargetLowering::LowerReturn(SDValue Chain,
     RetOps.push_back(Flag);
 
   // Return Void
-  return DAG.getNode(Opc, dl, MVT::Other, &RetOps[0], RetOps.size());
+  return DAG.getNode(Opc, dl, MVT::Other, RetOps);
 }
 
 /// LowerCCCCallTo - functions arguments are copied from virtual regs to
@@ -565,7 +567,7 @@ OR1KTargetLowering::LowerCCCCallTo(SDValue Chain, SDValue Callee,
   // Analyze operands of the call, assigning locations to each operand.
   SmallVector<CCValAssign, 16> ArgLocs;
   CCState CCInfo(CallConv, isVarArg, DAG.getMachineFunction(),
-                 getTargetMachine(), ArgLocs, *DAG.getContext());
+                 ArgLocs, *DAG.getContext());
   GlobalAddressSDNode *G = dyn_cast<GlobalAddressSDNode>(Callee);
   MachineFrameInfo *MFI = DAG.getMachineFunction().getFrameInfo();
   bool IsPIC = getTargetMachine().getRelocationModel() == Reloc::PIC_;
@@ -663,8 +665,7 @@ OR1KTargetLowering::LowerCCCCallTo(SDValue Chain, SDValue Callee,
   // Transform all store nodes into one single node because all store nodes are
   // independent of each other.
   if (!MemOpChains.empty())
-    Chain = DAG.getNode(ISD::TokenFactor, dl, MVT::Other,
-                        &MemOpChains[0], MemOpChains.size());
+    Chain = DAG.getNode(ISD::TokenFactor, dl, MVT::Other, MemOpChains);
 
   SDValue InFlag;
   // .plt stubs expects a pointer to GOT in r16, so insert a copy
@@ -712,7 +713,7 @@ OR1KTargetLowering::LowerCCCCallTo(SDValue Chain, SDValue Callee,
   if (InFlag.getNode())
     Ops.push_back(InFlag);
 
-  Chain = DAG.getNode(OR1KISD::CALL, dl, NodeTys, &Ops[0], Ops.size());
+  Chain = DAG.getNode(OR1KISD::CALL, dl, NodeTys, Ops);
   InFlag = Chain.getValue(1);
 
   // Create the CALLSEQ_END node.
@@ -741,7 +742,7 @@ OR1KTargetLowering::LowerCallResult(SDValue Chain, SDValue InFlag,
   // Assign locations to each value returned by this call.
   SmallVector<CCValAssign, 16> RVLocs;
   CCState CCInfo(CallConv, isVarArg, DAG.getMachineFunction(),
-                 getTargetMachine(), RVLocs, *DAG.getContext());
+                 RVLocs, *DAG.getContext());
 
   CCInfo.AnalyzeCallResult(Ins, RetCC_OR1K32);
 
@@ -875,7 +876,7 @@ SDValue OR1KTargetLowering::LowerSELECT_CC(SDValue Op,
   Ops.push_back(TargetCC);
   Ops.push_back(Flag);
 
-  return DAG.getNode(OR1KISD::SELECT_CC, dl, VTs, &Ops[0], Ops.size());
+  return DAG.getNode(OR1KISD::SELECT_CC, dl, VTs, Ops);
 }
 
 SDValue OR1KTargetLowering::LowerVASTART(SDValue Op, SelectionDAG &DAG) const {
@@ -929,7 +930,7 @@ OR1KTargetLowering::LowerDYNAMIC_STACKALLOC(SDValue Op,
   SDValue CopyChain = DAG.getCopyToReg(Chain, dl, SPReg, Sub);
 
   SDValue Ops[2] = { ArgAdjust, CopyChain };
-  return DAG.getMergeValues(Ops, 2, dl);
+  return DAG.getMergeValues(Ops, dl);
 }
 
 /// LowerCTTZ - Lower count of leading zeros
@@ -980,7 +981,7 @@ OR1KTargetLowering::LowerCTTZ_ZERO_UNDEF(SDValue Op,
 
 SDValue
 OR1KTargetLowering::LowerRETURNADDR(SDValue Op, SelectionDAG &DAG) const {
-  const TargetRegisterInfo *TRI = TM.getRegisterInfo();
+  const TargetRegisterInfo *TRI = TM.getSubtargetImpl()->getRegisterInfo();
   MachineFunction &MF = DAG.getMachineFunction();
   MachineFrameInfo *MFI = MF.getFrameInfo();
   MFI->setReturnAddressIsTaken(true);
@@ -1136,7 +1137,8 @@ OR1KTargetLowering::EmitInstrWithCustomInserter(MachineInstr *MI,
                                                 MachineBasicBlock *BB) const {
   unsigned Opc = MI->getOpcode();
 
-  const TargetInstrInfo &TII = *getTargetMachine().getInstrInfo();
+  const TargetInstrInfo &TII =
+      *getTargetMachine().getSubtargetImpl()->getInstrInfo();
   DebugLoc dl = MI->getDebugLoc();
   //SDLoc dl(MI);
 

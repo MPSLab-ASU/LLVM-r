@@ -39,24 +39,17 @@ static cl::opt<bool> CompatDelaySlotFiller(
   cl::Hidden);
 
 namespace {
-  struct Filler : public MachineFunctionPass {
-    /// Target machine description which we query for reg. names, data
-    /// layout, etc.
-    ///
-    TargetMachine &TM;
-    const TargetInstrInfo *TII;
-    MachineBasicBlock::instr_iterator LastFiller;
-
-    static char ID;
+  class Filler : public MachineFunctionPass {
+  public:
     Filler(TargetMachine &tm)
-      : MachineFunctionPass(ID), TM(tm), TII(tm.getInstrInfo()) { }
+      : MachineFunctionPass(ID), TM(tm) {}
 
-    virtual const char *getPassName() const {
+    const char *getPassName() const override {
       return "OR1K Delay Slot Filler";
     }
 
     bool runOnMachineBasicBlock(MachineBasicBlock &MBB);
-    bool runOnMachineFunction(MachineFunction &F) {
+    bool runOnMachineFunction(MachineFunction &F) override {
       bool Changed = false;
       for (MachineFunction::iterator FI = F.begin(), FE = F.end();
            FI != FE; ++FI)
@@ -64,6 +57,7 @@ namespace {
       return Changed;
     }
 
+  private:
     void insertDefsUses(MachineBasicBlock::instr_iterator MI,
                         SmallSet<unsigned, 32>& RegDefs,
                         SmallSet<unsigned, 32>& RegUses);
@@ -80,6 +74,11 @@ namespace {
     findDelayInstr(MachineBasicBlock &MBB,
                    MachineBasicBlock::instr_iterator slot,
                    MachineBasicBlock::instr_iterator &Filler);
+
+    TargetMachine &TM;
+    MachineBasicBlock::instr_iterator LastFiller;
+
+    static char ID;
   };
   char Filler::ID = 0;
 } // end of anonymous namespace
@@ -94,6 +93,7 @@ FunctionPass *llvm::createOR1KDelaySlotFillerPass(OR1KTargetMachine &tm) {
 /// runOnMachineBasicBlock - Fill in delay slots for the given basic block.
 /// There is only one delay slot per delayed instruction.
 bool Filler::runOnMachineBasicBlock(MachineBasicBlock &MBB) {
+  const TargetInstrInfo *TII = TM.getSubtargetImpl()->getInstrInfo();
   bool Changed = false;
   LastFiller = MBB.instr_end();
 
@@ -150,8 +150,7 @@ bool Filler::findDelayInstr(MachineBasicBlock &MBB,
         I->isInlineAsm()             ||
         I->isLabel()                 ||
         FI == LastFiller             ||
-        I->isPseudo()
-        )
+        I->isPseudo())
       break;
 
     if (delayHasHazard(FI, sawLoad, sawStore, RegDefs, RegUses)) {
@@ -244,8 +243,9 @@ void Filler::insertDefsUses(MachineBasicBlock::instr_iterator MI,
 
 //returns true if the Reg or its alias is in the RegSet.
 bool Filler::IsRegInSet(SmallSet<unsigned, 32>& RegSet, unsigned Reg) {
+  const TargetRegisterInfo *TRI = TM.getSubtargetImpl()->getRegisterInfo();
   // Check Reg and all aliased Registers.
-  for (MCRegAliasIterator AI(Reg, TM.getRegisterInfo(), true);
+  for (MCRegAliasIterator AI(Reg, TRI, true);
        AI.isValid(); ++AI)
     if (RegSet.count(*AI))
       return true;

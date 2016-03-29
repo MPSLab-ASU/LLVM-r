@@ -39,8 +39,7 @@ class OR1KMCCodeEmitter : public MCCodeEmitter {
 public:
   OR1KMCCodeEmitter(const MCInstrInfo &mcii, const MCSubtargetInfo &sti,
                     MCContext &ctx)
-    : MCII(mcii), STI(sti), Ctx(ctx) {
-    }
+    : MCII(mcii), STI(sti), Ctx(ctx) {}
 
   ~OR1KMCCodeEmitter() {}
 
@@ -60,13 +59,13 @@ public:
                             SmallVectorImpl<MCFixup> &Fixups,
                             const MCSubtargetInfo &STI) const;
 
-  // Emit one byte through output stream (from MCBlazeMCCodeEmitter)
+  // Emit one byte through output stream
   void EmitByte(unsigned char C, unsigned &CurByte, raw_ostream &OS) const {
     OS << (char)C;
     ++CurByte;
   }
 
-  // Emit a series of bytes (little endian) (from MCBlazeMCCodeEmitter)
+  // Emit a series of bytes (little endian)
   void EmitLEConstant(uint64_t Val, unsigned Size, unsigned &CurByte,
                     raw_ostream &OS) const {
     assert(Size <= 8 && "size too big in emit constant");
@@ -88,7 +87,7 @@ public:
 
   void EncodeInstruction(const MCInst &MI, raw_ostream &OS,
                          SmallVectorImpl<MCFixup> &Fixups,
-                         const MCSubtargetInfo &STI) const;
+                         const MCSubtargetInfo &STI) const override;
 };
 } // end anonymous namepsace
 

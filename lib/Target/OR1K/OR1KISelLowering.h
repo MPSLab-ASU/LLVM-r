@@ -62,14 +62,15 @@ namespace llvm {
 
   class OR1KTargetLowering : public TargetLowering {
   public:
-    explicit OR1KTargetLowering(OR1KTargetMachine &TM);
+    explicit OR1KTargetLowering(const OR1KTargetMachine &TM,
+                                const OR1KSubtarget &STI);
 
     /// LowerOperation - Provide custom lowering hooks for some operations.
-    virtual SDValue LowerOperation(SDValue Op, SelectionDAG &DAG) const;
+    SDValue LowerOperation(SDValue Op, SelectionDAG &DAG) const override;
 
     /// getTargetNodeName - This method returns the name of a target specific
     /// DAG node.
-    virtual const char *getTargetNodeName(unsigned Opcode) const;
+    const char *getTargetNodeName(unsigned Opcode) const override;
 
     SDValue LowerBR_CC(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerSELECT_CC(SDValue Op, SelectionDAG &DAG) const;
@@ -86,17 +87,17 @@ namespace llvm {
     SDValue LowerFRAMEADDR(SDValue Op, SelectionDAG &DAG) const;
 
     std::pair<unsigned, const TargetRegisterClass*>
-    getRegForInlineAsmConstraint(const std::string &Constraint, MVT VT) const;
+    getRegForInlineAsmConstraint(const std::string &Constraint, MVT VT) const override;
     ConstraintWeight
     getSingleConstraintMatchWeight(AsmOperandInfo &info,
-                                   const char *constraint) const;
-    virtual void LowerAsmOperandForConstraint(SDValue Op,
-                                              std::string &Constraint,
-                                              std::vector<SDValue> &Ops,
-                                              SelectionDAG &DAG) const;
+                                   const char *constraint) const override;
+    void LowerAsmOperandForConstraint(SDValue Op,
+                                      std::string &Constraint,
+                                      std::vector<SDValue> &Ops,
+                                      SelectionDAG &DAG) const override;
 
     MachineBasicBlock* EmitInstrWithCustomInserter(MachineInstr *MI,
-                                                   MachineBasicBlock *BB) const;
+                                                   MachineBasicBlock *BB) const override;
 
   private:
     const OR1KSubtarget &Subtarget;
@@ -127,19 +128,19 @@ namespace llvm {
                             SmallVectorImpl<SDValue> &InVals) const;
 
     SDValue LowerCall(TargetLowering::CallLoweringInfo &CLI,
-                      SmallVectorImpl<SDValue> &InVals) const;
+                      SmallVectorImpl<SDValue> &InVals) const override;
 
     SDValue LowerFormalArguments(SDValue Chain,
                                  CallingConv::ID CallConv, bool isVarArg,
                                  const SmallVectorImpl<ISD::InputArg> &Ins,
                                  SDLoc dl, SelectionDAG &DAG,
-                                 SmallVectorImpl<SDValue> &InVals) const;
+                                 SmallVectorImpl<SDValue> &InVals) const override;
 
     SDValue LowerReturn(SDValue Chain,
                         CallingConv::ID CallConv, bool isVarArg,
                         const SmallVectorImpl<ISD::OutputArg> &Outs,
                         const SmallVectorImpl<SDValue> &OutVals,
-                        SDLoc dl, SelectionDAG &DAG) const;
+                        SDLoc dl, SelectionDAG &DAG) const override;
   };
 } // namespace llvm
 

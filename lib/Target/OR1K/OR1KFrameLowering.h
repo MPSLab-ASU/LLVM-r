@@ -15,38 +15,32 @@
 #define OR1K_FRAMEINFO_H
 
 #include "OR1K.h"
-#include "OR1KSubtarget.h"
 #include "llvm/Target/TargetFrameLowering.h"
 
 namespace llvm {
-  class OR1KSubtarget;
+class OR1KSubtarget;
 
 class OR1KFrameLowering : public TargetFrameLowering {
 private:
   void determineFrameLayout(MachineFunction &MF) const;
   void replaceAdjDynAllocPseudo(MachineFunction &MF) const;
 
-protected:
-  const OR1KSubtarget &STI;
-
 public:
-  explicit OR1KFrameLowering(const OR1KSubtarget &sti)
-    : TargetFrameLowering(TargetFrameLowering::StackGrowsDown, 4, 0),
-      STI(sti) {
-  }
+  explicit OR1KFrameLowering()
+    : TargetFrameLowering(TargetFrameLowering::StackGrowsDown, 4, 0) {}
 
   /// emitProlog/emitEpilog - These methods insert prolog and epilog code into
   /// the function.
-  void emitPrologue(MachineFunction &MF) const;
-  void emitEpilogue(MachineFunction &MF, MachineBasicBlock &MBB) const;
+  void emitPrologue(MachineFunction &MF) const override;
+  void emitEpilogue(MachineFunction &MF, MachineBasicBlock &MBB) const override;
 
   void eliminateCallFramePseudoInstr(MachineFunction &MF,
                                      MachineBasicBlock &MBB,
-                                     MachineBasicBlock::iterator I) const;
+                                     MachineBasicBlock::iterator I) const override;
 
-  bool hasFP(const MachineFunction &MF) const;
-  virtual void processFunctionBeforeCalleeSavedScan(MachineFunction &MF,
-                                                    RegScavenger *RS) const;
+  bool hasFP(const MachineFunction &MF) const override;
+  void processFunctionBeforeCalleeSavedScan(MachineFunction &MF,
+                                            RegScavenger *RS) const override;
 };
 
 } // End llvm namespace

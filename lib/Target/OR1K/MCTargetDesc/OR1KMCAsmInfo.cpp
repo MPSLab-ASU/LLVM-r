@@ -21,7 +21,6 @@ OR1KMCAsmInfo::OR1KMCAsmInfo(StringRef TT) {
   PrivateGlobalPrefix         = ".L";
   WeakRefDirective            = "\t.weak\t";
   ExceptionsType              = ExceptionHandling::DwarfCFI;
-  HasLEB128                   = true;
   DwarfRegNumForCFI           = true;
   SupportsDebugInformation    = true;
 

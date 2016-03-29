@@ -66,24 +66,26 @@ public:
   }
 
   void applyFixup(const MCFixup &Fixup, char *Data, unsigned DataSize,
-                  uint64_t Value) const;
+                  uint64_t Value, bool IsPCRel) const override;
 
-  MCObjectWriter *createObjectWriter(raw_ostream &OS) const;
+  MCObjectWriter *createObjectWriter(raw_ostream &OS) const override ;
 
   // No instruction requires relaxation
   bool fixupNeedsRelaxation(const MCFixup &Fixup, uint64_t Value,
                             const MCRelaxableFragment *DF,
-                            const MCAsmLayout &Layout) const { return false; }
+                            const MCAsmLayout &Layout) const override {
+    return false;
+  }
 
-  const MCFixupKindInfo &getFixupKindInfo(MCFixupKind Kind) const;
+  const MCFixupKindInfo &getFixupKindInfo(MCFixupKind Kind) const override ;
 
-  unsigned getNumFixupKinds() const { return OR1K::NumTargetFixupKinds; }
+  unsigned getNumFixupKinds() const  override { return OR1K::NumTargetFixupKinds; }
 
-  bool mayNeedRelaxation(const MCInst &Inst) const { return false; }
+  bool mayNeedRelaxation(const MCInst &Inst) const  override { return false; }
 
-  void relaxInstruction(const MCInst &Inst, MCInst &Res) const {}
+  void relaxInstruction(const MCInst &Inst, MCInst &Res) const  override {}
 
-  bool writeNopData(uint64_t Count, MCObjectWriter *OW) const;
+  bool writeNopData(uint64_t Count, MCObjectWriter *OW) const override ;
 };
 
 bool OR1KAsmBackend::writeNopData(uint64_t Count, MCObjectWriter *OW) const {
@@ -97,7 +99,8 @@ bool OR1KAsmBackend::writeNopData(uint64_t Count, MCObjectWriter *OW) const {
 }
 
 void OR1KAsmBackend::applyFixup(const MCFixup &Fixup, char *Data,
-                                unsigned DataSize, uint64_t Value) const {
+                                unsigned DataSize, uint64_t Value,
+                                bool IsPCRel) const {
   MCFixupKind Kind = Fixup.getKind();
   Value = adjustFixupValue((unsigned)Kind, Value);
 

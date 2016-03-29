@@ -14,6 +14,7 @@
 #include "OR1K.h"
 #include "OR1KTargetMachine.h"
 #include "llvm/PassManager.h"
+#include "llvm/CodeGen/TargetLoweringObjectFileImpl.h"
 #include "llvm/CodeGen/Passes.h"
 #include "llvm/Support/FormattedStream.h"
 #include "llvm/Support/TargetRegistry.h"
@@ -36,13 +37,13 @@ OR1KTargetMachine(const Target &T, StringRef TT,
                     Reloc::Model RM, CodeModel::Model CM,
                     CodeGenOpt::Level OL)
   : LLVMTargetMachine(T, TT, CPU, FS, Options, RM, CM, OL),
-  Subtarget(TT, CPU, FS),
-  DL("E-m:e-p:32:32-i8:8:8-i16:16:16-i64:32:32-"
-             "f64:32:32-v64:32:32-v128:32:32-a0:0:32-n32"),
-  InstrInfo(), TLInfo(*this), TSInfo(*this),
-  FrameLowering(Subtarget) {
-    initAsmInfo();
+    Subtarget(TT, CPU, FS, *this),
+    TLOF(make_unique<TargetLoweringObjectFileELF>()) {
+  initAsmInfo();
 }
+
+OR1KTargetMachine::~OR1KTargetMachine() {}
+
 namespace {
 /// OR1K Code Generator Pass Configuration Options.
 class OR1KPassConfig : public TargetPassConfig {
@@ -54,8 +55,8 @@ public:
     return getTM<OR1KTargetMachine>();
   }
 
-  virtual bool addInstSelector();
-  virtual bool addPreEmitPass();
+  bool addInstSelector() override;
+  void addPreEmitPass() override;
 };
 } // namespace
 
@@ -77,7 +78,6 @@ bool OR1KPassConfig::addInstSelector() {
 // machine code is emitted. return true if -print-machineinstrs should
 // print out the code after the passes.
 
-bool OR1KPassConfig::addPreEmitPass() {
+void OR1KPassConfig::addPreEmitPass() {
   addPass(createOR1KDelaySlotFillerPass(getOR1KTargetMachine()));
-  return true;
 }

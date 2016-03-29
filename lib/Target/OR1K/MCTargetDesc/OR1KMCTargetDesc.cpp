@@ -75,8 +75,7 @@ static MCStreamer *createMCStreamer(const Target &T, StringRef TT,
                                     raw_ostream &_OS,
                                     MCCodeEmitter *_Emitter,
                                     const MCSubtargetInfo &STI,
-                                    bool RelaxAll,
-                                    bool NoExecStack) {
+                                    bool RelaxAll) {
   Triple TheTriple(TT);
 
   if (TheTriple.isOSDarwin()) {
@@ -87,7 +86,7 @@ static MCStreamer *createMCStreamer(const Target &T, StringRef TT,
     llvm_unreachable("OR1K does not support Windows COFF format");
   }
 
-  return createELFStreamer(Ctx, MAB, _OS, _Emitter, RelaxAll, NoExecStack);
+  return createELFStreamer(Ctx, MAB, _OS, _Emitter, RelaxAll);
 }
 
 static MCInstPrinter *createOR1KMCInstPrinter(const Target &T,
