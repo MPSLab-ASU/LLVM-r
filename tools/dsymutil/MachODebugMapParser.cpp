@@ -51,6 +51,10 @@ private:
   /// Element of the debug map corresponfing to the current object file.
   DebugMapObject *CurrentDebugMapObject;
 
+  /// Holds function info while function scope processing.
+  const char *CurrentFunctionName;
+  uint64_t CurrentFunctionAddress;
+
   void switchToNewDebugMapObject(StringRef Filename);
   void resetParserState();
   uint64_t getMainBinarySymbolAddress(StringRef Name);
@@ -97,6 +101,13 @@ void MachODebugMapParser::switchToNewDebugMapObject(StringRef Filename) {
   CurrentDebugMapObject = &Result->addDebugMapObject(Path);
 }
 
+static Triple getTriple(const object::MachOObjectFile &Obj) {
+  Triple TheTriple("unknown-unknown-unknown");
+  TheTriple.setArch(Triple::ArchType(Obj.getArch()));
+  TheTriple.setObjectFormat(Triple::MachO);
+  return TheTriple;
+}
+
 /// This main parsing routine tries to open the main binary and if
 /// successful iterates over the STAB entries. The real parsing is
 /// done in handleStabSymbolTableEntry.
@@ -107,7 +118,7 @@ ErrorOr<std::unique_ptr<DebugMap>> MachODebugMapParser::parse() {
 
   const MachOObjectFile &MainBinary = *MainBinOrError;
   loadMainBinarySymbols();
-  Result = make_unique<DebugMap>();
+  Result = make_unique<DebugMap>(getTriple(MainBinary));
   MainBinaryStrings = MainBinary.getStringTableData();
   for (const SymbolRef &Symbol : MainBinary.symbols()) {
     const DataRefImpl &DRI = Symbol.getRawDataRefImpl();
@@ -142,21 +153,27 @@ void MachODebugMapParser::handleStabSymbolTableEntry(uint32_t StringIndex,
   if (!CurrentDebugMapObject)
     return;
 
+  uint32_t Size = 0;
   switch (Type) {
   case MachO::N_GSYM:
     // This is a global variable. We need to query the main binary
     // symbol table to find its address as it might not be in the
     // debug map (for common symbols).
     Value = getMainBinarySymbolAddress(Name);
-    if (Value == UnknownAddressOrSize)
-      return;
     break;
   case MachO::N_FUN:
-    // Functions are scopes in STABS. They have an end marker that we
-    // need to ignore.
-    if (Name[0] == '\0')
+    // Functions are scopes in STABS. They have an end marker that
+    // contains the function size.
+    if (Name[0] == '\0') {
+      Size = Value;
+      Value = CurrentFunctionAddress;
+      Name = CurrentFunctionName;
+      break;
+    } else {
+      CurrentFunctionName = Name;
+      CurrentFunctionAddress = Value;
       return;
-    break;
+    }
   case MachO::N_STSYM:
     break;
   default:
@@ -167,7 +184,8 @@ void MachODebugMapParser::handleStabSymbolTableEntry(uint32_t StringIndex,
   if (ObjectSymIt == CurrentObjectAddresses.end())
     return Warning("could not find object file symbol for symbol " +
                    Twine(Name));
-  if (!CurrentDebugMapObject->addSymbol(Name, ObjectSymIt->getValue(), Value))
+  if (!CurrentDebugMapObject->addSymbol(Name, ObjectSymIt->getValue(), Value,
+                                        Size))
     return Warning(Twine("failed to insert symbol '") + Name +
                    "' in the debug map.");
 }
@@ -177,12 +195,11 @@ void MachODebugMapParser::loadCurrentObjectFileSymbols() {
   CurrentObjectAddresses.clear();
 
   for (auto Sym : CurrentObjectHolder.Get().symbols()) {
-    StringRef Name;
-    uint64_t Addr;
-    if (Sym.getAddress(Addr) || Addr == UnknownAddressOrSize ||
-        Sym.getName(Name))
+    uint64_t Addr = Sym.getValue();
+    ErrorOr<StringRef> Name = Sym.getName();
+    if (!Name)
       continue;
-    CurrentObjectAddresses[Name] = Addr;
+    CurrentObjectAddresses[*Name] = Addr;
   }
 }
 
@@ -192,7 +209,7 @@ void MachODebugMapParser::loadCurrentObjectFileSymbols() {
 uint64_t MachODebugMapParser::getMainBinarySymbolAddress(StringRef Name) {
   auto Sym = MainBinarySymbolAddresses.find(Name);
   if (Sym == MainBinarySymbolAddresses.end())
-    return UnknownAddressOrSize;
+    return 0;
   return Sym->second;
 }
 
@@ -202,21 +219,23 @@ void MachODebugMapParser::loadMainBinarySymbols() {
   const MachOObjectFile &MainBinary = MainBinaryHolder.GetAs<MachOObjectFile>();
   section_iterator Section = MainBinary.section_end();
   for (const auto &Sym : MainBinary.symbols()) {
-    SymbolRef::Type Type;
+    SymbolRef::Type Type = Sym.getType();
     // Skip undefined and STAB entries.
-    if (Sym.getType(Type) || (Type & SymbolRef::ST_Debug) ||
-        (Type & SymbolRef::ST_Unknown))
+    if ((Type & SymbolRef::ST_Debug) || (Type & SymbolRef::ST_Unknown))
       continue;
-    StringRef Name;
-    uint64_t Addr;
     // The only symbols of interest are the global variables. These
     // are the only ones that need to be queried because the address
     // of common data won't be described in the debug map. All other
     // addresses should be fetched for the debug map.
-    if (Sym.getAddress(Addr) || Addr == UnknownAddressOrSize ||
-        !(Sym.getFlags() & SymbolRef::SF_Global) || Sym.getSection(Section) ||
-        Section->isText() || Sym.getName(Name) || Name.size() == 0 ||
-        Name[0] == '\0')
+    if (!(Sym.getFlags() & SymbolRef::SF_Global) || Sym.getSection(Section) ||
+        Section == MainBinary.section_end() || Section->isText())
+      continue;
+    uint64_t Addr = Sym.getValue();
+    ErrorOr<StringRef> NameOrErr = Sym.getName();
+    if (!NameOrErr)
+      continue;
+    StringRef Name = *NameOrErr;
+    if (Name.size() == 0 || Name[0] == '\0')
       continue;
     MainBinarySymbolAddresses[Name] = Addr;
   }
@@ -226,9 +245,14 @@ namespace llvm {
 namespace dsymutil {
 llvm::ErrorOr<std::unique_ptr<DebugMap>> parseDebugMap(StringRef InputFile,
                                                        StringRef PrependPath,
-                                                       bool Verbose) {
-  MachODebugMapParser Parser(InputFile, PrependPath, Verbose);
-  return Parser.parse();
+                                                       bool Verbose,
+                                                       bool InputIsYAML) {
+  if (!InputIsYAML) {
+    MachODebugMapParser Parser(InputFile, PrependPath, Verbose);
+    return Parser.parse();
+  } else {
+    return DebugMap::parseYAMLDebugMap(InputFile, PrependPath, Verbose);
+  }
 }
 }
 }
