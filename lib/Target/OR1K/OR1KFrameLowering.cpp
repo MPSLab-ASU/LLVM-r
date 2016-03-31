@@ -95,8 +95,9 @@ void OR1KFrameLowering::replaceAdjDynAllocPseudo(MachineFunction &MF) const {
   }
 }
 
-void OR1KFrameLowering::emitPrologue(MachineFunction &MF) const {
-  MachineBasicBlock &MBB   = MF.front();
+void OR1KFrameLowering::emitPrologue(MachineFunction &MF,
+                                     MachineBasicBlock &MBB) const {
+  assert(&MF.front() == &MBB && "Shrink-wrapping not yet supported");
   MachineFrameInfo *MFI    = MF.getFrameInfo();
   const OR1KInstrInfo &TII =
     *static_cast<const OR1KInstrInfo*>(MF.getSubtarget().getInstrInfo());
@@ -323,10 +324,11 @@ void OR1KFrameLowering::emitEpilogue(MachineFunction &MF,
 }
 
 void OR1KFrameLowering::
-processFunctionBeforeCalleeSavedScan(MachineFunction &MF,
-                                     RegScavenger *RS) const {
+determineCalleeSaves(MachineFunction &MF, BitVector &SavedRegs,
+                     RegScavenger *RS) const {
+  TargetFrameLowering::determineCalleeSaves(MF, SavedRegs, RS);
+
   MachineFrameInfo *MFI = MF.getFrameInfo();
-  MachineRegisterInfo& MRI = MF.getRegInfo();
   const OR1KRegisterInfo *TRI =
     static_cast<const OR1KRegisterInfo*>(MF.getSubtarget().getRegisterInfo());
   bool IsPIC = MF.getTarget().getRelocationModel() == Reloc::PIC_;
@@ -336,7 +338,7 @@ processFunctionBeforeCalleeSavedScan(MachineFunction &MF,
   if (MFI->adjustsStack() || IsPIC) {
     MFI->CreateFixedObject(4, Offset, true);
     // Mark unused since we will save it manually in the prologue
-    MRI.setPhysRegUnused(OR1K::R9);
+    SavedRegs.set(OR1K::R9);
     Offset -= 4;
   }
 
@@ -347,6 +349,6 @@ processFunctionBeforeCalleeSavedScan(MachineFunction &MF,
 
   if (TRI->hasBasePointer(MF)) {
     MFI->CreateFixedObject(4, Offset, true);
-    MRI.setPhysRegUnused(TRI->getBaseRegister());
+    SavedRegs.set(TRI->getBaseRegister());
   }
 }

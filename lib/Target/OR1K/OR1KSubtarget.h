@@ -16,10 +16,10 @@
 
 #include "OR1KInstrInfo.h"
 #include "OR1KISelLowering.h"
-#include "OR1KSelectionDAGInfo.h"
 #include "OR1KFrameLowering.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/Target/TargetSubtargetInfo.h"
+#include "llvm/Target/TargetSelectionDAGInfo.h"
 #include "llvm/Target/TargetMachine.h"
 
 #include <string>
@@ -41,17 +41,17 @@ class OR1KSubtarget : public OR1KGenSubtargetInfo {
 
   Triple TargetTriple;
 
-  const DataLayout DL;
   const OR1KFrameLowering FrameLowering;
   const OR1KInstrInfo InstrInfo;
   const OR1KTargetLowering TLInfo;
-  const OR1KSelectionDAGInfo TSInfo;
+  const TargetSelectionDAGInfo TSInfo;
 public:
   /// This constructor initializes the data members to match that
   /// of the specified triple.
   ///
-  OR1KSubtarget(const std::string &TT, const std::string &CPU,
-                const std::string &FS, const OR1KTargetMachine &TM);
+  OR1KSubtarget(const Triple &TT,
+                const std::string &CPU, const std::string &FS,
+                const OR1KTargetMachine &TM);
 
   OR1KSubtarget &initializeSubtargetDependencies(StringRef CPU, StringRef FS);
 
@@ -70,14 +70,13 @@ public:
     return &FrameLowering;
   }
   const OR1KInstrInfo *getInstrInfo() const override { return &InstrInfo; }
-  const DataLayout *getDataLayout() const override { return &DL; }
   const OR1KRegisterInfo *getRegisterInfo() const override {
     return &InstrInfo.getRegisterInfo();
   }
   const OR1KTargetLowering *getTargetLowering() const override {
     return &TLInfo;
   }
-  const OR1KSelectionDAGInfo *getSelectionDAGInfo() const override {
+  const TargetSelectionDAGInfo *getSelectionDAGInfo() const override {
     return &TSInfo;
   }
 };

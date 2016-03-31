@@ -140,7 +140,7 @@ bool OR1KInstrInfo::AnalyzeBranch(MachineBasicBlock &MBB,
 unsigned
 OR1KInstrInfo::InsertBranch(MachineBasicBlock &MBB, MachineBasicBlock *TBB,
                             MachineBasicBlock *FBB,
-                            const SmallVectorImpl<MachineOperand> &Cond,
+                            ArrayRef<MachineOperand> Cond,
                             DebugLoc DL) const {
   // Shouldn't be a fall through.
   assert(TBB && "InsertBranch must not be told to insert a fallthrough");
@@ -203,7 +203,7 @@ namespace {
       MachineBasicBlock::iterator MBBI = FirstMBB.begin();
       DebugLoc DL = FirstMBB.findDebugLoc(MBBI);
       MachineRegisterInfo &RegInfo = MF.getRegInfo();
-      const OR1KInstrInfo *TII = TM->getSubtargetImpl()->getInstrInfo();
+      const TargetInstrInfo *TII = MF.getSubtarget().getInstrInfo();
 
       // This is needed to keep the representation in SSA form
       unsigned Scratch1 = RegInfo.createVirtualRegister(&OR1K::GPRRegClass);

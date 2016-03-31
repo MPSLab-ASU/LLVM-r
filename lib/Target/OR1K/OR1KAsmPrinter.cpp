@@ -38,8 +38,8 @@ using namespace llvm;
 namespace {
   class OR1KAsmPrinter : public AsmPrinter {
   public:
-    explicit OR1KAsmPrinter(TargetMachine &TM, MCStreamer &Streamer)
-      : AsmPrinter(TM, Streamer) {}
+    explicit OR1KAsmPrinter(TargetMachine &TM, std::unique_ptr<MCStreamer> Streamer)
+      : AsmPrinter(TM, std::move(Streamer)) {}
 
     const char *getPassName() const override {
       return "OR1K Assembly Printer";
@@ -73,38 +73,39 @@ void OR1KAsmPrinter::printOperand(const MachineInstr *MI, int OpNum,
     break;
 
   case MachineOperand::MO_MachineBasicBlock:
-    O << *MO.getMBB()->getSymbol();
+    MO.getMBB()->getSymbol()->print(O, MAI);
     break;
 
   case MachineOperand::MO_GlobalAddress:
     if (TF == OR1KII::MO_PLT)
       O << "plt(" << *getSymbol(MO.getGlobal()) << ")";
     else
-      O << *getSymbol(MO.getGlobal());
+      getSymbol(MO.getGlobal())->print(O, MAI);
     break;
 
   case MachineOperand::MO_BlockAddress: {
-     MCSymbol* BA = GetBlockAddressSymbol(MO.getBlockAddress());
-     O << BA->getName();
+     GetBlockAddressSymbol(MO.getBlockAddress())->print(O, MAI);
      break;
    }
 
-   case MachineOperand::MO_ExternalSymbol:
-     if (TF == OR1KII::MO_PLT)
-       O << "plt(" << *GetExternalSymbolSymbol(MO.getSymbolName()) << ")";
-     else
-       O << *GetExternalSymbolSymbol(MO.getSymbolName());
-     break;
+  case MachineOperand::MO_ExternalSymbol:
+    if (TF == OR1KII::MO_PLT) {
+      O << "plt(";
+      GetExternalSymbolSymbol(MO.getSymbolName())->print(O, MAI);
+      O << ")";
+    } else
+      GetExternalSymbolSymbol(MO.getSymbolName())->print(O, MAI);
+    break;
 
-   case MachineOperand::MO_JumpTableIndex:
-     O << MAI->getPrivateGlobalPrefix() << "JTI" << getFunctionNumber()
-       << '_' << MO.getIndex();
-     break;
+  case MachineOperand::MO_JumpTableIndex:
+    O << MAI->getPrivateGlobalPrefix() << "JTI" << getFunctionNumber()
+      << '_' << MO.getIndex();
+    break;
 
   case MachineOperand::MO_ConstantPoolIndex:
     O << MAI->getPrivateGlobalPrefix() << "CPI" << getFunctionNumber()
       << '_' << MO.getIndex();
-    return;
+    break;
 
   default:
     llvm_unreachable("<unknown operand type>");
@@ -173,31 +174,31 @@ void OR1KAsmPrinter::customEmitInstruction(const MachineInstr *MI) {
     //   MYGLOBAL + (. - PICBASE)
     // However, we can't generate a ".", so just emit a new label here and refer
     // to it.
-    MCSymbol *DotSym = OutContext.CreateTempSymbol();
-    const MCExpr *DotExpr = MCSymbolRefExpr::Create(DotSym, OutContext);
+    MCSymbol *DotSym = OutContext.createTempSymbol();
+    const MCExpr *DotExpr = MCSymbolRefExpr::create(DotSym, OutContext);
     const MCExpr *PICBase =
-      MCSymbolRefExpr::Create(MF->getPICBaseSymbol(), OutContext);
+      MCSymbolRefExpr::create(MF->getPICBaseSymbol(), OutContext);
 
-    OutStreamer.EmitLabel(DotSym);
+    OutStreamer->EmitLabel(DotSym);
 
     // Now that we have emitted the label, lower the complex operand expression.
     MachineOperand MO = (MI->getOpcode() == OR1K::MOVHI) ?
       MI->getOperand(1) : MI->getOperand(2);
     MCSymbol *OpSym = MCInstLowering.GetExternalSymbolSymbol(MO);
 
-    DotExpr = MCBinaryExpr::CreateSub(DotExpr, PICBase, OutContext);
+    DotExpr = MCBinaryExpr::createSub(DotExpr, PICBase, OutContext);
 
-    DotExpr = MCBinaryExpr::CreateAdd(MCSymbolRefExpr::Create(OpSym, Kind,
+    DotExpr = MCBinaryExpr::createAdd(MCSymbolRefExpr::create(OpSym, Kind,
                                                               OutContext),
                                       DotExpr, OutContext);
 
     MCInst TmpInst;
     TmpInst.setOpcode(MI->getOpcode());
-    TmpInst.addOperand(MCOperand::CreateReg(MI->getOperand(0).getReg()));
+    TmpInst.addOperand(MCOperand::createReg(MI->getOperand(0).getReg()));
     if (MI->getOpcode() == OR1K::ORI)
-      TmpInst.addOperand(MCOperand::CreateReg(MI->getOperand(1).getReg()));
-    TmpInst.addOperand(MCOperand::CreateExpr(DotExpr));
-    OutStreamer.EmitInstruction(TmpInst, STI);
+      TmpInst.addOperand(MCOperand::createReg(MI->getOperand(1).getReg()));
+    TmpInst.addOperand(MCOperand::createExpr(DotExpr));
+    OutStreamer->EmitInstruction(TmpInst, STI);
     return;
   }
 
@@ -214,29 +215,29 @@ void OR1KAsmPrinter::customEmitInstruction(const MachineInstr *MI) {
     TmpInst.setOpcode(OR1K::JAL);
     // FIXME: We would like an efficient form for this, so we don't have to do a
     // lot of extra uniquing.
-    TmpInst.addOperand(MCOperand::CreateExpr(
-                         MCSymbolRefExpr::Create(PICBase,OutContext)));
-    OutStreamer.EmitInstruction(TmpInst, STI);
+    TmpInst.addOperand(MCOperand::createExpr(
+                         MCSymbolRefExpr::create(PICBase,OutContext)));
+    OutStreamer->EmitInstruction(TmpInst, STI);
 
     // Emit delay-slot nop
     // FIXME: omit on no-delay-slot targets
     TmpInst.setOpcode(OR1K::NOP);
-    TmpInst.getOperand(0) = MCOperand::CreateImm(0);
-    OutStreamer.EmitInstruction(TmpInst, STI);
+    TmpInst.getOperand(0) = MCOperand::createImm(0);
+    OutStreamer->EmitInstruction(TmpInst, STI);
 
     // Emit the label.
-    OutStreamer.EmitLabel(PICBase);
+    OutStreamer->EmitLabel(PICBase);
 
     return;
   }
   }
 
   if(MI->isInsideBundle())
-    OutStreamer.AddComment("in delay slot");
+    OutStreamer->AddComment("in delay slot");
 
   MCInst TmpInst;
   MCInstLowering.Lower(MI, TmpInst);
-  OutStreamer.EmitInstruction(TmpInst, STI);
+  OutStreamer->EmitInstruction(TmpInst, STI);
 }
 
 void OR1KAsmPrinter::EmitInstruction(const MachineInstr *MI) {

@@ -13,7 +13,7 @@
 
 #include "OR1K.h"
 #include "OR1KTargetMachine.h"
-#include "llvm/PassManager.h"
+#include "llvm/IR/LegacyPassManager.h"
 #include "llvm/CodeGen/TargetLoweringObjectFileImpl.h"
 #include "llvm/CodeGen/Passes.h"
 #include "llvm/Support/FormattedStream.h"
@@ -31,12 +31,14 @@ extern "C" void LLVMInitializeOR1KTarget() {
 // On function prologue, the stack is created by decrementing
 // its pointer. Once decremented, all references are done with positive
 // offset from the stack/frame pointer.
-OR1KTargetMachine::
-OR1KTargetMachine(const Target &T, StringRef TT,
-                    StringRef CPU, StringRef FS, const TargetOptions &Options,
-                    Reloc::Model RM, CodeModel::Model CM,
-                    CodeGenOpt::Level OL)
-  : LLVMTargetMachine(T, TT, CPU, FS, Options, RM, CM, OL),
+OR1KTargetMachine::OR1KTargetMachine(const Target &T, const Triple &TT,
+                                     StringRef CPU, StringRef FS,
+                                     const TargetOptions &Options,
+                                     Reloc::Model RM, CodeModel::Model CM,
+                                     CodeGenOpt::Level OL)
+  : LLVMTargetMachine(T, "E-m:e-p:32:32-i8:8:8-i16:16:16-i64:32:32-"
+                         "f64:32:32-v64:32:32-v128:32:32-a0:0:32-n32",
+                      TT, CPU, FS, Options, RM, CM, OL),
     Subtarget(TT, CPU, FS, *this),
     TLOF(make_unique<TargetLoweringObjectFileELF>()) {
   initAsmInfo();
@@ -79,5 +81,5 @@ bool OR1KPassConfig::addInstSelector() {
 // print out the code after the passes.
 
 void OR1KPassConfig::addPreEmitPass() {
-  addPass(createOR1KDelaySlotFillerPass(getOR1KTargetMachine()));
+  addPass(createOR1KDelaySlotFillerPass());
 }

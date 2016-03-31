@@ -14,16 +14,16 @@
 #ifndef OR1K_MCASM_INFO_H
 #define OR1K_MCASM_INFO_H
 
-#include "llvm/ADT/StringRef.h"
 #include "llvm/MC/MCAsmInfoELF.h"
 
 namespace llvm {
   class Target;
-  
+  class Triple;
+
   class OR1KMCAsmInfo : public MCAsmInfoELF {
     virtual void anchor();
   public:
-    explicit OR1KMCAsmInfo(StringRef TT);
+    explicit OR1KMCAsmInfo(const Triple &TT);
   };
 
 } // namespace llvm

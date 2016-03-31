@@ -40,17 +40,15 @@ using namespace llvm;
 
 OR1KTargetLowering::OR1KTargetLowering(const OR1KTargetMachine &TM,
                                        const OR1KSubtarget &STI) :
-  TargetLowering(TM), Subtarget(STI), TM(TM) {
-
-  TD = getDataLayout();
+    TargetLowering(TM), Subtarget(STI) {
 
   // Set up the register classes.
   addRegisterClass(MVT::i32, &OR1K::GPRRegClass);
-  if (!TM.Options.UseSoftFloat)
+  if (TM.Options.FloatABIType == FloatABI::Hard)
     addRegisterClass(MVT::f32, &OR1K::GPRRegClass);
 
   // Compute derived properties from the register classes
-  computeRegisterProperties();
+  computeRegisterProperties(STI.getRegisterInfo());
 
   setStackPointerRegisterToSaveRestore(OR1K::R1);
 
@@ -72,7 +70,7 @@ OR1KTargetLowering::OR1KTargetLowering(const OR1KTargetMachine &TM,
   setOperationAction(ISD::BlockAddress,      MVT::i32, Custom);
   setOperationAction(ISD::JumpTable,         MVT::i32, Custom);
   setOperationAction(ISD::ConstantPool,      MVT::i32, Custom);
-  if (!TM.Options.UseSoftFloat)
+  if (TM.Options.FloatABIType == FloatABI::Hard)
     setOperationAction(ISD::ConstantFP,       MVT::f32,   Legal);
 
   setOperationAction(ISD::DYNAMIC_STACKALLOC, MVT::i32,   Custom);
@@ -182,10 +180,10 @@ SDValue OR1KTargetLowering::LowerOperation(SDValue Op,
 //===----------------------------------------------------------------------===//
 //                       OR1K Inline Assembly Support
 //===----------------------------------------------------------------------===//
-std::pair<unsigned, const TargetRegisterClass*>
-OR1KTargetLowering::
-getRegForInlineAsmConstraint(const std::string &Constraint,
-                             MVT VT) const {
+std::pair<unsigned, const TargetRegisterClass *>
+OR1KTargetLowering::getRegForInlineAsmConstraint(const TargetRegisterInfo *TRI,
+                                                 StringRef Constraint,
+                                                 MVT VT) const {
   if (Constraint.size() == 1) {
     // GCC Constraint Letters
     switch (Constraint[0]) {
@@ -195,7 +193,7 @@ getRegForInlineAsmConstraint(const std::string &Constraint,
     }
   }
 
-  return TargetLowering::getRegForInlineAsmConstraint(Constraint, VT);
+  return TargetLowering::getRegForInlineAsmConstraint(TRI, Constraint, VT);
 }
 
 /// Examine constraint type and operand type and determine a weight value.
@@ -235,6 +233,7 @@ void OR1KTargetLowering::LowerAsmOperandForConstraint(SDValue Op,
                                                       std::string &Constraint,
                                                       std::vector<SDValue>&Ops,
                                                       SelectionDAG &DAG) const {
+  SDLoc dl(Op);
   SDValue Result(0, 0);
 
   // Only support length 1 constraints for now.
@@ -247,7 +246,7 @@ void OR1KTargetLowering::LowerAsmOperandForConstraint(SDValue Op,
     // If this fails, the parent routine will give an error
     if (ConstantSDNode *C = dyn_cast<ConstantSDNode>(Op)) {
       if (isInt<16>(C->getSExtValue())) {
-        Result = DAG.getTargetConstant(C->getSExtValue(), Op.getValueType());
+        Result = DAG.getTargetConstant(C->getSExtValue(), dl, Op.getValueType());
         break;
       }
     }
@@ -256,7 +255,7 @@ void OR1KTargetLowering::LowerAsmOperandForConstraint(SDValue Op,
   case 'O':
     if (ConstantSDNode *C = dyn_cast<ConstantSDNode>(Op)) {
       if (C->getZExtValue() == 0) {
-        Result = DAG.getTargetConstant(0, Op.getValueType());
+        Result = DAG.getTargetConstant(0, dl, Op.getValueType());
         break;
       }
     }
@@ -264,7 +263,7 @@ void OR1KTargetLowering::LowerAsmOperandForConstraint(SDValue Op,
   case 'K': // unsigned 16 bit immediate
     if (ConstantSDNode *C = dyn_cast<ConstantSDNode>(Op)) {
       if (isUInt<16>(C->getZExtValue())) {
-        Result = DAG.getTargetConstant(C->getSExtValue(), Op.getValueType());
+        Result = DAG.getTargetConstant(C->getSExtValue(), dl, Op.getValueType());
         break;
       }
     }
@@ -272,7 +271,7 @@ void OR1KTargetLowering::LowerAsmOperandForConstraint(SDValue Op,
   case 'L': // immediate in the range 0 to 31
     if (ConstantSDNode *C = dyn_cast<ConstantSDNode>(Op)) {
       if (C->getZExtValue() <= 31) {
-        Result = DAG.getTargetConstant(C->getZExtValue(), Op.getValueType());
+        Result = DAG.getTargetConstant(C->getZExtValue(), dl, Op.getValueType());
         break;
       }
     }
@@ -281,7 +280,7 @@ void OR1KTargetLowering::LowerAsmOperandForConstraint(SDValue Op,
     if (ConstantSDNode *C = dyn_cast<ConstantSDNode>(Op)) {
       int64_t Val = C->getSExtValue();
       if ((isInt<32>(Val)) && ((Val & 0xffff) == 0)) {
-        Result = DAG.getTargetConstant(Val, Op.getValueType());
+        Result = DAG.getTargetConstant(Val, dl, Op.getValueType());
         break;
       }
     }
@@ -290,7 +289,7 @@ void OR1KTargetLowering::LowerAsmOperandForConstraint(SDValue Op,
     if (ConstantSDNode *C = dyn_cast<ConstantSDNode>(Op)) {
       int64_t Val = C->getSExtValue();
       if ((Val >= -33554432) && (Val <= 33554431)) {
-        Result = DAG.getTargetConstant(Val, Op.getValueType());
+        Result = DAG.getTargetConstant(Val, dl, Op.getValueType());
         break;
       }
     }
@@ -533,24 +532,25 @@ OR1KTargetLowering::LowerReturn(SDValue Chain,
   if (DAG.getMachineFunction().getFunction()->hasStructRetAttr()) {
     MachineFunction &MF = DAG.getMachineFunction();
     OR1KMachineFunctionInfo *OR1KMFI = MF.getInfo<OR1KMachineFunctionInfo>();
+    auto PtrVT = getPointerTy(DAG.getDataLayout());
+
     unsigned Reg = OR1KMFI->getSRetReturnReg();
     assert(Reg &&
            "SRetReturnReg should have been set in LowerFormalArguments().");
-    SDValue Val = DAG.getCopyFromReg(Chain, dl, Reg, getPointerTy());
+    SDValue Val = DAG.getCopyFromReg(Chain, dl, Reg, PtrVT);
 
     Chain = DAG.getCopyToReg(Chain, dl, OR1K::R11, Val, Flag);
     Flag = Chain.getValue(1);
-    RetOps.push_back(DAG.getRegister(OR1K::R11, getPointerTy()));
+    RetOps.push_back(DAG.getRegister(OR1K::R11, PtrVT));
   }
 
   RetOps[0] = Chain; // Update chain
 
-  unsigned Opc = OR1KISD::RET_FLAG;
   if (Flag.getNode())
     RetOps.push_back(Flag);
 
   // Return Void
-  return DAG.getNode(Opc, dl, MVT::Other, RetOps);
+  return DAG.getNode(OR1KISD::RET_FLAG, dl, MVT::Other, RetOps);
 }
 
 /// LowerCCCCallTo - functions arguments are copied from virtual regs to
@@ -571,6 +571,7 @@ OR1KTargetLowering::LowerCCCCallTo(SDValue Chain, SDValue Callee,
   GlobalAddressSDNode *G = dyn_cast<GlobalAddressSDNode>(Callee);
   MachineFrameInfo *MFI = DAG.getMachineFunction().getFrameInfo();
   bool IsPIC = getTargetMachine().getRelocationModel() == Reloc::PIC_;
+  auto PtrVT = getPointerTy(DAG.getDataLayout());
 
   if (isVarArg) {
     NumFixedArgs = Outs.size();
@@ -600,18 +601,20 @@ OR1KTargetLowering::LowerCCCCallTo(SDValue Chain, SDValue Callee,
     unsigned Align = Flags.getByValAlign();
 
     int FI = MFI->CreateStackObject(Size, Align, false);
-    SDValue FIPtr = DAG.getFrameIndex(FI, getPointerTy());
-    SDValue SizeNode = DAG.getConstant(Size, MVT::i32);
+    SDValue FIPtr = DAG.getFrameIndex(FI, PtrVT);
+    SDValue SizeNode = DAG.getConstant(Size, dl, MVT::i32);
 
     Chain = DAG.getMemcpy(Chain, dl, FIPtr, Arg, SizeNode, Align,
                           /*isVolatile=*/false,
                           /*AlwaysInline=*/false,
+                          /*isTailCall=*/false,
                           MachinePointerInfo(), MachinePointerInfo());
     ByValArgs.push_back(FIPtr);
   }
 
-  Chain = DAG.getCALLSEQ_START(Chain, DAG.getConstant(NumBytes,
-                                                      getPointerTy(), true), dl);
+  Chain = DAG.getCALLSEQ_START(Chain,
+                               DAG.getConstant(NumBytes, dl, PtrVT, true),
+                               dl);
 
   SmallVector<std::pair<unsigned, SDValue>, 4> RegsToPass;
   SmallVector<SDValue, 12> MemOpChains;
@@ -650,11 +653,12 @@ OR1KTargetLowering::LowerCCCCallTo(SDValue Chain, SDValue Callee,
       assert(VA.isMemLoc());
 
       if (StackPtr.getNode() == 0)
-        StackPtr = DAG.getCopyFromReg(Chain, dl, OR1K::R1, getPointerTy());
+        StackPtr = DAG.getCopyFromReg(Chain, dl, OR1K::R1, PtrVT);
 
-      SDValue PtrOff = DAG.getNode(ISD::ADD, dl, getPointerTy(),
+      SDValue PtrOff = DAG.getNode(ISD::ADD, dl, PtrVT,
                                    StackPtr,
-                                   DAG.getIntPtrConstant(VA.getLocMemOffset()));
+                                   DAG.getIntPtrConstant(VA.getLocMemOffset(),
+                                                         dl));
 
 
       MemOpChains.push_back(DAG.getStore(Chain, dl, Arg, PtrOff,
@@ -673,7 +677,7 @@ OR1KTargetLowering::LowerCCCCallTo(SDValue Chain, SDValue Callee,
   if (IsPIC) {
     unsigned GPReg = OR1K::R16;
     Chain = DAG.getCopyToReg(Chain, dl, GPReg,
-                             getGlobalReg(DAG, getPointerTy()), InFlag);
+                             getGlobalReg(DAG, PtrVT), InFlag);
     InFlag = Chain.getValue(1);
   }
 
@@ -691,10 +695,10 @@ OR1KTargetLowering::LowerCCCCallTo(SDValue Chain, SDValue Callee,
   // Likewise ExternalSymbol -> TargetExternalSymbol.
   uint8_t OpFlag = IsPIC ? OR1KII::MO_PLT : OR1KII::MO_NO_FLAG;
   if (G) {
-    Callee = DAG.getTargetGlobalAddress(G->getGlobal(), dl, getPointerTy(), 0,
+    Callee = DAG.getTargetGlobalAddress(G->getGlobal(), dl, PtrVT, 0,
                                         OpFlag);
   } else if (ExternalSymbolSDNode *E = dyn_cast<ExternalSymbolSDNode>(Callee)) {
-    Callee = DAG.getTargetExternalSymbol(E->getSymbol(), getPointerTy(),
+    Callee = DAG.getTargetExternalSymbol(E->getSymbol(), PtrVT,
                                          OpFlag);
   }
 
@@ -718,8 +722,8 @@ OR1KTargetLowering::LowerCCCCallTo(SDValue Chain, SDValue Callee,
 
   // Create the CALLSEQ_END node.
   Chain = DAG.getCALLSEQ_END(Chain,
-                             DAG.getConstant(NumBytes, getPointerTy(), true),
-                             DAG.getConstant(0, getPointerTy(), true),
+                             DAG.getConstant(NumBytes, dl, PtrVT, true),
+                             DAG.getConstant(0, dl, PtrVT, true),
                              InFlag, dl);
   InFlag = Chain.getValue(1);
 
@@ -808,7 +812,6 @@ SDValue OR1KTargetLowering::LowerBR_CC(SDValue Op,
   SDValue LHS   = Op.getOperand(2);
   SDValue RHS   = Op.getOperand(3);
   SDValue Dest  = Op.getOperand(4);
-  //DebugLoc dl   = Op.getDebugLoc();
   SDLoc dl(Op);
 
   // FIXME: This could probably be done more efficiently
@@ -827,10 +830,10 @@ SDValue OR1KTargetLowering::LowerBR_CC(SDValue Op,
     break;
   }
 
-  SDValue Neg  = NegateFCC(LHS, RHS, CC) ? DAG.getConstant(1, MVT::i32) :
-                                           DAG.getConstant(0, MVT::i32);
+  SDValue Neg  = NegateFCC(LHS, RHS, CC) ? DAG.getConstant(1, dl, MVT::i32) :
+                                           DAG.getConstant(0, dl, MVT::i32);
   SDValue Flag = DAG.getNode(OR1KISD::SET_FLAG, dl, MVT::Glue,
-                             LHS, RHS, DAG.getConstant(CC, MVT::i32));
+                             LHS, RHS, DAG.getConstant(CC, dl, MVT::i32));
 
   return DAG.getNode(OR1KISD::BR_CC, dl, Op.getValueType(),
                      Chain, Dest, Neg, Flag);
@@ -843,7 +846,6 @@ SDValue OR1KTargetLowering::LowerSELECT_CC(SDValue Op,
   SDValue TrueV  = Op.getOperand(2);
   SDValue FalseV = Op.getOperand(3);
   ISD::CondCode CC = cast<CondCodeSDNode>(Op.getOperand(4))->get();
-  //DebugLoc dl    = Op.getDebugLoc();
   SDLoc dl(Op);
 
   // FIXME: This could probably be done more efficiently
@@ -865,17 +867,12 @@ SDValue OR1KTargetLowering::LowerSELECT_CC(SDValue Op,
   if (NegateFCC(LHS, RHS, CC))
     std::swap(TrueV, FalseV);
 
-  SDValue TargetCC = DAG.getConstant(CC, MVT::i32);
+  SDValue TargetCC = DAG.getConstant(CC, dl, MVT::i32);
   SDValue Flag = DAG.getNode(OR1KISD::SET_FLAG, dl, MVT::Glue,
                              LHS, RHS, TargetCC);
 
   SDVTList VTs = DAG.getVTList(Op.getValueType(), MVT::Glue);
-  SmallVector<SDValue, 4> Ops;
-  Ops.push_back(TrueV);
-  Ops.push_back(FalseV);
-  Ops.push_back(TargetCC);
-  Ops.push_back(Flag);
-
+  SDValue Ops[] = {TrueV, FalseV, TargetCC, Flag};
   return DAG.getNode(OR1KISD::SELECT_CC, dl, VTs, Ops);
 }
 
@@ -883,10 +880,9 @@ SDValue OR1KTargetLowering::LowerVASTART(SDValue Op, SelectionDAG &DAG) const {
   MachineFunction &MF = DAG.getMachineFunction();
   OR1KMachineFunctionInfo *FuncInfo = MF.getInfo<OR1KMachineFunctionInfo>();
 
-  //DebugLoc dl = Op.getDebugLoc();
   SDLoc dl(Op);
   SDValue FI = DAG.getFrameIndex(FuncInfo->getVarArgsFrameIndex(),
-                                 getPointerTy());
+                                 getPointerTy(DAG.getDataLayout()));
 
   // vastart just stores the address of the VarArgsFrameIndex slot into the
   // memory location argument.
@@ -900,7 +896,6 @@ OR1KTargetLowering::LowerDYNAMIC_STACKALLOC(SDValue Op,
                                             SelectionDAG &DAG) const {
   SDValue Chain = Op.getOperand(0);
   SDValue Size = Op.getOperand(1);
-  //DebugLoc dl = Op.getDebugLoc();
   SDLoc dl(Op);
 
   unsigned SPReg = getStackPointerRegisterToSaveRestore();
@@ -940,15 +935,14 @@ OR1KTargetLowering::LowerDYNAMIC_STACKALLOC(SDValue Op,
 SDValue
 OR1KTargetLowering::LowerCTTZ(SDValue Op,
                               SelectionDAG &DAG) const {
-  //DebugLoc dl = Op.getDebugLoc();
   SDLoc dl(Op);
   EVT VT = Op.getValueType();
   SDValue SrcReg = Op.getOperand(0);
   SDValue ZeroUndef = LowerCTTZ_ZERO_UNDEF(Op, DAG);
   SDValue CC = DAG.getCondCode(ISD::SETEQ);
   return DAG.getNode(ISD::SELECT_CC, dl, VT, SrcReg,
-                     DAG.getConstant(0, MVT::i32),
-                     DAG.getConstant(VT.getSizeInBits(), MVT::i32),
+                     DAG.getConstant(0, dl, MVT::i32),
+                     DAG.getConstant(VT.getSizeInBits(), dl, MVT::i32),
                      ZeroUndef, CC);
 }
 
@@ -958,12 +952,11 @@ OR1KTargetLowering::LowerCTTZ(SDValue Op,
 SDValue
 OR1KTargetLowering::LowerCTLZ(SDValue Op,
                               SelectionDAG &DAG) const {
-  //DebugLoc dl = Op.getDebugLoc();
   SDLoc dl(Op);
   EVT VT = Op.getValueType();
   SDValue fl1 = DAG.getNode(OR1KISD::FL1, dl, VT, Op.getOperand(0));
   return DAG.getNode(ISD::SUB, dl, VT,
-                     DAG.getConstant(VT.getSizeInBits(), MVT::i32), fl1);
+                     DAG.getConstant(VT.getSizeInBits(), dl, MVT::i32), fl1);
 }
 
 /// LowerCTTZ_ZERO_UNDEF - Lower count of trailing zeros by using the relation
@@ -972,27 +965,27 @@ OR1KTargetLowering::LowerCTLZ(SDValue Op,
 SDValue
 OR1KTargetLowering::LowerCTTZ_ZERO_UNDEF(SDValue Op,
                                          SelectionDAG &DAG) const {
-  //DebugLoc dl = Op.getDebugLoc();
   SDLoc dl(Op);
   EVT VT = Op.getValueType();
   SDValue ff1 = DAG.getNode(OR1KISD::FF1, dl, VT, Op.getOperand(0));
-  return DAG.getNode(ISD::SUB, dl, VT, ff1, DAG.getConstant(1, MVT::i32));
+  return DAG.getNode(ISD::SUB, dl, VT, ff1, DAG.getConstant(1, dl, MVT::i32));
 }
 
 SDValue
 OR1KTargetLowering::LowerRETURNADDR(SDValue Op, SelectionDAG &DAG) const {
-  const TargetRegisterInfo *TRI = TM.getSubtargetImpl()->getRegisterInfo();
+  const TargetRegisterInfo *TRI = Subtarget.getRegisterInfo();
   MachineFunction &MF = DAG.getMachineFunction();
   MachineFrameInfo *MFI = MF.getFrameInfo();
   MFI->setReturnAddressIsTaken(true);
 
   EVT VT = Op.getValueType();
-  //DebugLoc dl = Op.getDebugLoc();
   SDLoc dl(Op);
   unsigned Depth = cast<ConstantSDNode>(Op.getOperand(0))->getZExtValue();
   if (Depth) {
     SDValue FrameAddr = LowerFRAMEADDR(Op, DAG);
-    SDValue Offset = DAG.getConstant(TD->getPointerSize(), MVT::i32);
+    const DataLayout *DL = getTargetMachine().getDataLayout();
+    SDValue Offset = DAG.getConstant(DL->getPointerSize(), dl,
+                                     MVT::i32);
     return DAG.getLoad(VT, dl, DAG.getEntryNode(),
                        DAG.getNode(ISD::ADD, dl, VT, FrameAddr, Offset),
                        MachinePointerInfo(), false, false, false, 0);
@@ -1010,7 +1003,6 @@ OR1KTargetLowering::LowerFRAMEADDR(SDValue Op, SelectionDAG &DAG) const {
   MFI->setFrameAddressIsTaken(true);
 
   EVT VT = Op.getValueType();
-  //DebugLoc dl = Op.getDebugLoc();
   SDLoc dl(Op);
   unsigned Depth = cast<ConstantSDNode>(Op.getOperand(0))->getZExtValue();
   SDValue FrameAddr = DAG.getCopyFromReg(DAG.getEntryNode(), dl, OR1K::R2, VT);
@@ -1022,7 +1014,7 @@ OR1KTargetLowering::LowerFRAMEADDR(SDValue Op, SelectionDAG &DAG) const {
 }
 
 const char *OR1KTargetLowering::getTargetNodeName(unsigned Opcode) const {
-  switch (Opcode) {
+  switch ((OR1KISD::NodeType)Opcode) {
   default: return NULL;
   case OR1KISD::ADJDYNALLOC:        return "OR1KISD::ADJDYNALLOC";
   case OR1KISD::RET_FLAG:           return "OR1KISD::RET_FLAG";
@@ -1040,7 +1032,6 @@ const char *OR1KTargetLowering::getTargetNodeName(unsigned Opcode) const {
 
 SDValue OR1KTargetLowering::LowerConstantPool(SDValue Op,
                                               SelectionDAG &DAG) const {
-  //DebugLoc dl = Op.getDebugLoc();
   SDLoc dl(Op);
   ConstantPoolSDNode *N = cast<ConstantPoolSDNode>(Op);
   const Constant *C = N->getConstVal();
@@ -1063,26 +1054,26 @@ SDValue OR1KTargetLowering::LowerConstantPool(SDValue Op,
 
 SDValue OR1KTargetLowering::LowerGlobalAddress(SDValue Op,
                                                SelectionDAG &DAG) const {
-  //DebugLoc dl = Op.getDebugLoc();
   SDLoc dl(Op);
   const GlobalValue *GV = cast<GlobalAddressSDNode>(Op)->getGlobal();
   int64_t Offset = cast<GlobalAddressSDNode>(Op)->getOffset();
   bool IsPIC = getTargetMachine().getRelocationModel() == Reloc::PIC_;
+  auto PtrVT = getPointerTy(DAG.getDataLayout());
 
   // Load GlobalAddress from GOT
   if (IsPIC && !GV->hasLocalLinkage() && !GV->hasHiddenVisibility()) {
-    SDValue GA = DAG.getTargetGlobalAddress(GV, dl, getPointerTy(), Offset,
+    SDValue GA = DAG.getTargetGlobalAddress(GV, dl, PtrVT, Offset,
                                             OR1KII::MO_GOT);
-    return DAG.getLoad(getPointerTy(), dl, DAG.getEntryNode(), GA,
+    return DAG.getLoad(PtrVT, dl, DAG.getEntryNode(), GA,
                        MachinePointerInfo(), false, false, false, 0);
   }
 
   uint8_t OpFlagHi = IsPIC ? OR1KII::MO_GOTOFFHI : OR1KII::MO_ABS_HI;
   uint8_t OpFlagLo = IsPIC ? OR1KII::MO_GOTOFFLO : OR1KII::MO_ABS_LO;
   // Create the TargetGlobalAddress node, folding in the constant offset.
-  SDValue Hi = DAG.getTargetGlobalAddress(GV, dl, getPointerTy(), Offset,
+  SDValue Hi = DAG.getTargetGlobalAddress(GV, dl, PtrVT, Offset,
                                           OpFlagHi);
-  SDValue Lo = DAG.getTargetGlobalAddress(GV, dl, getPointerTy(), Offset,
+  SDValue Lo = DAG.getTargetGlobalAddress(GV, dl, PtrVT, Offset,
                                           OpFlagLo);
   Hi = DAG.getNode(OR1KISD::HI, dl, MVT::i32, Hi);
   Lo = DAG.getNode(OR1KISD::LO, dl, MVT::i32, Lo);
@@ -1095,7 +1086,6 @@ SDValue OR1KTargetLowering::LowerGlobalAddress(SDValue Op,
 
 SDValue OR1KTargetLowering::LowerBlockAddress(SDValue Op,
                                               SelectionDAG &DAG) const {
-  //DebugLoc dl = Op.getDebugLoc();
   SDLoc dl(Op);
   const BlockAddress *BA = cast<BlockAddressSDNode>(Op)->getBlockAddress();
   bool IsPIC = getTargetMachine().getRelocationModel() == Reloc::PIC_;
@@ -1118,11 +1108,12 @@ SDValue OR1KTargetLowering::LowerJumpTable(SDValue Op,
   SDLoc dl(Op);
   JumpTableSDNode *JT = cast<JumpTableSDNode>(Op);
   bool IsPIC = getTargetMachine().getRelocationModel() == Reloc::PIC_;
+  auto PtrVT = getPointerTy(DAG.getDataLayout());
   uint8_t OpFlagHi = IsPIC ? OR1KII::MO_GOTOFFHI : OR1KII::MO_ABS_HI;
   uint8_t OpFlagLo = IsPIC ? OR1KII::MO_GOTOFFLO : OR1KII::MO_ABS_LO;
 
-  SDValue Hi = DAG.getTargetJumpTable(JT->getIndex(), getPointerTy(), OpFlagHi);
-  SDValue Lo = DAG.getTargetJumpTable(JT->getIndex(), getPointerTy(), OpFlagLo);
+  SDValue Hi = DAG.getTargetJumpTable(JT->getIndex(), PtrVT, OpFlagHi);
+  SDValue Lo = DAG.getTargetJumpTable(JT->getIndex(), PtrVT, OpFlagLo);
   Hi = DAG.getNode(OR1KISD::HI, dl, MVT::i32, Hi);
   Lo = DAG.getNode(OR1KISD::LO, dl, MVT::i32, Lo);
   SDValue Result = DAG.getNode(ISD::OR, dl, MVT::i32, Hi, Lo);
@@ -1137,8 +1128,7 @@ OR1KTargetLowering::EmitInstrWithCustomInserter(MachineInstr *MI,
                                                 MachineBasicBlock *BB) const {
   unsigned Opc = MI->getOpcode();
 
-  const TargetInstrInfo &TII =
-      *getTargetMachine().getSubtargetImpl()->getInstrInfo();
+  const TargetInstrInfo &TII = *Subtarget.getInstrInfo();
   DebugLoc dl = MI->getDebugLoc();
   //SDLoc dl(MI);
 

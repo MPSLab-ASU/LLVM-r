@@ -21,7 +21,6 @@ add_llvm_target(OR1KCodeGen
   OR1KRegisterInfo.cpp
   OR1KSubtarget.cpp
   OR1KTargetMachine.cpp
-  OR1KSelectionDAGInfo.cpp
   OR1KAsmPrinter.cpp
   OR1KMCInstLower.cpp
   )

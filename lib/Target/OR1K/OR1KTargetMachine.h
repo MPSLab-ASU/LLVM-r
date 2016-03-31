@@ -25,12 +25,13 @@ class OR1KTargetMachine : public LLVMTargetMachine {
   OR1KSubtarget Subtarget;
   std::unique_ptr<TargetLoweringObjectFile> TLOF;
 public:
-  OR1KTargetMachine(const Target &T, StringRef TT, StringRef CPU, StringRef FS,
+  OR1KTargetMachine(const Target &T, const Triple &TT,
+                    StringRef CPU, StringRef FS,
                     const TargetOptions &Options, Reloc::Model RM,
                     CodeModel::Model CM, CodeGenOpt::Level OL);
   ~OR1KTargetMachine() override;
 
-  const OR1KSubtarget *getSubtargetImpl() const override {
+  const OR1KSubtarget *getSubtargetImpl(const Function &F) const override {
     return &Subtarget;
   }
 

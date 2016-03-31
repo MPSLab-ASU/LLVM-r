@@ -168,16 +168,16 @@ public:
   void addExpr(MCInst &Inst, const MCExpr *Expr) const {
     // Add as immediates where possible. Null MCExpr = 0
     if (Expr == 0)
-      Inst.addOperand(MCOperand::CreateImm(0));
+      Inst.addOperand(MCOperand::createImm(0));
     else if (const MCConstantExpr *CE = dyn_cast<MCConstantExpr>(Expr))
-      Inst.addOperand(MCOperand::CreateImm(CE->getValue()));
+      Inst.addOperand(MCOperand::createImm(CE->getValue()));
     else
-      Inst.addOperand(MCOperand::CreateExpr(Expr));
+      Inst.addOperand(MCOperand::createExpr(Expr));
   }
 
   void addRegOperands(MCInst &Inst, unsigned N) const {
     assert(N == 1 && "Invalid number of operands!");
-    Inst.addOperand(MCOperand::CreateReg(getReg()));
+    Inst.addOperand(MCOperand::createReg(getReg()));
   }
 
   void addImmOperands(MCInst &Inst, unsigned N) const {
@@ -187,7 +187,7 @@ public:
 
   void addMemOperands(MCInst &Inst, unsigned N) const {
     assert(N == 2 && "Invalid number of operands!");
-    Inst.addOperand(MCOperand::CreateReg(getMemBaseNum()));
+    Inst.addOperand(MCOperand::createReg(getMemBaseNum()));
     addExpr(Inst, getMemOff());
   }
 
@@ -197,17 +197,13 @@ public:
       OS << "Reg<" << Reg.Num << ">";
       break;
     case k_Immediate:
-      OS << "Imm<";
-      Imm.Val->print(OS);
-      OS << ">";
+      OS << "Imm<" << Imm.Val << ">";
       break;
     case k_Token:
       OS << Tok.Data;
       break;
     case k_Memory:
-      OS << "Mem<Reg<" << Mem.BaseNum << ">, ";
-      Mem.Off->print(OS);
-      OS << ">";
+      OS << "Mem<Reg<" << Mem.BaseNum << ">, " << Mem.Off << ">";
       break;
     }
   }
@@ -221,7 +217,7 @@ public:
     return Op;
   }
 
-  static std::unique_ptr<OR1KOperand> CreateReg(unsigned RegNo,
+  static std::unique_ptr<OR1KOperand> createReg(unsigned RegNo,
                                                 SMLoc S, SMLoc E) {
     auto Op = make_unique<OR1KOperand>(k_Register);
     Op->Reg.Num = RegNo;
@@ -230,7 +226,7 @@ public:
     return Op;
   }
 
-  static std::unique_ptr<OR1KOperand> CreateImm(const MCExpr *Val,
+  static std::unique_ptr<OR1KOperand> createImm(const MCExpr *Val,
                                                 SMLoc S, SMLoc E) {
     auto Op = make_unique<OR1KOperand>(k_Immediate);
     Op->Imm.Val = Val;
@@ -299,7 +295,7 @@ bool OR1KAsmParser::ParseRegister(unsigned &RegNo, OperandVector &Operands) {
       if (RegNo == 0)
         return true;
       getLexer().Lex();
-      Operands.push_back(OR1KOperand::CreateReg(RegNo, S, E));
+      Operands.push_back(OR1KOperand::createReg(RegNo, S, E));
       return false;
   }
 }
@@ -331,7 +327,7 @@ bool OR1KAsmParser::ParseImmediate(OperandVector &Operands) {
       if(getParser().parseExpression(EVal))
         return true;
 
-      Operands.push_back(OR1KOperand::CreateImm(EVal, S, E));
+      Operands.push_back(OR1KOperand::createImm(EVal, S, E));
       return false;
   }
 }
@@ -359,7 +355,7 @@ const MCExpr *OR1KAsmParser::evaluateRelocExpr(const MCExpr *Expr,
     // It's a constant, evaluate lo or hi value.
     if (VK == MCSymbolRefExpr::VK_OR1K_ABS_LO) {
       short Val = MCE->getValue();
-      return MCConstantExpr::Create(Val, getContext());
+      return MCConstantExpr::create(Val, getContext());
     } else if (MCSymbolRefExpr::VK_OR1K_ABS_HI) {
       int Val = MCE->getValue();
       int LoSign = Val & 0x8000;
@@ -368,7 +364,7 @@ const MCExpr *OR1KAsmParser::evaluateRelocExpr(const MCExpr *Expr,
       // we must add 1 to the hi part to compensate.
       if (LoSign)
         Val++;
-      return MCConstantExpr::Create(Val, getContext());
+      return MCConstantExpr::create(Val, getContext());
     } else {
       return nullptr;
     }
@@ -377,20 +373,20 @@ const MCExpr *OR1KAsmParser::evaluateRelocExpr(const MCExpr *Expr,
   if (const MCSymbolRefExpr *MSRE = dyn_cast<MCSymbolRefExpr>(Expr)) {
     // It's a symbol, create a symbolic expression from the symbol.
     StringRef Symbol = MSRE->getSymbol().getName();
-    return MCSymbolRefExpr::Create(Symbol, VK, getContext());
+    return MCSymbolRefExpr::create(Symbol, VK, getContext());
   }
 
   if (const MCBinaryExpr *BE = dyn_cast<MCBinaryExpr>(Expr)) {
     // It's a binary expression, map operands.
     const MCExpr *LExp = evaluateRelocExpr(BE->getLHS(), VK);
     const MCExpr *RExp = evaluateRelocExpr(BE->getRHS(), VK);
-    return MCBinaryExpr::Create(BE->getOpcode(), LExp, RExp, getContext());
+    return MCBinaryExpr::create(BE->getOpcode(), LExp, RExp, getContext());
   }
 
   if (const MCUnaryExpr *UN = dyn_cast<MCUnaryExpr>(Expr)) {
     // It's an unary expression, map operand.
     const MCExpr *UnExp = evaluateRelocExpr(UN->getSubExpr(), VK);
-    return MCUnaryExpr::Create(UN->getOpcode(), UnExp, getContext());
+    return MCUnaryExpr::create(UN->getOpcode(), UnExp, getContext());
   }
 
   return nullptr;
@@ -425,14 +421,14 @@ bool OR1KAsmParser::ParseSymbolReference(OperandVector &Operands) {
     if(!Res)
       return Error(ExprS, "unsupported relocation expression");
 
-    Operands.push_back(OR1KOperand::CreateImm(Res, S, ExprE));
+    Operands.push_back(OR1KOperand::createImm(Res, S, ExprE));
     return false;
   } else {
     // Parse a symbol
-    MCSymbol *Sym = getContext().GetOrCreateSymbol(Identifier);
+    MCSymbol *Sym = getContext().getOrCreateSymbol(Identifier);
     const MCExpr *Res =
-        MCSymbolRefExpr::Create(Sym, MCSymbolRefExpr::VK_None, getContext());
-    Operands.push_back(OR1KOperand::CreateImm(Res, S, E));
+        MCSymbolRefExpr::create(Sym, MCSymbolRefExpr::VK_None, getContext());
+    Operands.push_back(OR1KOperand::createImm(Res, S, E));
     return false;
   }
 }

@@ -50,7 +50,7 @@ GetJumpTableSymbol(const MachineOperand &MO) const {
                             << Printer.getFunctionNumber() << '_'
                             << MO.getIndex();
   // Create a symbol for the name.
-  return Ctx.GetOrCreateSymbol(Name.str());
+  return Ctx.getOrCreateSymbol(Name);
 }
 
 MCSymbol *OR1KMCInstLower::
@@ -60,7 +60,7 @@ GetConstantPoolIndexSymbol(const MachineOperand &MO) const {
                             << Printer.getFunctionNumber() << '_'
                             << MO.getIndex();
   // Create a symbol for the name.
-  return Ctx.GetOrCreateSymbol(Name.str());
+  return Ctx.getOrCreateSymbol(Name);
 }
 
 MCOperand OR1KMCInstLower::
@@ -80,13 +80,13 @@ LowerSymbolOperand(const MachineOperand &MO, MCSymbol *Sym) const {
   case OR1KII::MO_GOT:      Kind = MCSymbolRefExpr::VK_OR1K_GOT; break;
   }
 
-  const MCExpr *Expr = MCSymbolRefExpr::Create(Sym, Kind, Ctx);
+  const MCExpr *Expr = MCSymbolRefExpr::create(Sym, Kind, Ctx);
 
   if (!MO.isJTI() && MO.getOffset())
-    Expr = MCBinaryExpr::CreateAdd(Expr,
-                                   MCConstantExpr::Create(MO.getOffset(), Ctx),
+    Expr = MCBinaryExpr::createAdd(Expr,
+                                   MCConstantExpr::create(MO.getOffset(), Ctx),
                                    Ctx);
-  return MCOperand::CreateExpr(Expr);
+  return MCOperand::createExpr(Expr);
 }
 
 void OR1KMCInstLower::Lower(const MachineInstr *MI, MCInst &OutMI) const {
@@ -103,20 +103,20 @@ void OR1KMCInstLower::Lower(const MachineInstr *MI, MCInst &OutMI) const {
     case MachineOperand::MO_Register:
       // Ignore all implicit register operands.
       if (MO.isImplicit()) continue;
-      MCOp = MCOperand::CreateReg(MO.getReg());
+      MCOp = MCOperand::createReg(MO.getReg());
       break;
     case MachineOperand::MO_FPImmediate: {
      APFloat Val = MO.getFPImm()->getValueAPF();
       // FP immediates are used only when setting GPRs, so they may be dealt
       // with like regular immediates from this point on.
-      MCOp = MCOperand::CreateImm(*Val.bitcastToAPInt().getRawData());
+      MCOp = MCOperand::createImm(*Val.bitcastToAPInt().getRawData());
       break;
     }
     case MachineOperand::MO_Immediate:
-      MCOp = MCOperand::CreateImm(MO.getImm());
+      MCOp = MCOperand::createImm(MO.getImm());
       break;
     case MachineOperand::MO_MachineBasicBlock:
-      MCOp = MCOperand::CreateExpr(MCSymbolRefExpr::Create(
+      MCOp = MCOperand::createExpr(MCSymbolRefExpr::create(
                                    MO.getMBB()->getSymbol(), Ctx));
       break;
     case MachineOperand::MO_RegisterMask:

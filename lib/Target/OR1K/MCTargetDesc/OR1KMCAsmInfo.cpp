@@ -16,7 +16,7 @@ using namespace llvm;
 
 void OR1KMCAsmInfo::anchor() { }
 
-OR1KMCAsmInfo::OR1KMCAsmInfo(StringRef TT) {
+OR1KMCAsmInfo::OR1KMCAsmInfo(const Triple &TT) {
   IsLittleEndian              = false;
   PrivateGlobalPrefix         = ".L";
   WeakRefDirective            = "\t.weak\t";

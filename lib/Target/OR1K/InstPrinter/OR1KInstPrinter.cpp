@@ -27,12 +27,12 @@ using namespace llvm;
 #include "OR1KGenAsmWriter.inc"
 
 void OR1KInstPrinter::printInst(const MCInst *MI, raw_ostream &O,
-                                StringRef Annot) {
+                                StringRef Annot, const MCSubtargetInfo &STI) {
   printInstruction(MI, O);
   printAnnotation(O, Annot);
 }
 
-static void printExpr(const MCExpr *Expr, raw_ostream &O) {
+static void printExpr(const MCExpr *Expr, raw_ostream &O, const MCAsmInfo &MAI) {
   const MCSymbolRefExpr *SRE;
 
   const MCBinaryExpr *BE = dyn_cast<MCBinaryExpr>(Expr);
@@ -47,10 +47,12 @@ static void printExpr(const MCExpr *Expr, raw_ostream &O) {
   if(Kind != MCSymbolRefExpr::VK_None)
     O << MCSymbolRefExpr::getVariantKindName(Kind);
 
-  if (BE || Kind != MCSymbolRefExpr::VK_None)
-    O << "(" << *Expr << ")";
-  else
-    O << *Expr;
+  if (BE || Kind != MCSymbolRefExpr::VK_None) {
+    O << "(";
+    Expr->print(O, &MAI);
+    O << ")";
+  } else
+    Expr->print(O, &MAI);
 }
 
 void OR1KInstPrinter::printOperand(const MCInst *MI, unsigned OpNo,
@@ -63,7 +65,7 @@ void OR1KInstPrinter::printOperand(const MCInst *MI, unsigned OpNo,
     O << (int32_t)Op.getImm();
   } else {
     assert(Op.isExpr() && "Expected an expression");
-    printExpr(Op.getExpr(), O);
+    printExpr(Op.getExpr(), O, MAI);
   }
 }
 
@@ -76,7 +78,7 @@ void OR1KInstPrinter::printMemOperand(const MCInst *MI, int OpNo,
     O << OffsetOp.getImm();
   } else {
     assert(OffsetOp.isExpr() && "Expected an expression");
-    printExpr(OffsetOp.getExpr(), O);
+    printExpr(OffsetOp.getExpr(), O, MAI);
   }
   // register
   assert(RegOp.isReg() && "Register operand not a register");
@@ -90,7 +92,7 @@ void OR1KInstPrinter::printS16ImmOperand(const MCInst *MI, unsigned OpNo,
     O << (int16_t)Op.getImm();
   } else {
     assert(Op.isExpr() && "Expected an expression");
-    printExpr(Op.getExpr(), O);
+    printExpr(Op.getExpr(), O, MAI);
   }
 }
 

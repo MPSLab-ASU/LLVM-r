@@ -25,21 +25,20 @@ class MCObjectWriter;
 class MCRegisterInfo;
 class MCSubtargetInfo;
 class Target;
+class Triple;
 class StringRef;
-class raw_ostream;
+class raw_pwrite_stream;
 
 extern Target TheOR1KTarget;
 
-MCCodeEmitter *createOR1KMCCodeEmitter(const MCInstrInfo &MCII,
+MCCodeEmitter *createOR1KMCCodeEmitter(const MCInstrInfo &MII,
                                        const MCRegisterInfo &MRI,
-                                       const MCSubtargetInfo &STI,
                                        MCContext &Ctx);
 
 MCAsmBackend *createOR1KAsmBackend(const Target &T, const MCRegisterInfo &MRI,
-                                   StringRef TT, StringRef CPU);
+                                   const Triple &TT, StringRef CPU);
 
-
-MCObjectWriter *createOR1KELFObjectWriter(raw_ostream &OS, uint8_t OSABI);
+MCObjectWriter *createOR1KELFObjectWriter(raw_pwrite_stream &OS, uint8_t OSABI);
 } // End llvm namespace
 
 // Defines symbolic names for OR1K registers.  This defines a mapping from

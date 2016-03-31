@@ -19,5 +19,5 @@
 type = Library
 name = OR1KDisassembler
 parent = OR1K
-required_libraries = MC Support OR1KInfo
+required_libraries = MCDisassembler Support OR1KInfo
 add_to_library_groups = OR1K

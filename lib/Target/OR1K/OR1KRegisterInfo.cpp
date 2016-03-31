@@ -36,14 +36,14 @@ OR1KRegisterInfo::OR1KRegisterInfo(const TargetInstrInfo &tii)
 
 const uint16_t*
 OR1KRegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
-  const TargetFrameLowering *TFI = MF->getSubtarget().getFrameLowering();
+  const TargetFrameLowering *TFI = getFrameLowering(*MF);
 
   return TFI->hasFP(*MF) ? CSR_FP_SaveList : CSR_SaveList;
 }
 
 BitVector OR1KRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   BitVector Reserved(getNumRegs());
-  const TargetFrameLowering *TFI = MF.getSubtarget().getFrameLowering();
+  const TargetFrameLowering *TFI = getFrameLowering(MF);
 
   Reserved.set(OR1K::R0);
   Reserved.set(OR1K::R1);
@@ -71,7 +71,7 @@ OR1KRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
   MachineInstr &MI = *II;
   MachineFunction &MF = *MI.getParent()->getParent();
   MachineFrameInfo *MFI = MF.getFrameInfo();
-  const TargetFrameLowering *TFI = MF.getSubtarget().getFrameLowering();
+  const TargetFrameLowering *TFI = getFrameLowering(MF);
   bool HasFP = TFI->hasFP(MF);
   DebugLoc dl = MI.getDebugLoc();
 
@@ -157,7 +157,7 @@ bool OR1KRegisterInfo::hasBasePointer(const MachineFunction &MF) const {
 bool OR1KRegisterInfo::needsStackRealignment(const MachineFunction &MF) const {
   const MachineFrameInfo *MFI = MF.getFrameInfo();
   const Function *F = MF.getFunction();
-  unsigned StackAlign = MF.getSubtarget().getFrameLowering()->getStackAlignment();
+  unsigned StackAlign = getFrameLowering(MF)->getStackAlignment();
   return ((MFI->getMaxAlignment() > StackAlign) ||
           F->getAttributes().hasAttribute(AttributeSet::FunctionIndex,
                                           Attribute::StackAlignment));
@@ -168,7 +168,7 @@ unsigned OR1KRegisterInfo::getRARegister() const {
 }
 
 unsigned OR1KRegisterInfo::getFrameRegister(const MachineFunction &MF) const {
-  const TargetFrameLowering *TFI = MF.getSubtarget().getFrameLowering();
+  const TargetFrameLowering *TFI = getFrameLowering(MF);
 
   return TFI->hasFP(MF) ? OR1K::R2 : OR1K::R1;
 }

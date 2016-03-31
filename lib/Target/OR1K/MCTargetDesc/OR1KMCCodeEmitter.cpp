@@ -30,16 +30,12 @@ STATISTIC(MCNumEmitted, "Number of MC instructions emitted");
 
 namespace {
 class OR1KMCCodeEmitter : public MCCodeEmitter {
-  OR1KMCCodeEmitter(const OR1KMCCodeEmitter &); // DO NOT IMPLEMENT
-  void operator=(const OR1KMCCodeEmitter &); // DO NOT IMPLEMENT
-  const MCInstrInfo &MCII;
-  const MCSubtargetInfo &STI;
-  MCContext &Ctx;
+  OR1KMCCodeEmitter(const OR1KMCCodeEmitter &) = delete;
+  void operator=(const OR1KMCCodeEmitter &) = delete;
+  const MCInstrInfo &InstrInfo;
 
 public:
-  OR1KMCCodeEmitter(const MCInstrInfo &mcii, const MCSubtargetInfo &sti,
-                    MCContext &ctx)
-    : MCII(mcii), STI(sti), Ctx(ctx) {}
+  OR1KMCCodeEmitter(const MCInstrInfo &MII) : InstrInfo(MII) {}
 
   ~OR1KMCCodeEmitter() {}
 
@@ -85,17 +81,16 @@ public:
       EmitByte((Val >> i) & 255, CurByte, OS);
   }
 
-  void EncodeInstruction(const MCInst &MI, raw_ostream &OS,
+  void encodeInstruction(const MCInst &MI, raw_ostream &OS,
                          SmallVectorImpl<MCFixup> &Fixups,
                          const MCSubtargetInfo &STI) const override;
 };
 } // end anonymous namepsace
 
-MCCodeEmitter *llvm::createOR1KMCCodeEmitter(const MCInstrInfo &MCII,
+MCCodeEmitter *llvm::createOR1KMCCodeEmitter(const MCInstrInfo &MII,
                                              const MCRegisterInfo &MRI,
-                                             const MCSubtargetInfo &STI,
                                              MCContext &Ctx) {
-  return new OR1KMCCodeEmitter(MCII, STI, Ctx);
+  return new OR1KMCCodeEmitter(MII);
 }
 
 /// getMachineOpValue - Return binary encoding of operand. If the machine
@@ -130,7 +125,7 @@ getMachineOpValue(const MCInst &MI, const MCOperand &MO,
     case MCSymbolRefExpr::VK_None:
       // This is an assembly expression without an explicit
       // relocation kind. Guess one based on instruction format.
-      switch(MCII.get(MI.getOpcode()).TSFlags) {
+      switch(InstrInfo.get(MI.getOpcode()).TSFlags) {
         case OR1KII::AFrm:
         FixupKind = OR1K::fixup_OR1K_LO16_INSN;
         break;
@@ -170,12 +165,12 @@ getMachineOpValue(const MCInst &MI, const MCOperand &MO,
   }
 
   // Push fixup (all info is contained within)
-  Fixups.push_back(MCFixup::Create(0, MO.getExpr(), MCFixupKind(FixupKind)));
+  Fixups.push_back(MCFixup::create(0, MO.getExpr(), MCFixupKind(FixupKind)));
   return 0;
 }
 
 void OR1KMCCodeEmitter::
-EncodeInstruction(const MCInst &MI, raw_ostream &OS,
+encodeInstruction(const MCInst &MI, raw_ostream &OS,
                   SmallVectorImpl<MCFixup> &Fixups,
                   const MCSubtargetInfo &STI) const {
   // Keep track of the current byte being emitted

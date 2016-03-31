@@ -21,7 +21,7 @@
 
 namespace llvm {
   namespace OR1KISD {
-    enum {
+    enum NodeType : unsigned {
       FIRST_NUMBER = ISD::BUILTIN_OP_END,
 
       ADJDYNALLOC,
@@ -87,10 +87,11 @@ namespace llvm {
     SDValue LowerFRAMEADDR(SDValue Op, SelectionDAG &DAG) const;
 
     std::pair<unsigned, const TargetRegisterClass*>
-    getRegForInlineAsmConstraint(const std::string &Constraint, MVT VT) const override;
+    getRegForInlineAsmConstraint(const TargetRegisterInfo *TRI,
+                                 StringRef Constraint, MVT VT) const override;
     ConstraintWeight
     getSingleConstraintMatchWeight(AsmOperandInfo &info,
-                                   const char *constraint) const override;
+                                   const char *Constraint) const override;
     void LowerAsmOperandForConstraint(SDValue Op,
                                       std::string &Constraint,
                                       std::vector<SDValue> &Ops,
@@ -101,8 +102,6 @@ namespace llvm {
 
   private:
     const OR1KSubtarget &Subtarget;
-    const OR1KTargetMachine &TM;
-    const DataLayout *TD;
 
     SDValue LowerCCCCallTo(SDValue Chain, SDValue Callee,
                            CallingConv::ID CallConv, bool isVarArg,

@@ -15,12 +15,12 @@ def fimm   : Operand<f32>;
 
 def HI16f32 : SDNodeXForm<fpimm, [{
   uint64_t Val = *N->getValueAPF().bitcastToAPInt().getRawData();
-  return CurDAG->getTargetConstant(Val >> 16, MVT::i32);
+  return CurDAG->getTargetConstant(Val >> 16, SDLoc(N), MVT::i32);
 }]>;
 
 def LO16f32 : SDNodeXForm<fpimm, [{
   uint64_t Val = *N->getValueAPF().bitcastToAPInt().getRawData();
-  return CurDAG->getTargetConstant(Val & 0xFFFFULL, MVT::i32);
+  return CurDAG->getTargetConstant(Val & 0xFFFFULL, SDLoc(N), MVT::i32);
 }]>;
 
 def f32lo16 : PatLeaf<(f32 fpimm), [{

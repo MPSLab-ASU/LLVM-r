@@ -30,7 +30,7 @@ FunctionPass *createOR1KISelDag(OR1KTargetMachine &TM);
 
 /// createOR1KDelaySlotFillerPass - This pass fills delay slots
 /// with useful instructions or nop's
-FunctionPass *createOR1KDelaySlotFillerPass(OR1KTargetMachine &TM);
+FunctionPass *createOR1KDelaySlotFillerPass();
 
 /// createOR1KGlobalBaseRegPass - This pass initializes a global base
 /// register for PIC on OR1K.

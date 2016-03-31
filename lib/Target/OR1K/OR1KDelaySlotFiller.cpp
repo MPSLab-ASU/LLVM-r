@@ -41,8 +41,7 @@ static cl::opt<bool> CompatDelaySlotFiller(
 namespace {
   class Filler : public MachineFunctionPass {
   public:
-    Filler(TargetMachine &tm)
-      : MachineFunctionPass(ID), TM(tm) {}
+    Filler() : MachineFunctionPass(ID) {}
 
     const char *getPassName() const override {
       return "OR1K Delay Slot Filler";
@@ -62,7 +61,8 @@ namespace {
                         SmallSet<unsigned, 32>& RegDefs,
                         SmallSet<unsigned, 32>& RegUses);
 
-    bool IsRegInSet(SmallSet<unsigned, 32>& RegSet,
+    bool IsRegInSet(const TargetRegisterInfo *TRI,
+                    SmallSet<unsigned, 32>& RegSet,
                     unsigned Reg);
 
     bool delayHasHazard(MachineBasicBlock::instr_iterator MI,
@@ -75,7 +75,6 @@ namespace {
                    MachineBasicBlock::instr_iterator slot,
                    MachineBasicBlock::instr_iterator &Filler);
 
-    TargetMachine &TM;
     MachineBasicBlock::instr_iterator LastFiller;
 
     static char ID;
@@ -86,14 +85,15 @@ namespace {
 /// createOR1KDelaySlotFillerPass - Returns a pass that fills in delay
 /// slots in OR1K MachineFunctions
 ///
-FunctionPass *llvm::createOR1KDelaySlotFillerPass(OR1KTargetMachine &tm) {
-  return new Filler(tm);
+FunctionPass *llvm::createOR1KDelaySlotFillerPass() {
+  return new Filler();
 }
 
 /// runOnMachineBasicBlock - Fill in delay slots for the given basic block.
 /// There is only one delay slot per delayed instruction.
 bool Filler::runOnMachineBasicBlock(MachineBasicBlock &MBB) {
-  const TargetInstrInfo *TII = TM.getSubtargetImpl()->getInstrInfo();
+  const TargetInstrInfo *TII =
+    MBB.getParent()->getSubtarget().getInstrInfo();
   bool Changed = false;
   LastFiller = MBB.instr_end();
 
@@ -189,6 +189,9 @@ bool Filler::delayHasHazard(MachineBasicBlock::instr_iterator MI,
   assert((!MI->isCall() && !MI->isReturn()) &&
          "Cannot put calls or returns in delay slot.");
 
+  const TargetRegisterInfo *TRI =
+    MI->getParent()->getParent()->getSubtarget().getRegisterInfo();
+
   for (unsigned i = 0, e = MI->getNumOperands(); i!= e; ++i) {
     const MachineOperand &MO = MI->getOperand(i);
     unsigned Reg;
@@ -198,12 +201,12 @@ bool Filler::delayHasHazard(MachineBasicBlock::instr_iterator MI,
 
     if (MO.isDef()) {
       // check whether Reg is defined or used before delay slot.
-      if (IsRegInSet(RegDefs, Reg) || IsRegInSet(RegUses, Reg))
+      if (IsRegInSet(TRI, RegDefs, Reg) || IsRegInSet(TRI, RegUses, Reg))
         return true;
     }
     if (MO.isUse()) {
       // check whether Reg is defined before delay slot.
-      if (IsRegInSet(RegDefs, Reg))
+      if (IsRegInSet(TRI, RegDefs, Reg))
         return true;
     }
   }
@@ -242,8 +245,8 @@ void Filler::insertDefsUses(MachineBasicBlock::instr_iterator MI,
 }
 
 //returns true if the Reg or its alias is in the RegSet.
-bool Filler::IsRegInSet(SmallSet<unsigned, 32>& RegSet, unsigned Reg) {
-  const TargetRegisterInfo *TRI = TM.getSubtargetImpl()->getRegisterInfo();
+bool Filler::IsRegInSet(const TargetRegisterInfo *TRI,
+                        SmallSet<unsigned, 32>& RegSet, unsigned Reg) {
   // Check Reg and all aliased Registers.
   for (MCRegAliasIterator AI(Reg, TRI, true);
        AI.isValid(); ++AI)

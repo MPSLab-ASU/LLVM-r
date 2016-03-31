@@ -60,13 +60,14 @@ def OR1Kfl1         : SDNode<"OR1KISD::FL1", SDTIntUnaryOp>;
 // Extract bits 0-15 (low-end) of an immediate value.
 def LO16 : SDNodeXForm<imm, [{
   return CurDAG->getTargetConstant((uint64_t)N->getZExtValue() & 0xffff,
-                                   MVT::i32);
+                                   SDLoc(N), MVT::i32);
 }]>;
 
 // Extract bits 16-31 (high-end) of an immediate value.
 // Transformation function: shift the immediate value down into the low bits.
 def HI16 : SDNodeXForm<imm, [{
-  return CurDAG->getTargetConstant((uint64_t)N->getZExtValue() >> 16, MVT::i32);
+  return CurDAG->getTargetConstant((uint64_t)N->getZExtValue() >> 16,
+                                   SDLoc(N), MVT::i32);
 }]>;
 
 
@@ -157,19 +158,19 @@ def OR1K_COND     : PatLeaf<(i32 0)>;
 def OR1K_COND_NEG : PatLeaf<(i32 1)>;
 
 // Feature support predicates
-def HasDiv       : Predicate<"Subtarget.hasDiv()">,
+def HasDiv       : Predicate<"Subtarget->hasDiv()">,
                    AssemblerPredicate<"FeatureDiv">;
-def HasMul       : Predicate<"Subtarget.hasMul()">,
+def HasMul       : Predicate<"Subtarget->hasMul()">,
                    AssemblerPredicate<"FeatureMul">;
-def HasRor       : Predicate<"Subtarget.hasRor()">,
+def HasRor       : Predicate<"Subtarget->hasRor()">,
                    AssemblerPredicate<"FeatureRor">;
-def HasCmov      : Predicate<"Subtarget.hasCmov()">,
+def HasCmov      : Predicate<"Subtarget->hasCmov()">,
                    AssemblerPredicate<"FeatureCmov">;
-def NoCmov       : Predicate<"!Subtarget.hasCmov()">,
+def NoCmov       : Predicate<"!Subtarget->hasCmov()">,
                    AssemblerPredicate<"!FeatureCmov">;
-def HasAddc      : Predicate<"Subtarget.hasAddc()">,
+def HasAddc      : Predicate<"Subtarget->hasAddc()">,
                    AssemblerPredicate<"FeatureAddc">;
-def HasFfl1      : Predicate<"Subtarget.hasFfl1()">,
+def HasFfl1      : Predicate<"Subtarget->hasFfl1()">,
                    AssemblerPredicate<"FeatureFfl1">;
 
 

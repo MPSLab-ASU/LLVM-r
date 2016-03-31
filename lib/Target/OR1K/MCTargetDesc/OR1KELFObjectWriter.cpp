@@ -29,8 +29,8 @@ namespace {
 }
 
 OR1KELFObjectWriter::OR1KELFObjectWriter(uint8_t OSABI)
-  : MCELFObjectTargetWriter(/*Is64Bit*/ false, OSABI, ELF::EM_OPENRISC,
-                            /*HasRelocationAddend*/ true) {}
+  : MCELFObjectTargetWriter(/*Is64Bit=*/ false, OSABI, ELF::EM_OPENRISC,
+                            /*HasRelocationAddend=*/ true) {}
 
 OR1KELFObjectWriter::~OR1KELFObjectWriter() {}
 
@@ -126,8 +126,8 @@ unsigned OR1KELFObjectWriter::GetRelocType(const MCValue &Target,
   return Type;
 }
 
-MCObjectWriter *llvm::createOR1KELFObjectWriter(raw_ostream &OS,
-                                                uint8_t OSABI) {
+MCObjectWriter *
+llvm::createOR1KELFObjectWriter(raw_pwrite_stream &OS, uint8_t OSABI) {
   MCELFObjectTargetWriter *MOTW = new OR1KELFObjectWriter(OSABI);
   return createELFObjectWriter(MOTW, OS, /*IsLittleEndian=*/ false);
 }

@@ -30,7 +30,7 @@ struct OR1KRegisterInfo : public OR1KGenRegisterInfo {
   OR1KRegisterInfo(const TargetInstrInfo &tii);
 
   /// Code Generation virtual methods...
-  const uint16_t *getCalleeSavedRegs(const MachineFunction *MF = 0) const override;
+  const uint16_t *getCalleeSavedRegs(const MachineFunction *MF) const override;
 
   BitVector getReservedRegs(const MachineFunction &MF) const override;
 

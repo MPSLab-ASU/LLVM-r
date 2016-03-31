@@ -68,7 +68,7 @@ public:
   void applyFixup(const MCFixup &Fixup, char *Data, unsigned DataSize,
                   uint64_t Value, bool IsPCRel) const override;
 
-  MCObjectWriter *createObjectWriter(raw_ostream &OS) const override ;
+  MCObjectWriter *createObjectWriter(raw_pwrite_stream &OS) const override ;
 
   // No instruction requires relaxation
   bool fixupNeedsRelaxation(const MCFixup &Fixup, uint64_t Value,
@@ -93,7 +93,7 @@ bool OR1KAsmBackend::writeNopData(uint64_t Count, MCObjectWriter *OW) const {
     return false;
 
   for (uint64_t i = 0; i < Count; i += 4)
-    OW->Write32(0x15000000);
+    OW->write32(0x15000000);
 
   return true;
 }
@@ -139,9 +139,10 @@ void OR1KAsmBackend::applyFixup(const MCFixup &Fixup, char *Data,
   }
 }
 
-MCObjectWriter *OR1KAsmBackend::createObjectWriter(raw_ostream &OS) const {
-  return createOR1KELFObjectWriter(OS,
-                                   MCELFObjectTargetWriter::getOSABI(OSType));
+MCObjectWriter *
+OR1KAsmBackend::createObjectWriter(raw_pwrite_stream &OS) const {
+  uint8_t OSABI = MCELFObjectTargetWriter::getOSABI(OSType);
+  return createOR1KELFObjectWriter(OS, OSABI);
 }
 
 const MCFixupKindInfo &OR1KAsmBackend::getFixupKindInfo(MCFixupKind Kind) const{
@@ -183,14 +184,8 @@ const MCFixupKindInfo &OR1KAsmBackend::getFixupKindInfo(MCFixupKind Kind) const{
 } // end anonymous namespace
 
 MCAsmBackend *llvm::createOR1KAsmBackend(const Target &T, const MCRegisterInfo &MRI,
-                                         StringRef TT, StringRef CPU) {
-  Triple TheTriple(TT);
-
-  if (TheTriple.isOSDarwin())
-    assert(0 && "Mac not supported on OR1K");
-
-  if (TheTriple.isOSWindows())
-    assert(0 && "Windows not supported on OR1K");
+                                         const Triple &TT, StringRef CPU) {
+  assert(TT.isOSBinFormatELF() && "OR1K only supports ELF targets!");
 
   return new OR1KAsmBackend(T, Triple(TT).getOS());
 }
