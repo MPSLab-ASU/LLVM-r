@@ -241,12 +241,11 @@ void OR1KAsmPrinter::customEmitInstruction(const MachineInstr *MI) {
 }
 
 void OR1KAsmPrinter::EmitInstruction(const MachineInstr *MI) {
-
-  MachineBasicBlock::const_instr_iterator I = MI;
-  MachineBasicBlock::const_instr_iterator E = MI->getParent()->instr_end();
+  auto I = MI->getIterator();
+  auto E = MI->getParent()->instr_end();
 
   do {
-    customEmitInstruction(I++);
+    customEmitInstruction(&*I++);
   } while ((I != E) && I->isInsideBundle());
 }
 

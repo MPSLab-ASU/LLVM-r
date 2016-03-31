@@ -154,15 +154,6 @@ bool OR1KRegisterInfo::hasBasePointer(const MachineFunction &MF) const {
    return false;
 }
 
-bool OR1KRegisterInfo::needsStackRealignment(const MachineFunction &MF) const {
-  const MachineFrameInfo *MFI = MF.getFrameInfo();
-  const Function *F = MF.getFunction();
-  unsigned StackAlign = getFrameLowering(MF)->getStackAlignment();
-  return ((MFI->getMaxAlignment() > StackAlign) ||
-          F->getAttributes().hasAttribute(AttributeSet::FunctionIndex,
-                                          Attribute::StackAlignment));
-}
-
 unsigned OR1KRegisterInfo::getFrameRegister(const MachineFunction &MF) const {
   const TargetFrameLowering *TFI = getFrameLowering(MF);
 

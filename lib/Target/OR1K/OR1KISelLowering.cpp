@@ -52,9 +52,6 @@ OR1KTargetLowering::OR1KTargetLowering(const OR1KTargetMachine &TM,
 
   setStackPointerRegisterToSaveRestore(OR1K::R1);
 
-  setExceptionPointerRegister(OR1K::R3);
-  setExceptionSelectorRegister(OR1K::R4);
-
   setOperationAction(ISD::BR_CC,             MVT::i32, Custom);
   setOperationAction(ISD::BR_CC,             MVT::f32, Custom);
   setOperationAction(ISD::BR_JT,             MVT::Other, Expand);
@@ -154,6 +151,18 @@ OR1KTargetLowering::OR1KTargetLowering(const OR1KTargetMachine &TM,
   MaxStoresPerMemcpy = 16;
   MaxStoresPerMemcpyOptSize = 8;
   MaxStoresPerMemset = 16;
+}
+
+unsigned
+OR1KTargetLowering::getExceptionPointerRegister(const Constant *
+                                                PersonalityFn) const {
+  return OR1K::R3;
+}
+
+unsigned
+OR1KTargetLowering::getExceptionSelectorRegister(const Constant *
+                                                 PersonalityFn) const {
+  return OR1K::R4;
 }
 
 SDValue OR1KTargetLowering::LowerOperation(SDValue Op,
@@ -465,7 +474,7 @@ OR1KTargetLowering::LowerCCCArguments(SDValue Chain,
       //from this parameter
       SDValue FIN = DAG.getFrameIndex(FI, MVT::i32);
       InVals.push_back(DAG.getLoad(VA.getLocVT(), dl, Chain, FIN,
-                                   MachinePointerInfo::getFixedStack(FI),
+                                   MachinePointerInfo::getFixedStack(MF, FI),
                                    /*isVolatile=*/false,
                                    /*isNonTemporal=*/false,
                                    /*isInvariant=*/false,
@@ -994,9 +1003,8 @@ OR1KTargetLowering::LowerRETURNADDR(SDValue Op, SelectionDAG &DAG) const {
   unsigned Depth = cast<ConstantSDNode>(Op.getOperand(0))->getZExtValue();
   if (Depth) {
     SDValue FrameAddr = LowerFRAMEADDR(Op, DAG);
-    const DataLayout *DL = getTargetMachine().getDataLayout();
-    SDValue Offset = DAG.getConstant(DL->getPointerSize(), dl,
-                                     MVT::i32);
+    SDValue Offset = DAG.getConstant(DAG.getDataLayout().getPointerSize(),
+                                     dl, MVT::i32);
     return DAG.getLoad(VT, dl, DAG.getEntryNode(),
                        DAG.getNode(ISD::ADD, dl, VT, FrameAddr, Offset),
                        MachinePointerInfo(), /*isVolatile=*/false,
@@ -1156,8 +1164,7 @@ OR1KTargetLowering::EmitInstrWithCustomInserter(MachineInstr *MI,
   // to set, the condition code register to branch on, the true/false values to
   // select between, and a branch opcode to use.
   const BasicBlock *LLVM_BB = BB->getBasicBlock();
-  MachineFunction::iterator I = BB;
-  ++I;
+  MachineFunction::iterator I = ++BB->getIterator();
 
   //  thisMBB:
   //  ...

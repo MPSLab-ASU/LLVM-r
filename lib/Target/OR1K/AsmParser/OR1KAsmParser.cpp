@@ -26,10 +26,11 @@ namespace {
 struct OR1KOperand;
 
 class OR1KAsmParser : public MCTargetAsmParser {
+  const MCSubtargetInfo &STI;
   MCAsmParser &Parser;
+
   MCAsmParser &getParser() const { return Parser; }
   MCAsmLexer &getLexer() const { return Parser.getLexer(); }
-  MCSubtargetInfo &STI;
 
   bool MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
                                OperandVector &Operands,
@@ -60,10 +61,11 @@ class OR1KAsmParser : public MCTargetAsmParser {
 #include "OR1KGenAsmMatcher.inc"
 
 public:
-  OR1KAsmParser(MCSubtargetInfo &sti, MCAsmParser &_Parser,
+  OR1KAsmParser(const MCSubtargetInfo &_STI, MCAsmParser &_Parser,
                 const MCInstrInfo &MII, const MCTargetOptions &Options)
-      : MCTargetAsmParser(), Parser(_Parser), STI(sti) {
+      : MCTargetAsmParser(Options, _STI), STI(_STI), Parser(_Parser) {
     setAvailableFeatures(ComputeAvailableFeatures(STI.getFeatureBits()));
+    MCAsmParserExtension::Initialize(Parser);
   }
 
 };
@@ -485,20 +487,7 @@ bool OR1KAsmParser::ParseInstruction(ParseInstructionInfo &Info,
                                      SMLoc NameLoc,
                                      OperandVector &Operands) {
   // First operand is token for instruction
-  // FIXME: Can we have a more efficient implementation of this?
-  size_t dotLoc = Name.find('.');
-  Operands.push_back(OR1KOperand::CreateToken(Name.substr(0,dotLoc),NameLoc));
-  if (dotLoc < Name.size()) {
-    size_t dotLoc2 = Name.rfind('.');
-    if (dotLoc == dotLoc2)
-      Operands.push_back(OR1KOperand::CreateToken(Name.substr(dotLoc),NameLoc));
-    else {
-      Operands.push_back(OR1KOperand::CreateToken(Name.substr
-                                        (dotLoc, dotLoc2-dotLoc), NameLoc));
-      Operands.push_back(OR1KOperand::CreateToken(Name.substr
-                                        (dotLoc2), NameLoc));
-    }
-  }
+  Operands.push_back(OR1KOperand::CreateToken(Name, NameLoc));
 
   // If there are no more operands, then finish
   if (getLexer().is(AsmToken::EndOfStatement))

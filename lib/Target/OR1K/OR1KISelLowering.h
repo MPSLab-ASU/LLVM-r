@@ -72,6 +72,11 @@ namespace llvm {
     /// DAG node.
     const char *getTargetNodeName(unsigned Opcode) const override;
 
+    unsigned getExceptionPointerRegister(const Constant *
+                                         PersonalityFn) const override;
+    unsigned getExceptionSelectorRegister(const Constant *
+                                          PersonalityFn) const override;
+
     SDValue LowerBR_CC(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerSELECT_CC(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerVASTART(SDValue Op, SelectionDAG &DAG) const;

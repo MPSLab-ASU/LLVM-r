@@ -41,7 +41,6 @@ struct OR1KRegisterInfo : public OR1KGenRegisterInfo {
                            RegScavenger *RS = NULL) const override;
 
   bool hasBasePointer(const MachineFunction &MF) const;
-  bool needsStackRealignment(const MachineFunction &MF) const override;
 
   // Debug information queries.
   unsigned getFrameRegister(const MachineFunction &MF) const override;
