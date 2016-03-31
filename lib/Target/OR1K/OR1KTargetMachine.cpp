@@ -53,10 +53,6 @@ public:
   OR1KPassConfig(OR1KTargetMachine *TM, PassManagerBase &PM)
     : TargetPassConfig(TM, PM) {}
 
-  OR1KTargetMachine &getOR1KTargetMachine() const {
-    return getTM<OR1KTargetMachine>();
-  }
-
   bool addInstSelector() override;
   void addPreEmitPass() override;
 };
@@ -69,7 +65,7 @@ TargetPassConfig *OR1KTargetMachine::createPassConfig(PassManagerBase &PM) {
 // Install an instruction selector pass using
 // the ISelDag to gen OR1K code.
 bool OR1KPassConfig::addInstSelector() {
-  addPass(createOR1KISelDag(getOR1KTargetMachine()));
+  addPass(createOR1KISelDag(getTM<OR1KTargetMachine>()));
 
   // Prepend instructions to set the "global base reg" for PIC.
   addPass(createOR1KGlobalBaseRegPass());

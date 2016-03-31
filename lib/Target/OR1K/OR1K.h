@@ -16,13 +16,11 @@
 #define TARGET_OR1K_H
 #include "MCTargetDesc/OR1KBaseInfo.h"
 #include "MCTargetDesc/OR1KMCTargetDesc.h"
-#include "llvm/Target/TargetMachine.h"
 
 namespace llvm {
 class FunctionPass;
-class TargetMachine;
+class Target;
 class OR1KTargetMachine;
-class formatted_raw_ostream;
 
 /// createOR1KISelDag - This pass converts a legalized DAG into a
 /// OR1K-specific DAG, ready for instruction scheduling.

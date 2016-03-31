@@ -45,15 +45,15 @@ BitVector OR1KRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   BitVector Reserved(getNumRegs());
   const TargetFrameLowering *TFI = getFrameLowering(MF);
 
-  Reserved.set(OR1K::R0);
-  Reserved.set(OR1K::R1);
+  Reserved.set(OR1K::R0);             // Zero register
+  Reserved.set(OR1K::R1);             // Stack pointer
   if (TFI->hasFP(MF))
-    Reserved.set(OR1K::R2);
-  Reserved.set(OR1K::R9);
-  Reserved.set(OR1K::R10);
-  Reserved.set(OR1K::R16); // Global pointer
+    Reserved.set(OR1K::R2);           // Frame pointer
+  Reserved.set(getRARegister());      // Return address pointer
+  Reserved.set(OR1K::R10);            // Thread-local pointer
+  Reserved.set(OR1K::R16);            // Global pointer
   if (hasBasePointer(MF))
-    Reserved.set(getBaseRegister());
+    Reserved.set(getBaseRegister());  // Base pointer
   return Reserved;
 }
 
@@ -131,18 +131,18 @@ OR1KRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
     BuildMI(*MI.getParent(), II, dl, TII.get(OR1K::ADD), Reg)
       .addReg(Reg).addReg(FrameReg);
 
-    MI.getOperand(FIOperandNum).ChangeToRegister(Reg, false, false, /*isKill=*/true);
+    MI.getOperand(FIOperandNum).ChangeToRegister(Reg,
+                                                 /*isDef=*/false,
+                                                 /*isImp=*/false,
+                                                 /*isKill=*/true);
     MI.getOperand(FIOperandNum+1).ChangeToImmediate(0);
 
     return;
   }
 
-  MI.getOperand(FIOperandNum).ChangeToRegister(FrameReg, false);
+  MI.getOperand(FIOperandNum).ChangeToRegister(FrameReg, /*isDef=*/false);
   MI.getOperand(FIOperandNum+1).ChangeToImmediate(Offset);
 }
-
-void OR1KRegisterInfo::
-processFunctionBeforeFrameFinalized(MachineFunction &MF) const {}
 
 bool OR1KRegisterInfo::hasBasePointer(const MachineFunction &MF) const {
    const MachineFrameInfo *MFI = MF.getFrameInfo();
@@ -161,10 +161,6 @@ bool OR1KRegisterInfo::needsStackRealignment(const MachineFunction &MF) const {
   return ((MFI->getMaxAlignment() > StackAlign) ||
           F->getAttributes().hasAttribute(AttributeSet::FunctionIndex,
                                           Attribute::StackAlignment));
-}
-
-unsigned OR1KRegisterInfo::getRARegister() const {
-  return OR1K::R9;
 }
 
 unsigned OR1KRegisterInfo::getFrameRegister(const MachineFunction &MF) const {

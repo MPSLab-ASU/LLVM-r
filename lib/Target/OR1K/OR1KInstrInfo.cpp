@@ -184,11 +184,10 @@ namespace {
     CGBR() : MachineFunctionPass(ID) {}
 
     bool runOnMachineFunction(MachineFunction &MF) override {
-      const OR1KTargetMachine *TM =
-        static_cast<const OR1KTargetMachine *>(&MF.getTarget());
+      const TargetMachine &TM = MF.getTarget();
 
       // Only emit a global base reg in PIC mode.
-      if (TM->getRelocationModel() != Reloc::PIC_)
+      if (TM.getRelocationModel() != Reloc::PIC_)
         return false;
 
       OR1KMachineFunctionInfo *OR1KFI = MF.getInfo<OR1KMachineFunctionInfo>();

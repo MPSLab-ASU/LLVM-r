@@ -40,18 +40,12 @@ struct OR1KRegisterInfo : public OR1KGenRegisterInfo {
                            int SPAdj, unsigned FIOperandNum,
                            RegScavenger *RS = NULL) const override;
 
-  void processFunctionBeforeFrameFinalized(MachineFunction &MF) const;
-
   bool hasBasePointer(const MachineFunction &MF) const;
   bool needsStackRealignment(const MachineFunction &MF) const override;
 
   // Debug information queries.
-  unsigned getRARegister() const;
   unsigned getFrameRegister(const MachineFunction &MF) const override;
   unsigned getBaseRegister() const;
-
-  // Exception handling queries.
-  int getDwarfRegNum(unsigned RegNum, bool isEH) const;
 };
 
 } // end namespace llvm

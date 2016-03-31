@@ -458,14 +458,18 @@ OR1KTargetLowering::LowerCCCArguments(SDValue Chain,
              << "\n";
       }
       // Create the frame index object for this incoming parameter...
-      int FI = MFI->CreateFixedObject(ObjSize, VA.getLocMemOffset(), true);
+      int FI = MFI->CreateFixedObject(ObjSize, VA.getLocMemOffset(),
+                                      /*Immutable=*/true);
 
       // Create the SelectionDAG nodes corresponding to a load
       //from this parameter
       SDValue FIN = DAG.getFrameIndex(FI, MVT::i32);
       InVals.push_back(DAG.getLoad(VA.getLocVT(), dl, Chain, FIN,
                                    MachinePointerInfo::getFixedStack(FI),
-                                   false, false, false, 0));
+                                   /*isVolatile=*/false,
+                                   /*isNonTemporal=*/false,
+                                   /*isInvariant=*/false,
+                                   /*Alignment=*/0));
     }
   }
 
@@ -600,7 +604,7 @@ OR1KTargetLowering::LowerCCCCallTo(SDValue Chain, SDValue Callee,
     unsigned Size = Flags.getByValSize();
     unsigned Align = Flags.getByValAlign();
 
-    int FI = MFI->CreateStackObject(Size, Align, false);
+    int FI = MFI->CreateStackObject(Size, Align, /*isSS=*/false);
     SDValue FIPtr = DAG.getFrameIndex(FI, PtrVT);
     SDValue SizeNode = DAG.getConstant(Size, dl, MVT::i32);
 
@@ -613,7 +617,8 @@ OR1KTargetLowering::LowerCCCCallTo(SDValue Chain, SDValue Callee,
   }
 
   Chain = DAG.getCALLSEQ_START(Chain,
-                               DAG.getConstant(NumBytes, dl, PtrVT, true),
+                               DAG.getConstant(NumBytes, dl, PtrVT,
+                                               /*isTarget=*/true),
                                dl);
 
   SmallVector<std::pair<unsigned, SDValue>, 4> RegsToPass;
@@ -662,7 +667,10 @@ OR1KTargetLowering::LowerCCCCallTo(SDValue Chain, SDValue Callee,
 
 
       MemOpChains.push_back(DAG.getStore(Chain, dl, Arg, PtrOff,
-                                         MachinePointerInfo(),false, false, 0));
+                                         MachinePointerInfo(),
+                                         /*isVolatile=*/false,
+                                         /*isNonTemporal=*/false,
+                                         /*Alignment=*/0));
     }
   }
 
@@ -695,7 +703,7 @@ OR1KTargetLowering::LowerCCCCallTo(SDValue Chain, SDValue Callee,
   // Likewise ExternalSymbol -> TargetExternalSymbol.
   uint8_t OpFlag = IsPIC ? OR1KII::MO_PLT : OR1KII::MO_NO_FLAG;
   if (G) {
-    Callee = DAG.getTargetGlobalAddress(G->getGlobal(), dl, PtrVT, 0,
+    Callee = DAG.getTargetGlobalAddress(G->getGlobal(), dl, PtrVT, /*offset=*/0,
                                         OpFlag);
   } else if (ExternalSymbolSDNode *E = dyn_cast<ExternalSymbolSDNode>(Callee)) {
     Callee = DAG.getTargetExternalSymbol(E->getSymbol(), PtrVT,
@@ -722,8 +730,10 @@ OR1KTargetLowering::LowerCCCCallTo(SDValue Chain, SDValue Callee,
 
   // Create the CALLSEQ_END node.
   Chain = DAG.getCALLSEQ_END(Chain,
-                             DAG.getConstant(NumBytes, dl, PtrVT, true),
-                             DAG.getConstant(0, dl, PtrVT, true),
+                             DAG.getConstant(NumBytes, dl, PtrVT,
+                                             /*isTarget=*/true),
+                             DAG.getConstant(0, dl, PtrVT,
+                                             /*isTarget=*/true),
                              InFlag, dl);
   InFlag = Chain.getValue(1);
 
@@ -888,7 +898,8 @@ SDValue OR1KTargetLowering::LowerVASTART(SDValue Op, SelectionDAG &DAG) const {
   // memory location argument.
   const Value *SV = cast<SrcValueSDNode>(Op.getOperand(2))->getValue();
   return DAG.getStore(Op.getOperand(0), dl, FI, Op.getOperand(1),
-                      MachinePointerInfo(SV), false, false, 0);
+                      MachinePointerInfo(SV), /*isVolatile=*/false,
+                      /*isNonTemporal=*/false, /*Alignment=*/0);
 }
 
 SDValue
@@ -988,7 +999,9 @@ OR1KTargetLowering::LowerRETURNADDR(SDValue Op, SelectionDAG &DAG) const {
                                      MVT::i32);
     return DAG.getLoad(VT, dl, DAG.getEntryNode(),
                        DAG.getNode(ISD::ADD, dl, VT, FrameAddr, Offset),
-                       MachinePointerInfo(), false, false, false, 0);
+                       MachinePointerInfo(), /*isVolatile=*/false,
+                       /*isNonTemporal=*/false, /*isInvariant=*/false,
+                       /*Alignment=*/0);
   }
 
   // Return the link register, which contains the return address.
@@ -1008,8 +1021,9 @@ OR1KTargetLowering::LowerFRAMEADDR(SDValue Op, SelectionDAG &DAG) const {
   SDValue FrameAddr = DAG.getCopyFromReg(DAG.getEntryNode(), dl, OR1K::R2, VT);
   while (Depth--)
     FrameAddr = DAG.getLoad(VT, dl, DAG.getEntryNode(), FrameAddr,
-                            MachinePointerInfo(),
-                            false, false, false, 0);
+                            MachinePointerInfo(), /*isVolatile=*/false,
+                            /*isNonTemporal=*/false, /*isInvariant=*/false,
+                            /*Alignment=*/0);
   return FrameAddr;
 }
 
@@ -1065,7 +1079,9 @@ SDValue OR1KTargetLowering::LowerGlobalAddress(SDValue Op,
     SDValue GA = DAG.getTargetGlobalAddress(GV, dl, PtrVT, Offset,
                                             OR1KII::MO_GOT);
     return DAG.getLoad(PtrVT, dl, DAG.getEntryNode(), GA,
-                       MachinePointerInfo(), false, false, false, 0);
+                       MachinePointerInfo(), /*isVolatile=*/false,
+                       /*isNonTemporal=*/false, /*isInvariant=*/false,
+                       /*Alignment=*/0);
   }
 
   uint8_t OpFlagHi = IsPIC ? OR1KII::MO_GOTOFFHI : OR1KII::MO_ABS_HI;
@@ -1092,8 +1108,8 @@ SDValue OR1KTargetLowering::LowerBlockAddress(SDValue Op,
   uint8_t OpFlagHi = IsPIC ? OR1KII::MO_GOTOFFHI : OR1KII::MO_ABS_HI;
   uint8_t OpFlagLo = IsPIC ? OR1KII::MO_GOTOFFLO : OR1KII::MO_ABS_LO;
 
-  SDValue Hi = DAG.getBlockAddress(BA, MVT::i32, 0, true, OpFlagHi);
-  SDValue Lo = DAG.getBlockAddress(BA, MVT::i32, 0, true, OpFlagLo);
+  SDValue Hi = DAG.getBlockAddress(BA, MVT::i32, 0, /*isTarget=*/true, OpFlagHi);
+  SDValue Lo = DAG.getBlockAddress(BA, MVT::i32, 0, /*isTarget=*/true, OpFlagLo);
   Hi = DAG.getNode(OR1KISD::HI, dl, MVT::i32, Hi);
   Lo = DAG.getNode(OR1KISD::LO, dl, MVT::i32, Lo);
   SDValue Result = DAG.getNode(ISD::OR, dl, MVT::i32, Hi, Lo);

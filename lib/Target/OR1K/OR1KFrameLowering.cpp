@@ -19,6 +19,7 @@
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineModuleInfo.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
+#include "llvm/Target/TargetMachine.h"
 #include "llvm/IR/Function.h"
 
 using namespace llvm;
@@ -73,8 +74,7 @@ void OR1KFrameLowering::determineFrameLayout(MachineFunction &MF) const {
 // ADJDYNALLOC pseudo instructions with a OR1K:ADDI with the
 // maximum call frame size as the immediate.
 void OR1KFrameLowering::replaceAdjDynAllocPseudo(MachineFunction &MF) const {
-  const OR1KInstrInfo &TII =
-    *static_cast<const OR1KInstrInfo*>(MF.getSubtarget().getInstrInfo());
+  const TargetInstrInfo *TII = MF.getSubtarget().getInstrInfo();
   unsigned MaxCallFrameSize = MF.getFrameInfo()->getMaxCallFrameSize();
 
   for (MachineFunction::iterator MBB = MF.begin(), E = MF.end();
@@ -87,7 +87,7 @@ void OR1KFrameLowering::replaceAdjDynAllocPseudo(MachineFunction &MF) const {
         unsigned Dst = MI->getOperand(0).getReg();
         unsigned Src = MI->getOperand(1).getReg();
 
-        BuildMI(*MBB, MI, DL, TII.get(OR1K::ADDI), Dst)
+        BuildMI(*MBB, MI, DL, TII->get(OR1K::ADDI), Dst)
           .addReg(Src).addImm(MaxCallFrameSize);
         MI->eraseFromParent();
       }
@@ -98,9 +98,8 @@ void OR1KFrameLowering::replaceAdjDynAllocPseudo(MachineFunction &MF) const {
 void OR1KFrameLowering::emitPrologue(MachineFunction &MF,
                                      MachineBasicBlock &MBB) const {
   assert(&MF.front() == &MBB && "Shrink-wrapping not yet supported");
-  MachineFrameInfo *MFI    = MF.getFrameInfo();
-  const OR1KInstrInfo &TII =
-    *static_cast<const OR1KInstrInfo*>(MF.getSubtarget().getInstrInfo());
+  const MachineFrameInfo *MFI = MF.getFrameInfo();
+  const TargetInstrInfo *TII = MF.getSubtarget().getInstrInfo();
   const OR1KRegisterInfo *TRI =
     static_cast<const OR1KRegisterInfo*>(MF.getSubtarget().getRegisterInfo());
   MachineBasicBlock::iterator MBBI = MBB.begin();
@@ -126,13 +125,13 @@ void OR1KFrameLowering::emitPrologue(MachineFunction &MF,
   if (HasRA) {
     // Save return address onto stack
     // Emit "l.sw  stack_lock(r1), r9"
-    BuildMI(MBB, MBBI, DL, TII.get(OR1K::SW))
+    BuildMI(MBB, MBBI, DL, TII->get(OR1K::SW))
       .addReg(OR1K::R9).addReg(OR1K::R1).addImm(Offset);
 
     // Emit ".cfi_offset r9, Offset"
     CFIIndex = MMI.addFrameInst(MCCFIInstruction::createOffset(
         nullptr, MRI->getDwarfRegNum(OR1K::R9, true), Offset));
-    BuildMI(MBB, MBBI, DL, TII.get(TargetOpcode::CFI_INSTRUCTION))
+    BuildMI(MBB, MBBI, DL, TII->get(TargetOpcode::CFI_INSTRUCTION))
         .addCFIIndex(CFIIndex);
 
     Offset -= 4;
@@ -141,13 +140,13 @@ void OR1KFrameLowering::emitPrologue(MachineFunction &MF,
   if (hasFP(MF)) {
     // Save frame pointer onto stack
     // Emit "l.sw  stack_loc(r1), r2"
-    BuildMI(MBB, MBBI, DL, TII.get(OR1K::SW))
+    BuildMI(MBB, MBBI, DL, TII->get(OR1K::SW))
       .addReg(OR1K::R2).addReg(OR1K::R1).addImm(Offset);
 
     // Emit ".cfi_offset r9, Offset"
     CFIIndex = MMI.addFrameInst(MCCFIInstruction::createOffset(
         nullptr, MRI->getDwarfRegNum(OR1K::R2, true), Offset));
-    BuildMI(MBB, MBBI, DL, TII.get(TargetOpcode::CFI_INSTRUCTION))
+    BuildMI(MBB, MBBI, DL, TII->get(TargetOpcode::CFI_INSTRUCTION))
         .addCFIIndex(CFIIndex);
 
     Offset -= 4;
@@ -156,25 +155,25 @@ void OR1KFrameLowering::emitPrologue(MachineFunction &MF,
     // before we start modifying it below.
     // l.sw stack_loc(r1), basereg
     if (TRI->hasBasePointer(MF)) {
-      BuildMI(MBB, MBBI, DL, TII.get(OR1K::SW))
+      BuildMI(MBB, MBBI, DL, TII->get(OR1K::SW))
         .addReg(TRI->getBaseRegister()).addReg(OR1K::R1).addImm(Offset);
 
       // .cfi_offset BaseReg, Offset
       CFIIndex = MMI.addFrameInst(MCCFIInstruction::createOffset(
           nullptr, MRI->getDwarfRegNum(TRI->getBaseRegister(), true), Offset));
-      BuildMI(MBB, MBBI, DL, TII.get(TargetOpcode::CFI_INSTRUCTION))
+      BuildMI(MBB, MBBI, DL, TII->get(TargetOpcode::CFI_INSTRUCTION))
           .addCFIIndex(CFIIndex);
     }
 
     // Set frame pointer to stack pointer
     // Emit "l.addi r2, r1, 0"
-    BuildMI(MBB, MBBI, DL, TII.get(OR1K::ADDI), OR1K::R2)
+    BuildMI(MBB, MBBI, DL, TII->get(OR1K::ADDI), OR1K::R2)
       .addReg(OR1K::R1).addImm(0);
 
     // Emit ".cfi_def_cfa_register r2"
     CFIIndex = MMI.addFrameInst(MCCFIInstruction::createDefCfaRegister(
         nullptr, MRI->getDwarfRegNum(OR1K::R2, true)));
-    BuildMI(MBB, MBBI, DL, TII.get(TargetOpcode::CFI_INSTRUCTION))
+    BuildMI(MBB, MBBI, DL, TII->get(TargetOpcode::CFI_INSTRUCTION))
         .addCFIIndex(CFIIndex);
   }
 
@@ -188,32 +187,32 @@ void OR1KFrameLowering::emitPrologue(MachineFunction &MF,
     // Since the stack grows down, the resulting stack pointer
     // will be rounded down in case the stack pointer came in unaligned.
     if (isInt<16>(StackSize)) {
-      BuildMI(MBB, MBBI, DL, TII.get(OR1K::ADDI), ScratchReg)
+      BuildMI(MBB, MBBI, DL, TII->get(OR1K::ADDI), ScratchReg)
         .addReg(OR1K::R1).addImm(-StackSize);
     } else {
-      BuildMI(MBB, MBBI, DL, TII.get(OR1K::MOVHI), ScratchReg)
+      BuildMI(MBB, MBBI, DL, TII->get(OR1K::MOVHI), ScratchReg)
         .addImm((uint32_t)-StackSize >> 16);
-      BuildMI(MBB, MBBI, DL, TII.get(OR1K::ORI), ScratchReg)
+      BuildMI(MBB, MBBI, DL, TII->get(OR1K::ORI), ScratchReg)
         .addReg(ScratchReg).addImm(-StackSize & 0xffffU);
-      BuildMI(MBB, MBBI, DL, TII.get(OR1K::ADD), ScratchReg)
+      BuildMI(MBB, MBBI, DL, TII->get(OR1K::ADD), ScratchReg)
         .addReg(ScratchReg).addReg(OR1K::R1);
     }
-    BuildMI(MBB, MBBI, DL, TII.get(OR1K::SRL_ri), ScratchReg)
+    BuildMI(MBB, MBBI, DL, TII->get(OR1K::SRL_ri), ScratchReg)
       .addReg(ScratchReg).addImm(AlignLog);
-    BuildMI(MBB, MBBI, DL, TII.get(OR1K::SLL_ri), OR1K::R1)
+    BuildMI(MBB, MBBI, DL, TII->get(OR1K::SLL_ri), OR1K::R1)
       .addReg(ScratchReg).addImm(AlignLog);
   } else if (isInt<16>(StackSize)) {
     if (StackSize) {
       // Adjust stack : l.addi r1, r1, -imm
-      BuildMI(MBB, MBBI, DL, TII.get(OR1K::ADDI), OR1K::R1)
+      BuildMI(MBB, MBBI, DL, TII->get(OR1K::ADDI), OR1K::R1)
         .addReg(OR1K::R1).addImm(-StackSize);
     }
   } else {
-    BuildMI(MBB, MBBI, DL, TII.get(OR1K::MOVHI), ScratchReg)
+    BuildMI(MBB, MBBI, DL, TII->get(OR1K::MOVHI), ScratchReg)
       .addImm((uint32_t)-StackSize >> 16);
-    BuildMI(MBB, MBBI, DL, TII.get(OR1K::ORI), ScratchReg)
+    BuildMI(MBB, MBBI, DL, TII->get(OR1K::ORI), ScratchReg)
       .addReg(ScratchReg).addImm(-StackSize & 0xffffU);
-    BuildMI(MBB, MBBI, DL, TII.get(OR1K::ADD), OR1K::R1)
+    BuildMI(MBB, MBBI, DL, TII->get(OR1K::ADD), OR1K::R1)
       .addReg(OR1K::R1).addReg(ScratchReg);
   }
 
@@ -221,7 +220,7 @@ void OR1KFrameLowering::emitPrologue(MachineFunction &MF,
     // Emit ".cfi_def_cfa_offset StackSize"
     CFIIndex = MMI.addFrameInst(
         MCCFIInstruction::createDefCfaOffset(nullptr, -StackSize));
-    BuildMI(MBB, MBBI, DL, TII.get(TargetOpcode::CFI_INSTRUCTION))
+    BuildMI(MBB, MBBI, DL, TII->get(TargetOpcode::CFI_INSTRUCTION))
         .addCFIIndex(CFIIndex);
   }
 
@@ -229,7 +228,7 @@ void OR1KFrameLowering::emitPrologue(MachineFunction &MF,
   // Any variable sized objects will be located after this,
   // so local objects can be adressed with the base pointer.
   if (TRI->hasBasePointer(MF)) {
-    BuildMI(MBB, MBBI, DL, TII.get(OR1K::ORI), TRI->getBaseRegister())
+    BuildMI(MBB, MBBI, DL, TII->get(OR1K::ORI), TRI->getBaseRegister())
       .addReg(OR1K::R1).addImm(0);
   }
 
@@ -247,7 +246,7 @@ void OR1KFrameLowering::emitPrologue(MachineFunction &MF,
     // Emit ".cfi_offset Reg, Offset"
     CFIIndex = MMI.addFrameInst(MCCFIInstruction::createOffset(
         nullptr, MRI->getDwarfRegNum(Reg, true), Offset));
-    BuildMI(MBB, MBBI, DL, TII.get(TargetOpcode::CFI_INSTRUCTION))
+    BuildMI(MBB, MBBI, DL, TII->get(TargetOpcode::CFI_INSTRUCTION))
         .addCFIIndex(CFIIndex);
   }
 
@@ -267,9 +266,8 @@ eliminateCallFramePseudoInstr(MachineFunction &MF, MachineBasicBlock &MBB,
 void OR1KFrameLowering::emitEpilogue(MachineFunction &MF,
                                     MachineBasicBlock &MBB) const {
   MachineBasicBlock::iterator MBBI = MBB.getLastNonDebugInstr();
-  MachineFrameInfo *MFI            = MF.getFrameInfo();
-  const OR1KInstrInfo &TII =
-    *static_cast<const OR1KInstrInfo*>(MF.getSubtarget().getInstrInfo());
+  const MachineFrameInfo *MFI = MF.getFrameInfo();
+  const TargetInstrInfo *TII = MF.getSubtarget().getInstrInfo();
   const OR1KRegisterInfo *TRI =
     static_cast<const OR1KRegisterInfo*>(MF.getSubtarget().getRegisterInfo());
   bool IsPIC = MF.getTarget().getRelocationModel() == Reloc::PIC_;
@@ -286,39 +284,39 @@ void OR1KFrameLowering::emitEpilogue(MachineFunction &MF,
   if (hasFP(MF)) {
     // Set stack pointer to frame pointer
     // l.addi r1, r2, 0
-    BuildMI(MBB, MBBI, dl, TII.get(OR1K::ADDI), OR1K::R1)
+    BuildMI(MBB, MBBI, dl, TII->get(OR1K::ADDI), OR1K::R1)
       .addReg(OR1K::R2).addImm(0);
 
     // Load frame pointer from stack
     // l.lwz  r2, stack_loc(r1)
-    BuildMI(MBB, MBBI, dl, TII.get(OR1K::LWZ), OR1K::R2)
+    BuildMI(MBB, MBBI, dl, TII->get(OR1K::LWZ), OR1K::R2)
       .addReg(OR1K::R1).addImm(FPOffset);
   } else if (isInt<16>(StackSize)) {
     // l.addi r1, r1, imm
     if (StackSize) {
-      BuildMI(MBB, MBBI, dl, TII.get(OR1K::ADDI), OR1K::R1)
+      BuildMI(MBB, MBBI, dl, TII->get(OR1K::ADDI), OR1K::R1)
         .addReg(OR1K::R1).addImm(StackSize);
     }
   } else {
     // FIXME: Allocate a scratch register.
     unsigned ScratchReg = OR1K::R13;
-    BuildMI(MBB, MBBI, dl, TII.get(OR1K::MOVHI), ScratchReg)
+    BuildMI(MBB, MBBI, dl, TII->get(OR1K::MOVHI), ScratchReg)
       .addImm((uint32_t)StackSize >> 16);
-    BuildMI(MBB, MBBI, dl, TII.get(OR1K::ORI), ScratchReg)
+    BuildMI(MBB, MBBI, dl, TII->get(OR1K::ORI), ScratchReg)
       .addReg(ScratchReg).addImm(StackSize & 0xffffU);
-    BuildMI(MBB, MBBI, dl, TII.get(OR1K::ADD), OR1K::R1)
+    BuildMI(MBB, MBBI, dl, TII->get(OR1K::ADD), OR1K::R1)
       .addReg(OR1K::R1).addReg(ScratchReg);
   }
 
   // l.lwz basereg, stack_loc(r1)
   if (TRI->hasBasePointer(MF)) {
-    BuildMI(MBB, MBBI, dl, TII.get(OR1K::LWZ), TRI->getBaseRegister())
+    BuildMI(MBB, MBBI, dl, TII->get(OR1K::LWZ), TRI->getBaseRegister())
       .addReg(OR1K::R1).addImm(BPOffset);
   }
 
   // l.lwz r9, stack_loc(r1)
   if (HasRA) {
-    BuildMI(MBB, MBBI, dl, TII.get(OR1K::LWZ), OR1K::R9)
+    BuildMI(MBB, MBBI, dl, TII->get(OR1K::LWZ), OR1K::R9)
       .addReg(OR1K::R1).addImm(RAOffset);
   }
 }
