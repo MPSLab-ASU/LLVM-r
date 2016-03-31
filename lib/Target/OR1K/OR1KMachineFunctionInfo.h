@@ -15,9 +15,9 @@
 #define OR1KMACHINEFUNCTIONINFO_H
 #include "OR1KRegisterInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
-#include "llvm/CodeGen/MachineRegisterInfo.h"
 
 namespace llvm {
+class MachineFunction;
 
 /// OR1KMachineFunctionInfo - This class is derived from MachineFunction and
 /// contains private OR1K target-specific information for each MachineFunction.
@@ -54,7 +54,6 @@ public:
   int getVarArgsFrameIndex() const { return VarArgsFrameIndex; }
   void setVarArgsFrameIndex(int Index) { VarArgsFrameIndex = Index; }
 };
-
 } // End llvm namespace
 
 #endif

@@ -22,8 +22,6 @@
 #include "llvm/Target/TargetSelectionDAGInfo.h"
 #include "llvm/Target/TargetMachine.h"
 
-#include <string>
-
 #define GET_SUBTARGETINFO_HEADER
 #include "OR1KGenSubtargetInfo.inc"
 
@@ -38,8 +36,6 @@ class OR1KSubtarget : public OR1KGenSubtargetInfo {
   bool HasCmov;
   bool HasAddc;
   bool HasFfl1;
-
-  Triple TargetTriple;
 
   const OR1KFrameLowering FrameLowering;
   const OR1KInstrInfo InstrInfo;

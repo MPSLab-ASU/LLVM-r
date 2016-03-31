@@ -22,7 +22,6 @@
 #include "llvm/Support/FormattedStream.h"
 using namespace llvm;
 
-
 // Include the auto-generated portion of the assembly writer.
 #include "OR1KGenAsmWriter.inc"
 

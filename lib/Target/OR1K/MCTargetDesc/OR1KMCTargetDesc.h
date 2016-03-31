@@ -23,7 +23,6 @@ class MCContext;
 class MCInstrInfo;
 class MCObjectWriter;
 class MCRegisterInfo;
-class MCSubtargetInfo;
 class Target;
 class Triple;
 class StringRef;

@@ -17,15 +17,13 @@
 #include "llvm/MC/MCAsmInfoELF.h"
 
 namespace llvm {
-  class Target;
-  class Triple;
+class Triple;
 
-  class OR1KMCAsmInfo : public MCAsmInfoELF {
-    virtual void anchor();
-  public:
-    explicit OR1KMCAsmInfo(const Triple &TT);
-  };
-
+class OR1KMCAsmInfo : public MCAsmInfoELF {
+  virtual void anchor();
+public:
+  explicit OR1KMCAsmInfo(const Triple &TT);
+};
 } // namespace llvm
 
 #endif

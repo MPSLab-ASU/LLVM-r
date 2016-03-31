@@ -21,8 +21,6 @@
 #include "OR1KGenInstrInfo.inc"
 
 namespace llvm {
-class OR1KSubtarget;
-
 class OR1KInstrInfo : public OR1KGenInstrInfo {
   const OR1KRegisterInfo RI;
   virtual void anchor();

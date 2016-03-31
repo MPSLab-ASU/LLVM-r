@@ -38,6 +38,6 @@ OR1KSubtarget::OR1KSubtarget(const Triple &TT,
                              const OR1KTargetMachine &TM)
   : OR1KGenSubtargetInfo(TT, CPU, FS),
     HasMul(false), HasDiv(false), HasRor(false), HasCmov(false),
-    HasAddc(false), HasFfl1(false), TargetTriple(TT),
+    HasAddc(false), HasFfl1(false),
     TLInfo(TM, initializeSubtargetDependencies(CPU, FS)),
     TSInfo() {}

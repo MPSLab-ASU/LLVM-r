@@ -20,7 +20,6 @@
 #include "llvm/Support/ErrorHandling.h"
 
 namespace llvm {
-
 /// OR1KII - This namespace holds all of the target specific flags that
 /// instruction info tracks.
 ///
@@ -113,6 +112,6 @@ static inline unsigned getOR1KRegisterNumbering(unsigned Reg) {
     default: llvm_unreachable("Unknown register number!");
   }
 }
+} // namespace llvm
 
-}
 #endif

@@ -13,21 +13,19 @@
 #include "llvm/Support/Compiler.h"
 
 namespace llvm {
-  class AsmPrinter;
-  class MCContext;
-  class MCInst;
-  class MCOperand;
-  class MCSymbol;
-  class MachineInstr;
-  class MachineModuleInfoMachO;
-  class MachineOperand;
-  class Mangler;
+class MCContext;
+class MCInst;
+class MCOperand;
+class MCSymbol;
+class MachineInstr;
+class MachineOperand;
+class AsmPrinter;
+class Mangler;
 
-  /// OR1KMCInstLower - This class is used to lower an MachineInstr
-  /// into an MCInst.
+/// OR1KMCInstLower - This class is used to lower an MachineInstr
+/// into an MCInst.
 class LLVM_LIBRARY_VISIBILITY OR1KMCInstLower {
   MCContext &Ctx;
-
   AsmPrinter &Printer;
 public:
   OR1KMCInstLower(MCContext &ctx, Mangler &mang, AsmPrinter &printer)
@@ -42,7 +40,6 @@ public:
   MCSymbol *GetJumpTableSymbol(const MachineOperand &MO) const;
   MCSymbol *GetConstantPoolIndexSymbol(const MachineOperand &MO) const;
 };
-
 }
 
 #endif

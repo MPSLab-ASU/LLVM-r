@@ -8,6 +8,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "OR1KMachineFunctionInfo.h"
+#include "llvm/CodeGen/MachineRegisterInfo.h"
 
 using namespace llvm;
 

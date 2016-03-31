@@ -8,12 +8,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "OR1K.h"
-#include "llvm/IR/Module.h"
 #include "llvm/Support/TargetRegistry.h"
 using namespace llvm;
 
 Target llvm::TheOR1KTarget;
 
-extern "C" void LLVMInitializeOR1KTargetInfo() { 
+extern "C" void LLVMInitializeOR1KTargetInfo() {
   RegisterTarget<Triple::or1k> X(TheOR1KTarget, "or1k", "OR1K");
 }

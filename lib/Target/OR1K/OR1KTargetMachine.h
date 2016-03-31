@@ -16,11 +16,9 @@
 
 #include "OR1KSubtarget.h"
 #include "llvm/Target/TargetMachine.h"
-#include "llvm/Target/TargetFrameLowering.h"
+#include "llvm/Target/TargetLoweringObjectFile.h"
 
 namespace llvm {
-class formatted_raw_ostream;
-
 class OR1KTargetMachine : public LLVMTargetMachine {
   OR1KSubtarget Subtarget;
   std::unique_ptr<TargetLoweringObjectFile> TLOF;
