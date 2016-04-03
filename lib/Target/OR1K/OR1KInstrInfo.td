@@ -215,7 +215,7 @@ multiclass SF<bits<5> op2Val, string asmstr, PatLeaf Cond> {
 }
 
 // l.sfxx instructions
-let Defs = [SR], hasSideEffects = 1 in {
+let Defs = [FBIT], hasSideEffects = 1 in {
 defm SFEQ  : SF<0x0, "l.sfeq",  OR1K_CC_EQ>;
 defm SFNE  : SF<0x1, "l.sfne",  OR1K_CC_NE>;
 defm SFGTU : SF<0x2, "l.sfgtu", OR1K_CC_GTU>;
@@ -256,14 +256,17 @@ class ALU_RIz<bits<4> subOp, string asmstr, SDNode OpNode>
            [(set GPR:$rD, (OpNode GPR:$rA, immZExt16:$imm16))]>;
 
 let isAsCheapAsAMove = 1 in {
-  def ADDI  : ALU_RIs<0x7, "l.addi", add>;
-  def ADDIC : ALU_RIs<0x8, "l.addic", add>;
+  let Defs = [CFBIT, OFBIT] in {
+    def ADDI  : ALU_RIs<0x7, "l.addi", add>;
+    let Uses = [CFBIT], Predicates = [HasAddc] in
+      def ADDIC : ALU_RIs<0x8, "l.addic", add>;
+  }
   def ANDI  : ALU_RIz<0x9, "l.andi", and>;
   def ORI   : ALU_RIz<0xa, "l.ori", or>;
   def XORI  : ALU_RIs<0xb, "l.xori", xor>;
 }
 
-let Predicates=[HasMul] in
+let Defs = [OFBIT], Predicates = [HasMul] in
   def MULI  : ALU_RIs<0xc, "l.muli", mul>;
 
 class ALU_RR<bits<4> subOp, string asmstr, list<dag> pattern>
@@ -291,29 +294,35 @@ class ALU1_RR<bits<4> subOp, string asmstr, SDNode OpNode>
            [(set GPR:$rD, (OpNode (i32 GPR:$rA), (i32 GPR:$rB)))]>;
 
 let isAsCheapAsAMove = 1 in {
-  let isCommutable=1 in {
-    def ADD  : ALU1_RR<0x0, "l.add", add>;
-    let Predicates = [HasAddc] in
-      def ADDC : ALU1_RR<0x1, "l.addc", add>;
+  let Defs = [CFBIT, OFBIT] in {
+    let isCommutable = 1 in {
+      def ADD  : ALU1_RR<0x0, "l.add", add>;
+      let Uses = [CFBIT], Predicates = [HasAddc] in
+        def ADDC : ALU1_RR<0x1, "l.addc", add>;
+    }
+    def SUB  : ALU1_RR<0x2, "l.sub", sub>;
   }
-  def SUB  : ALU1_RR<0x2, "l.sub", sub>;
-  let isCommutable=1 in {
+  let isCommutable = 1 in {
     def AND  : ALU1_RR<0x3, "l.and", and>;
     def OR   : ALU1_RR<0x4, "l.or", or>;
     def XOR  : ALU1_RR<0x5, "l.xor", xor>;
  }
 }
 
-let Uses = [SR], Predicates = [HasCmov] in
+let Uses = [FBIT], Predicates = [HasCmov] in
   def CMOV : ALU1_RR<0xe, "l.cmov", OR1Kselectcc>;
 
-let isCommutable=1, Predicates=[HasMul], op2=3 in {
-  def MUL  : ALU1_RR<0x6, "l.mul", mul>;
-  def MULU : ALU1_RR<0xb, "l.mulu", mul>;
+let isCommutable = 1, Predicates = [HasMul], op2 = 3 in {
+  let Defs = [OFBIT] in
+    def MUL  : ALU1_RR<0x6, "l.mul", mul>;
+  let Defs = [CFBIT] in
+    def MULU : ALU1_RR<0xb, "l.mulu", mul>;
 }
-let Predicates=[HasDiv], op2=3 in {
-  def DIV  : ALU1_RR<0x9, "l.div", sdiv>;
-  def DIVU : ALU1_RR<0xa, "l.divu", udiv>;
+let Predicates = [HasDiv], op2 = 3 in {
+  let Defs = [OFBIT] in
+    def DIV  : ALU1_RR<0x9, "l.div", sdiv>;
+  let Defs = [CFBIT] in
+    def DIVU : ALU1_RR<0xa, "l.divu", udiv>;
 }
 
 class ALU2_RR<bits<2> subOp1, bits<4> subOp2, string asmstr, SDNode OpNode>
@@ -505,7 +514,7 @@ let isBranch = 1, isTerminator = 1, hasDelaySlot=1 in {
       def JR : BRANCH_R<0x1, "l.jr", [(brind GPR:$rB)]>;
     }
   }
-  let Uses = [SR] in {
+  let Uses = [FBIT] in {
     def BNF : BRANCH<0x3, "l.bnf", [(OR1Kbrcc bb:$dst, OR1K_COND_NEG)]>;
     def BF  : BRANCH<0x4, "l.bf",  [(OR1Kbrcc bb:$dst, OR1K_COND)]>;
   }
@@ -614,7 +623,7 @@ let Defs = [R1], Uses = [R1] in {
                     [(set GPR:$dst, (OR1Kadjdynalloc GPR:$src))]>;
 }
 
-let Uses = [SR], usesCustomInserter = 1, Predicates = [NoCmov] in {
+let Uses = [FBIT], usesCustomInserter = 1, Predicates = [NoCmov] in {
   def Select : Pseudo<(outs GPR:$dst), (ins GPR:$src, GPR:$src2),
                        "# Select PSEUDO $dst $src $src2",
                        [(set (i32 GPR:$dst),

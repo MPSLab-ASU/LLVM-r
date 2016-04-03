@@ -91,7 +91,7 @@ class SetFlagFRR<bits<8> subOp, string asmstr, PatLeaf Cond>
 }
 
 // FIXME: Do not use isCodeGenOnly = 1 to resolve conflicts
-let Defs = [SR], hasSideEffects = 1 in {
+let Defs = [FBIT], hasSideEffects = 1 in {
   def SFEQrrf32 : SetFlagFRR<0x08, "lf.sfeq.s", OR1K_CC_EQ>;
   def SFNErrf32 : SetFlagFRR<0x09, "lf.sfne.s", OR1K_CC_NE>;
   def SFGTrrf32 : SetFlagFRR<0x0a, "lf.sfgt.s", OR1K_CC_GT>;
@@ -109,7 +109,7 @@ let Defs = [SR], hasSideEffects = 1 in {
 }
 
 // FIXME: Do not use isCodeGenOnly = 1 to resolve conflicts
-let Uses = [SR], Predicates = [HasCmov], isCodeGenOnly = 1 in
+let Uses = [FBIT], Predicates = [HasCmov], isCodeGenOnly = 1 in
   def CMOVf32 : ALU_RR<0xe, "l.cmov",
            [(set GPR:$rD, (OR1Kselectcc (f32 GPR:$rA),(f32 GPR:$rB)))]>;
 
