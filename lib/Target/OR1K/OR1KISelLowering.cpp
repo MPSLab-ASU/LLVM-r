@@ -52,97 +52,95 @@ OR1KTargetLowering::OR1KTargetLowering(const OR1KTargetMachine &TM,
 
   setStackPointerRegisterToSaveRestore(OR1K::R1);
 
-  setOperationAction(ISD::BR_CC,             MVT::i32, Custom);
-  setOperationAction(ISD::BR_CC,             MVT::f32, Custom);
-  setOperationAction(ISD::BR_JT,             MVT::Other, Expand);
-  setOperationAction(ISD::BRCOND,            MVT::Other, Expand);
-  setOperationAction(ISD::SETCC,             MVT::i32, Expand);
-  setOperationAction(ISD::SETCC,             MVT::f32, Expand);
-  setOperationAction(ISD::SELECT,            MVT::i32, Expand);
-  setOperationAction(ISD::SELECT,            MVT::f32, Expand);
-  setOperationAction(ISD::SELECT_CC,         MVT::i32, Custom);
-  setOperationAction(ISD::SELECT_CC,         MVT::f32, Custom);
+  setOperationAction(ISD::BR_CC,               MVT::i32,   Custom);
+  setOperationAction(ISD::BR_CC,               MVT::f32,   Custom);
+  setOperationAction(ISD::BR_JT,               MVT::Other, Expand);
+  setOperationAction(ISD::BRCOND,              MVT::Other, Expand);
+  setOperationAction(ISD::SETCC,               MVT::i32,   Expand);
+  setOperationAction(ISD::SETCC,               MVT::f32,   Expand);
+  setOperationAction(ISD::SELECT,              MVT::i32,   Expand);
+  setOperationAction(ISD::SELECT,              MVT::f32,   Expand);
+  setOperationAction(ISD::SELECT_CC,           MVT::i32,   Custom);
+  setOperationAction(ISD::SELECT_CC,           MVT::f32,   Custom);
 
-  setOperationAction(ISD::GlobalAddress,     MVT::i32, Custom);
-  setOperationAction(ISD::BlockAddress,      MVT::i32, Custom);
-  setOperationAction(ISD::JumpTable,         MVT::i32, Custom);
-  setOperationAction(ISD::ConstantPool,      MVT::i32, Custom);
+  setOperationAction(ISD::GlobalAddress,       MVT::i32,   Custom);
+  setOperationAction(ISD::BlockAddress,        MVT::i32,   Custom);
+  setOperationAction(ISD::JumpTable,           MVT::i32,   Custom);
+  setOperationAction(ISD::ConstantPool,        MVT::i32,   Custom);
   if (!useSoftFloat())
-    setOperationAction(ISD::ConstantFP,       MVT::f32,   Legal);
+    setOperationAction(ISD::ConstantFP,        MVT::f32,   Legal);
 
-  setOperationAction(ISD::DYNAMIC_STACKALLOC, MVT::i32,   Custom);
-  setOperationAction(ISD::STACKSAVE,          MVT::Other, Expand);
-  setOperationAction(ISD::STACKRESTORE,       MVT::Other, Expand);
+  setOperationAction(ISD::DYNAMIC_STACKALLOC,  MVT::i32,   Custom);
+  setOperationAction(ISD::STACKSAVE,           MVT::Other, Expand);
+  setOperationAction(ISD::STACKRESTORE,        MVT::Other, Expand);
 
-  setOperationAction(ISD::VASTART,            MVT::Other, Custom);
-  setOperationAction(ISD::VAARG,              MVT::Other, Expand);
-  setOperationAction(ISD::VACOPY,             MVT::Other, Expand);
-  setOperationAction(ISD::VAEND,              MVT::Other, Expand);
+  setOperationAction(ISD::VASTART,             MVT::Other, Custom);
+  setOperationAction(ISD::VAARG,               MVT::Other, Expand);
+  setOperationAction(ISD::VACOPY,              MVT::Other, Expand);
+  setOperationAction(ISD::VAEND,               MVT::Other, Expand);
 
   if (!Subtarget.hasDiv()) {
-    setOperationAction(ISD::SDIV,            MVT::i32, Expand);
-    setOperationAction(ISD::UDIV,            MVT::i32, Expand);
+    setOperationAction(ISD::SDIV,              MVT::i32,   Expand);
+    setOperationAction(ISD::UDIV,              MVT::i32,   Expand);
   }
-  setOperationAction(ISD::SDIVREM,           MVT::i32, Expand);
-  setOperationAction(ISD::UDIVREM,           MVT::i32, Expand);
-  setOperationAction(ISD::SREM,              MVT::i32, Expand);
-  setOperationAction(ISD::UREM,              MVT::i32, Expand);
+  setOperationAction(ISD::SDIVREM,             MVT::i32,   Expand);
+  setOperationAction(ISD::UDIVREM,             MVT::i32,   Expand);
+  setOperationAction(ISD::SREM,                MVT::i32,   Expand);
+  setOperationAction(ISD::UREM,                MVT::i32,   Expand);
 
-  if (!Subtarget.hasMul()) {
-    setOperationAction(ISD::MUL,             MVT::i32, Expand);
-  }
-  setOperationAction(ISD::MULHU,             MVT::i32, Expand);
-  setOperationAction(ISD::MULHU,             MVT::f32, Expand);
-  setOperationAction(ISD::MULHS,             MVT::i32, Expand);
-  setOperationAction(ISD::MULHS,             MVT::f32, Expand);
-  setOperationAction(ISD::UMUL_LOHI,         MVT::i32, Expand);
-  setOperationAction(ISD::UMUL_LOHI,         MVT::f32, Expand);
-  setOperationAction(ISD::SMUL_LOHI,         MVT::i32, Expand);
-  setOperationAction(ISD::SMUL_LOHI,         MVT::f32, Expand);
+  if (!Subtarget.hasMul())
+    setOperationAction(ISD::MUL,               MVT::i32,   Expand);
+  setOperationAction(ISD::MULHU,               MVT::i32,   Expand);
+  setOperationAction(ISD::MULHU,               MVT::f32,   Expand);
+  setOperationAction(ISD::MULHS,               MVT::i32,   Expand);
+  setOperationAction(ISD::MULHS,               MVT::f32,   Expand);
+  setOperationAction(ISD::UMUL_LOHI,           MVT::i32,   Expand);
+  setOperationAction(ISD::UMUL_LOHI,           MVT::f32,   Expand);
+  setOperationAction(ISD::SMUL_LOHI,           MVT::i32,   Expand);
+  setOperationAction(ISD::SMUL_LOHI,           MVT::f32,   Expand);
 
   // FIXME: implement (with l.addc etc)
-  setOperationAction(ISD::ADDC, MVT::i32, Expand);
-  setOperationAction(ISD::ADDE, MVT::i32, Expand);
-  setOperationAction(ISD::SUBC, MVT::i32, Expand);
-  setOperationAction(ISD::SUBE, MVT::i32, Expand);
+  setOperationAction(ISD::ADDC,                MVT::i32,   Expand);
+  setOperationAction(ISD::ADDE,                MVT::i32,   Expand);
+  setOperationAction(ISD::SUBC,                MVT::i32,   Expand);
+  setOperationAction(ISD::SUBE,                MVT::i32,   Expand);
 
-  if (!Subtarget.hasRor()) {
-    setOperationAction(ISD::ROTR,            MVT::i32, Expand);
-  }
+  if (!Subtarget.hasRor())
+    setOperationAction(ISD::ROTR,              MVT::i32,   Expand);
   // FIXME: use l.ror (rotate right) to do rotate left
-  setOperationAction(ISD::ROTL,              MVT::i32, Expand);
-  setOperationAction(ISD::SHL_PARTS,         MVT::i32, Expand);
-  setOperationAction(ISD::SRL_PARTS,         MVT::i32, Expand);
-  setOperationAction(ISD::SRA_PARTS,         MVT::i32, Expand);
+  setOperationAction(ISD::ROTL,                MVT::i32,   Expand);
+  setOperationAction(ISD::SHL_PARTS,           MVT::i32,   Expand);
+  setOperationAction(ISD::SRL_PARTS,           MVT::i32,   Expand);
+  setOperationAction(ISD::SRA_PARTS,           MVT::i32,   Expand);
 
-  setOperationAction(ISD::BSWAP,             MVT::i32, Expand);
-  setOperationAction(ISD::CTPOP,             MVT::i32, Expand);
+  setOperationAction(ISD::BSWAP,               MVT::i32,   Expand);
+  setOperationAction(ISD::CTPOP,               MVT::i32,   Expand);
 
-  if (Subtarget.hasFfl1()) {
-    setOperationAction(ISD::CTTZ,              MVT::i32, Custom);
-    setOperationAction(ISD::CTLZ,              MVT::i32, Custom);
-    setOperationAction(ISD::CTTZ_ZERO_UNDEF,   MVT::i32, Custom);
-    setOperationAction(ISD::CTLZ_ZERO_UNDEF,   MVT::i32, Custom);
+  if (!Subtarget.hasFfl1()) {
+    setOperationAction(ISD::CTTZ,              MVT::i32,   Expand);
+    setOperationAction(ISD::CTLZ,              MVT::i32,   Expand);
+    setOperationAction(ISD::CTTZ_ZERO_UNDEF,   MVT::i32,   Expand);
+    setOperationAction(ISD::CTLZ_ZERO_UNDEF,   MVT::i32,   Expand);
   } else {
-    setOperationAction(ISD::CTTZ,              MVT::i32, Expand);
-    setOperationAction(ISD::CTLZ,              MVT::i32, Expand);
-    setOperationAction(ISD::CTTZ_ZERO_UNDEF,   MVT::i32, Expand);
-    setOperationAction(ISD::CTLZ_ZERO_UNDEF,   MVT::i32, Expand);
+    setOperationAction(ISD::CTTZ,              MVT::i32,   Custom);
+    setOperationAction(ISD::CTLZ,              MVT::i32,   Custom);
+    setOperationAction(ISD::CTTZ_ZERO_UNDEF,   MVT::i32,   Custom);
+    setOperationAction(ISD::CTLZ_ZERO_UNDEF,   MVT::i32,   Custom);
   }
 
-  setOperationAction(ISD::SIGN_EXTEND_INREG, MVT::i1,   Expand);
-  setOperationAction(ISD::SIGN_EXTEND_INREG, MVT::i8,   Expand);
-  setOperationAction(ISD::SIGN_EXTEND_INREG, MVT::i16,  Expand);
+  setOperationAction(ISD::SIGN_EXTEND_INREG,   MVT::i1,    Expand);
+  setOperationAction(ISD::SIGN_EXTEND_INREG,   MVT::i8,    Expand);
+  setOperationAction(ISD::SIGN_EXTEND_INREG,   MVT::i16,   Expand);
 
   for (MVT VT : MVT::integer_valuetypes()) {
     // Extended load operations for i1 types must be promoted
-    setLoadExtAction(ISD::EXTLOAD,      VT,  MVT::i1,   Promote);
-    setLoadExtAction(ISD::ZEXTLOAD,     VT,  MVT::i1,   Promote);
-    setLoadExtAction(ISD::SEXTLOAD,     VT,  MVT::i1,   Promote);
+    setLoadExtAction(ISD::EXTLOAD,         VT, MVT::i1,    Promote);
+    setLoadExtAction(ISD::ZEXTLOAD,        VT, MVT::i1,    Promote);
+    setLoadExtAction(ISD::SEXTLOAD,        VT, MVT::i1,    Promote);
   }
 
-  setOperationAction(ISD::FP_TO_UINT,        MVT::i32,  Expand);
-  setOperationAction(ISD::UINT_TO_FP,        MVT::i32,  Expand);
+  setOperationAction(ISD::FP_TO_UINT,          MVT::i32,   Expand);
+  setOperationAction(ISD::UINT_TO_FP,          MVT::i32,   Expand);
 
   // Function alignments (log2)
   setMinFunctionAlignment(2);
