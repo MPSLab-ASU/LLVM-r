@@ -44,7 +44,7 @@ OR1KTargetLowering::OR1KTargetLowering(const OR1KTargetMachine &TM,
 
   // Set up the register classes.
   addRegisterClass(MVT::i32, &OR1K::GPRRegClass);
-  if (TM.Options.FloatABIType == FloatABI::Hard)
+  if (!useSoftFloat())
     addRegisterClass(MVT::f32, &OR1K::GPRRegClass);
 
   // Compute derived properties from the register classes
@@ -67,7 +67,7 @@ OR1KTargetLowering::OR1KTargetLowering(const OR1KTargetMachine &TM,
   setOperationAction(ISD::BlockAddress,      MVT::i32, Custom);
   setOperationAction(ISD::JumpTable,         MVT::i32, Custom);
   setOperationAction(ISD::ConstantPool,      MVT::i32, Custom);
-  if (TM.Options.FloatABIType == FloatABI::Hard)
+  if (!useSoftFloat())
     setOperationAction(ISD::ConstantFP,       MVT::f32,   Legal);
 
   setOperationAction(ISD::DYNAMIC_STACKALLOC, MVT::i32,   Custom);
@@ -151,6 +151,10 @@ OR1KTargetLowering::OR1KTargetLowering(const OR1KTargetMachine &TM,
   MaxStoresPerMemcpy = 16;
   MaxStoresPerMemcpyOptSize = 8;
   MaxStoresPerMemset = 16;
+}
+
+bool OR1KTargetLowering::useSoftFloat() const {
+  return getTargetMachine().Options.FloatABIType != FloatABI::Hard;
 }
 
 unsigned

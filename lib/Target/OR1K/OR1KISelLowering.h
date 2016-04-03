@@ -72,6 +72,8 @@ namespace llvm {
     /// DAG node.
     const char *getTargetNodeName(unsigned Opcode) const override;
 
+    bool useSoftFloat() const override;
+
     unsigned getExceptionPointerRegister(const Constant *
                                          PersonalityFn) const override;
     unsigned getExceptionSelectorRegister(const Constant *
