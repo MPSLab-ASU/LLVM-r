@@ -70,6 +70,11 @@ def HI16 : SDNodeXForm<imm, [{
                                    SDLoc(N), MVT::i32);
 }]>;
 
+// Negate immediate value
+def NEG : SDNodeXForm<imm, [{
+  return CurDAG->getTargetConstant(-N->getSExtValue(), SDLoc(N), MVT::i32);
+}]>;
+
 
 def brtarget : Operand<OtherVT>;
 def calltarget : Operand<i32>;
@@ -88,6 +93,9 @@ def immSExt16 : PatLeaf<(imm),
 
 def immZExt16 : PatLeaf<(imm),
                 [{return isUInt<16>(N->getZExtValue()); }], LO16>;
+
+def immSExt16Neg : PatLeaf<(imm),
+                   [{return isInt<16>(-N->getSExtValue()); }]>;
 
 def i32lo16 : PatLeaf<(i32 imm), [{
   // i32lo16 predicate - true if the 32-bit immediate has only rightmost 16
@@ -259,7 +267,7 @@ let isAsCheapAsAMove = 1 in {
   let Defs = [CFBIT, OFBIT] in {
     def ADDI  : ALU_RIs<0x7, "l.addi", add>;
     let Uses = [CFBIT], Predicates = [HasAddc] in
-      def ADDIC : ALU_RIs<0x8, "l.addic", add>;
+      def ADDIC : ALU_RIs<0x8, "l.addic", adde>;
   }
   def ANDI  : ALU_RIz<0x9, "l.andi", and>;
   def ORI   : ALU_RIz<0xa, "l.ori", or>;
@@ -298,7 +306,7 @@ let isAsCheapAsAMove = 1 in {
     let isCommutable = 1 in {
       def ADD  : ALU1_RR<0x0, "l.add", add>;
       let Uses = [CFBIT], Predicates = [HasAddc] in
-        def ADDC : ALU1_RR<0x1, "l.addc", add>;
+        def ADDC : ALU1_RR<0x1, "l.addc", adde>;
     }
     def SUB  : ALU1_RR<0x2, "l.sub", sub>;
   }
@@ -669,6 +677,16 @@ def : Pat<(i32 immZExt16:$imm), (ORI (i32 R0), imm:$imm)>;
 
 // arbitrary immediate
 def : Pat<(i32 imm:$imm), (ORI (MOVHI (HI16 imm:$imm)), (LO16 imm:$imm))>;
+
+// Arithmetic with carry
+def : Pat<(addc GPR:$lhs, immSExt16:$rhs),
+          (ADDI GPR:$lhs, immSExt16:$rhs)>;
+def : Pat<(addc GPR:$lhs, GPR:$rhs),
+          (ADD GPR:$lhs, GPR:$rhs)>;
+def : Pat<(subc GPR:$lhs, immSExt16Neg:$rhs),
+          (ADDI GPR:$lhs, (NEG imm:$rhs))>;
+def : Pat<(subc GPR:$lhs, GPR:$rhs),
+          (SUB GPR:$lhs, GPR:$rhs)>;
 
 // Calls
 def : Pat<(call tglobaladdr:$dst), (JAL tglobaladdr:$dst)>;

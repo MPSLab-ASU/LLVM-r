@@ -100,11 +100,13 @@ OR1KTargetLowering::OR1KTargetLowering(const OR1KTargetMachine &TM,
   setOperationAction(ISD::SMUL_LOHI,           MVT::f32,   Expand);
 
   if (!Subtarget.hasAddc()) {
-    setOperationAction(ISD::ADDC,              MVT::i32,   Expand);
     setOperationAction(ISD::ADDE,              MVT::i32,   Expand);
+    setOperationAction(ISD::ADDC,              MVT::i32,   Expand);
+    setOperationAction(ISD::SUBE,              MVT::i32,   Expand);
+    setOperationAction(ISD::SUBC,              MVT::i32,   Expand);
+  } else {
+    setOperationAction(ISD::SUBE,              MVT::i32,   Custom);
   }
-  setOperationAction(ISD::SUBC,                MVT::i32,   Expand);
-  setOperationAction(ISD::SUBE,                MVT::i32,   Expand);
 
   if (!Subtarget.hasRor())
     setOperationAction(ISD::ROTR,              MVT::i32,   Expand);
@@ -185,6 +187,7 @@ SDValue OR1KTargetLowering::LowerOperation(SDValue Op,
   case ISD::CTLZ_ZERO_UNDEF:    return LowerCTLZ(Op, DAG);
   case ISD::RETURNADDR:         return LowerRETURNADDR(Op, DAG);
   case ISD::FRAMEADDR:          return LowerFRAMEADDR(Op, DAG);
+  case ISD::SUBE:               return LowerSUBE(Op, DAG);
   default:
     llvm_unreachable("unimplemented operand");
   }
@@ -992,6 +995,21 @@ OR1KTargetLowering::LowerCTTZ_ZERO_UNDEF(SDValue Op,
   EVT VT = Op.getValueType();
   SDValue ff1 = DAG.getNode(OR1KISD::FF1, dl, VT, Op.getOperand(0));
   return DAG.getNode(ISD::SUB, dl, VT, ff1, DAG.getConstant(1, dl, MVT::i32));
+}
+
+/// LowerSUBE - Lower carry-using subtract via carry-using addition.
+///
+SDValue
+OR1KTargetLowering::LowerSUBE(SDValue Op, SelectionDAG &DAG) const {
+  SDLoc dl(Op);
+  EVT VT = Op.getValueType();
+  SDValue LHS = Op.getOperand(0);
+  SDValue RHS = Op.getOperand(1);
+  SDValue CarryIn = Op.getOperand(2);
+
+  SDVTList VTList = DAG.getVTList(VT, MVT::Glue);
+  SDValue NotRHS = DAG.getNOT(dl, RHS, VT);
+  return DAG.getNode(ISD::ADDE, dl, VTList, LHS, NotRHS, CarryIn);
 }
 
 SDValue
