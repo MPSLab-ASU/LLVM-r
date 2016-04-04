@@ -45,6 +45,8 @@ def FeatureAddc  : SubtargetFeature<"addc", "HasAddc", "true",
                                     "Enable add with carry instruction">;
 def FeatureFfl1  : SubtargetFeature<"ffl1", "HasFfl1", "true",
                                     "Enable find first/last one instructions">;
+def FeatureExt   : SubtargetFeature<"ext", "HasExt", "true",
+                                    "Enable zero/sign extension instructions">;
 
 //===----------------------------------------------------------------------===//
 // OR1K processors supported.

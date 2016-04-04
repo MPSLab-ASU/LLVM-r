@@ -36,6 +36,7 @@ class OR1KSubtarget : public OR1KGenSubtargetInfo {
   bool HasCmov;
   bool HasAddc;
   bool HasFfl1;
+  bool HasExt;
 
   const OR1KFrameLowering FrameLowering;
   const OR1KInstrInfo InstrInfo;
@@ -61,6 +62,7 @@ public:
   bool hasCmov()   const { return HasCmov; }
   bool hasAddc()   const { return HasAddc; }
   bool hasFfl1()   const { return HasFfl1; }
+  bool hasExt()    const { return HasExt; }
 
   const TargetFrameLowering *getFrameLowering() const override {
     return &FrameLowering;

@@ -180,6 +180,8 @@ def HasAddc      : Predicate<"Subtarget->hasAddc()">,
                    AssemblerPredicate<"FeatureAddc">;
 def HasFfl1      : Predicate<"Subtarget->hasFfl1()">,
                    AssemblerPredicate<"FeatureFfl1">;
+def HasExt       : Predicate<"Subtarget->hasExt()">,
+                   AssemblerPredicate<"FeatureExt">;
 
 
 // -------------------------------------------------- //
@@ -355,6 +357,35 @@ class ALU2_RR<bits<2> subOp1, bits<4> subOp2, string asmstr, SDNode OpNode>
 let Predicates = [HasFfl1] in {
   def FF1 : ALU2_RR<0x0, 0xf, "l.ff1", OR1Kff1>;
   def FL1 : ALU2_RR<0x1, 0xf, "l.fl1", OR1Kfl1>;
+}
+
+class ALU3_RR<bits<4> subOp1, bits<4> subOp2, string asmstr, list<dag> pattern>
+  : InstRR<0x8, (outs GPR:$rD), (ins GPR:$rA),
+           !strconcat(asmstr, "\t$rD, $rA"), pattern> {
+  bits<5> rD;
+  bits<5> rA;
+  bits<4> op2;
+  bits<4> op3;
+
+  let Inst{25-21} = rD;
+  let Inst{20-16} = rA;
+
+  let Inst{9-6} = op2;
+  let Inst{3-0} = op3;
+
+  let op2 = subOp1;
+  let op3 = subOp2;
+}
+
+let Predicates = [HasExt] in {
+  def EXTBS : ALU3_RR<0x1, 0xc, "l.extbs",
+                      [(set GPR:$rD, (sext_inreg GPR:$rA, i8))]>;
+  def EXTHS : ALU3_RR<0x0, 0xc, "l.exths",
+                      [(set GPR:$rD, (sext_inreg GPR:$rA, i16))]>;
+  def EXTWS : ALU3_RR<0x0, 0xd, "l.extws", []>;
+  def EXTBZ : ALU3_RR<0x3, 0xc, "l.extbz", []>;
+  def EXTHZ : ALU3_RR<0x1, 0xd, "l.exthz", []>;
+  def EXTWZ : ALU3_RR<0x2, 0xc, "l.extwz", []>;
 }
 
 // -------------------------------------------------- //

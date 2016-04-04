@@ -132,8 +132,10 @@ OR1KTargetLowering::OR1KTargetLowering(const OR1KTargetMachine &TM,
   }
 
   setOperationAction(ISD::SIGN_EXTEND_INREG,   MVT::i1,    Expand);
-  setOperationAction(ISD::SIGN_EXTEND_INREG,   MVT::i8,    Expand);
-  setOperationAction(ISD::SIGN_EXTEND_INREG,   MVT::i16,   Expand);
+  if (!Subtarget.hasExt()) {
+    setOperationAction(ISD::SIGN_EXTEND_INREG, MVT::i8,    Expand);
+    setOperationAction(ISD::SIGN_EXTEND_INREG, MVT::i16,   Expand);
+  }
 
   for (MVT VT : MVT::integer_valuetypes()) {
     // Extended load operations for i1 types must be promoted
