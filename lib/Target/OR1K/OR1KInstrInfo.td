@@ -610,6 +610,19 @@ class TRAP_I<bits<16> subOp, string asmstr>
 def SYS  : TRAP_I<0x2000, "l.sys">;
 def TRAP : TRAP_I<0x2100, "l.trap">;
 
+class SYNC_I<bits<2> subOp, string asmstr, list<dag> pattern>
+  : InstOR1K<(outs), (ins), asmstr, pattern> {
+
+  let Inst{31-25} = 0x11;
+  let Inst{24-23} = subOp;
+}
+
+let hasSideEffects = 1 in {
+  def MSYNC : SYNC_I<0x0, "l.msync", [(atomic_fence (imm), (imm))]>;
+  def PSYNC : SYNC_I<0x1, "l.psync", []>;
+  def CSYNC : SYNC_I<0x2, "l.csync", []>;
+}
+
 class RFE_I
   : InstOR1K<(outs), (ins),
              "l.rfe", []> {
