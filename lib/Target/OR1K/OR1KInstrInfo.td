@@ -467,6 +467,7 @@ class STOREi32<bits<4> subOp, string asmstring, PatFrag opNode>
   : STORE<subOp, asmstring, [(opNode (i32 GPR:$rB), ADDRri:$dst)]>;
 
 
+def SWA : STOREi32<0x3, "l.swa", atomic_store_32>;
 //def SD : STORE<0x4, "l.sd">;
 def SW : STOREi32<0x5, "l.sw", store>;
 def SB : STOREi32<0x6, "l.sb", truncstorei8>;
@@ -497,6 +498,20 @@ def LBS : LOADi32<0x4, "l.lbs", sextloadi8>;
 def LHZ : LOADi32<0x5, "l.lhz", zextloadi16>;
 def LHS : LOADi32<0x6, "l.lhs", sextloadi16>;
 
+class LWA_I
+  : InstOR1K<(outs GPR:$rD), (ins MEMri:$src),
+             "l.lwa\t$rD, $src", [(set (i32 GPR:$rD), (atomic_load_32 ADDRri:$src))]> {
+  let optype = 0b01;
+  let opcode = 0xb;
+
+  bits<5> rD;
+  bits<21> src;
+
+  let Inst{25-21} = rD;
+  let Inst{20-0} = src;
+}
+
+def LWA : LWA_I;
 
 // -------------------------------------------------- //
 // BRANCH instructions
