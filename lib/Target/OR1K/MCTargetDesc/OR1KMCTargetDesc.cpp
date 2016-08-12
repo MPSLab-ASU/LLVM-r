@@ -14,7 +14,6 @@
 #include "OR1KMCTargetDesc.h"
 #include "OR1KMCAsmInfo.h"
 #include "InstPrinter/OR1KInstPrinter.h"
-#include "llvm/MC/MCCodeGenInfo.h"
 #include "llvm/MC/MCInstrInfo.h"
 #include "llvm/MC/MCRegisterInfo.h"
 #include "llvm/MC/MCStreamer.h"
@@ -61,14 +60,6 @@ createOR1KMCAsmInfo(const MCRegisterInfo &MRI, const Triple &TT) {
   return MAI;
 }
 
-static MCCodeGenInfo *
-createOR1KMCCodeGenInfo(const Triple &TT, Reloc::Model RM,
-                        CodeModel::Model CM, CodeGenOpt::Level OL) {
-  MCCodeGenInfo *X = new MCCodeGenInfo();
-  X->initMCCodeGenInfo(RM, CM, OL);
-  return X;
-}
-
 static MCStreamer *createMCStreamer(const Triple &T, MCContext &Context,
                                     MCAsmBackend &MAB, raw_pwrite_stream &OS,
                                     MCCodeEmitter *Emitter, bool RelaxAll) {
@@ -88,10 +79,6 @@ createOR1KMCInstPrinter(const Triple &TT, unsigned SyntaxVariant,
 extern "C" void LLVMInitializeOR1KTargetMC() {
   // Register the MC asm info.
   TargetRegistry::RegisterMCAsmInfo(TheOR1KTarget, createOR1KMCAsmInfo);
-
-  // Register the MC codegen info.
-  TargetRegistry::RegisterMCCodeGenInfo(TheOR1KTarget,
-                                       createOR1KMCCodeGenInfo);
 
   // Register the MC instruction info.
   TargetRegistry::RegisterMCInstrInfo(TheOR1KTarget, createOR1KMCInstrInfo);

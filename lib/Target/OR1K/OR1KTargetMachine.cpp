@@ -16,6 +16,7 @@
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/CodeGen/TargetLoweringObjectFileImpl.h"
 #include "llvm/CodeGen/Passes.h"
+#include "llvm/CodeGen/TargetPassConfig.h"
 #include "llvm/Support/FormattedStream.h"
 #include "llvm/Support/TargetRegistry.h"
 #include "llvm/Target/TargetOptions.h"
@@ -26,6 +27,12 @@ extern "C" void LLVMInitializeOR1KTarget() {
   RegisterTargetMachine<OR1KTargetMachine> X(TheOR1KTarget);
 }
 
+static Reloc::Model getEffectiveRelocModel(Optional<Reloc::Model> RM) {
+  if (!RM.hasValue())
+    return Reloc::Static;
+  return *RM;
+}
+
 // DL --> Big-endian, 32-bit pointer/ABI/alignment
 // The stack is always 4 byte aligned
 // On function prologue, the stack is created by decrementing
@@ -34,11 +41,12 @@ extern "C" void LLVMInitializeOR1KTarget() {
 OR1KTargetMachine::OR1KTargetMachine(const Target &T, const Triple &TT,
                                      StringRef CPU, StringRef FS,
                                      const TargetOptions &Options,
-                                     Reloc::Model RM, CodeModel::Model CM,
+                                     Optional<Reloc::Model> RM,
+                                     CodeModel::Model CM,
                                      CodeGenOpt::Level OL)
   : LLVMTargetMachine(T, "E-m:e-p:32:32-i8:8:8-i16:16:16-i64:32:32-"
                          "f64:32:32-v64:32:32-v128:32:32-a0:0:32-n32",
-                      TT, CPU, FS, Options, RM, CM, OL),
+                      TT, CPU, FS, Options, getEffectiveRelocModel(RM), CM, OL),
     Subtarget(TT, CPU, FS, *this),
     TLOF(make_unique<TargetLoweringObjectFileELF>()) {
   initAsmInfo();

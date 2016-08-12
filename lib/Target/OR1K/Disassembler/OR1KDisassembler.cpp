@@ -18,7 +18,7 @@
 #include "llvm/Support/MemoryObject.h"
 #include "llvm/Support/TargetRegistry.h"
 #include "llvm/Support/MathExtras.h"
-#include "llvm/MC/MCDisassembler.h"
+#include "llvm/MC/MCDisassembler/MCDisassembler.h"
 #include "llvm/MC/MCFixedLenDisassembler.h"
 #include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/MC/MCInst.h"

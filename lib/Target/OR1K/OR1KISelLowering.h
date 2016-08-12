@@ -105,7 +105,7 @@ namespace llvm {
                                       std::vector<SDValue> &Ops,
                                       SelectionDAG &DAG) const override;
 
-    MachineBasicBlock* EmitInstrWithCustomInserter(MachineInstr *MI,
+    MachineBasicBlock* EmitInstrWithCustomInserter(MachineInstr &MI,
                                                    MachineBasicBlock *BB) const override;
 
   private:
@@ -140,14 +140,14 @@ namespace llvm {
     SDValue LowerFormalArguments(SDValue Chain,
                                  CallingConv::ID CallConv, bool isVarArg,
                                  const SmallVectorImpl<ISD::InputArg> &Ins,
-                                 SDLoc dl, SelectionDAG &DAG,
+                                 const SDLoc &dl, SelectionDAG &DAG,
                                  SmallVectorImpl<SDValue> &InVals) const override;
 
     SDValue LowerReturn(SDValue Chain,
                         CallingConv::ID CallConv, bool isVarArg,
                         const SmallVectorImpl<ISD::OutputArg> &Outs,
                         const SmallVectorImpl<SDValue> &OutVals,
-                        SDLoc dl, SelectionDAG &DAG) const override;
+                        const SDLoc &dl, SelectionDAG &DAG) const override;
   };
 } // namespace llvm
 

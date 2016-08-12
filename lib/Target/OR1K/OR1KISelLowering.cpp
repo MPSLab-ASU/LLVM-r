@@ -122,12 +122,10 @@ OR1KTargetLowering::OR1KTargetLowering(const OR1KTargetMachine &TM,
   if (!Subtarget.hasFfl1()) {
     setOperationAction(ISD::CTTZ,              MVT::i32,   Expand);
     setOperationAction(ISD::CTLZ,              MVT::i32,   Expand);
-    setOperationAction(ISD::CTTZ_ZERO_UNDEF,   MVT::i32,   Expand);
-    setOperationAction(ISD::CTLZ_ZERO_UNDEF,   MVT::i32,   Expand);
   } else {
     setOperationAction(ISD::CTTZ,              MVT::i32,   Custom);
-    setOperationAction(ISD::CTLZ,              MVT::i32,   Custom);
     setOperationAction(ISD::CTTZ_ZERO_UNDEF,   MVT::i32,   Custom);
+    setOperationAction(ISD::CTLZ,              MVT::i32,   Custom);
     setOperationAction(ISD::CTLZ_ZERO_UNDEF,   MVT::i32,   Custom);
   }
 
@@ -365,7 +363,7 @@ OR1KTargetLowering::LowerFormalArguments(SDValue Chain,
                                          bool isVarArg,
                                          const SmallVectorImpl<ISD::InputArg>
                                          &Ins,
-                                         SDLoc dl,
+                                         const SDLoc &dl,
                                          SelectionDAG &DAG,
                                          SmallVectorImpl<SDValue> &InVals)
                                            const {
@@ -438,7 +436,7 @@ OR1KTargetLowering::LowerCCCArguments(SDValue Chain,
         {
 #ifndef NDEBUG
           errs() << "LowerFormalArguments Unhandled argument type: "
-               << RegVT.getSimpleVT().SimpleTy << "\n";
+                 << RegVT.getEVTString() << "\n";
 #endif
           llvm_unreachable(0);
         }
@@ -482,11 +480,7 @@ OR1KTargetLowering::LowerCCCArguments(SDValue Chain,
       //from this parameter
       SDValue FIN = DAG.getFrameIndex(FI, MVT::i32);
       InVals.push_back(DAG.getLoad(VA.getLocVT(), dl, Chain, FIN,
-                                   MachinePointerInfo::getFixedStack(MF, FI),
-                                   /*isVolatile=*/false,
-                                   /*isNonTemporal=*/false,
-                                   /*isInvariant=*/false,
-                                   /*Alignment=*/0));
+                                   MachinePointerInfo::getFixedStack(MF, FI)));
     }
   }
 
@@ -518,7 +512,7 @@ OR1KTargetLowering::LowerReturn(SDValue Chain,
                                 CallingConv::ID CallConv, bool isVarArg,
                                 const SmallVectorImpl<ISD::OutputArg> &Outs,
                                 const SmallVectorImpl<SDValue> &OutVals,
-                                SDLoc dl, SelectionDAG &DAG) const {
+                                const SDLoc &dl, SelectionDAG &DAG) const {
 
   // CCValAssign - represent the assignment of the return value to a location
   SmallVector<CCValAssign, 16> RVLocs;
@@ -684,10 +678,7 @@ OR1KTargetLowering::LowerCCCCallTo(SDValue Chain, SDValue Callee,
 
 
       MemOpChains.push_back(DAG.getStore(Chain, dl, Arg, PtrOff,
-                                         MachinePointerInfo(),
-                                         /*isVolatile=*/false,
-                                         /*isNonTemporal=*/false,
-                                         /*Alignment=*/0));
+                                         MachinePointerInfo()));
     }
   }
 
@@ -915,8 +906,7 @@ SDValue OR1KTargetLowering::LowerVASTART(SDValue Op, SelectionDAG &DAG) const {
   // memory location argument.
   const Value *SV = cast<SrcValueSDNode>(Op.getOperand(2))->getValue();
   return DAG.getStore(Op.getOperand(0), dl, FI, Op.getOperand(1),
-                      MachinePointerInfo(SV), /*isVolatile=*/false,
-                      /*isNonTemporal=*/false, /*Alignment=*/0);
+                      MachinePointerInfo(SV));
 }
 
 SDValue
@@ -1030,9 +1020,7 @@ OR1KTargetLowering::LowerRETURNADDR(SDValue Op, SelectionDAG &DAG) const {
                                      dl, MVT::i32);
     return DAG.getLoad(VT, dl, DAG.getEntryNode(),
                        DAG.getNode(ISD::ADD, dl, VT, FrameAddr, Offset),
-                       MachinePointerInfo(), /*isVolatile=*/false,
-                       /*isNonTemporal=*/false, /*isInvariant=*/false,
-                       /*Alignment=*/0);
+                       MachinePointerInfo());
   }
 
   // Return the link register, which contains the return address.
@@ -1052,9 +1040,7 @@ OR1KTargetLowering::LowerFRAMEADDR(SDValue Op, SelectionDAG &DAG) const {
   SDValue FrameAddr = DAG.getCopyFromReg(DAG.getEntryNode(), dl, OR1K::R2, VT);
   while (Depth--)
     FrameAddr = DAG.getLoad(VT, dl, DAG.getEntryNode(), FrameAddr,
-                            MachinePointerInfo(), /*isVolatile=*/false,
-                            /*isNonTemporal=*/false, /*isInvariant=*/false,
-                            /*Alignment=*/0);
+                            MachinePointerInfo());
   return FrameAddr;
 }
 
@@ -1110,9 +1096,7 @@ SDValue OR1KTargetLowering::LowerGlobalAddress(SDValue Op,
     SDValue GA = DAG.getTargetGlobalAddress(GV, dl, PtrVT, Offset,
                                             OR1KII::MO_GOT);
     return DAG.getLoad(PtrVT, dl, DAG.getEntryNode(), GA,
-                       MachinePointerInfo(), /*isVolatile=*/false,
-                       /*isNonTemporal=*/false, /*isInvariant=*/false,
-                       /*Alignment=*/0);
+                       MachinePointerInfo());
   }
 
   uint8_t OpFlagHi = IsPIC ? OR1KII::MO_GOTOFFHI : OR1KII::MO_ABS_HI;
@@ -1171,13 +1155,12 @@ SDValue OR1KTargetLowering::LowerJumpTable(SDValue Op,
 }
 
 MachineBasicBlock*
-OR1KTargetLowering::EmitInstrWithCustomInserter(MachineInstr *MI,
+OR1KTargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
                                                 MachineBasicBlock *BB) const {
-  unsigned Opc = MI->getOpcode();
+  unsigned Opc = MI.getOpcode();
 
   const TargetInstrInfo &TII = *Subtarget.getInstrInfo();
-  DebugLoc dl = MI->getDebugLoc();
-  //SDLoc dl(MI);
+  DebugLoc dl = MI.getDebugLoc();
 
   assert((Opc == OR1K::Select || Opc == OR1K::Selectf32) &&
          "Unexpected instr type to insert");
@@ -1228,10 +1211,10 @@ OR1KTargetLowering::EmitInstrWithCustomInserter(MachineInstr *MI,
   //  ...
   BB = copy1MBB;
   BuildMI(*BB, BB->begin(), dl, TII.get(OR1K::PHI),
-          MI->getOperand(0).getReg())
-    .addReg(MI->getOperand(2).getReg()).addMBB(copy0MBB)
-    .addReg(MI->getOperand(1).getReg()).addMBB(thisMBB);
+          MI.getOperand(0).getReg())
+    .addReg(MI.getOperand(2).getReg()).addMBB(copy0MBB)
+    .addReg(MI.getOperand(1).getReg()).addMBB(thisMBB);
 
-  MI->eraseFromParent();   // The pseudo instruction is gone now.
+  MI.eraseFromParent();   // The pseudo instruction is gone now.
   return BB;
 }

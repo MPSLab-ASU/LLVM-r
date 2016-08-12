@@ -34,9 +34,10 @@ public:
   void emitPrologue(MachineFunction &MF, MachineBasicBlock &MBB) const override;
   void emitEpilogue(MachineFunction &MF, MachineBasicBlock &MBB) const override;
 
-  void eliminateCallFramePseudoInstr(MachineFunction &MF,
-                                     MachineBasicBlock &MBB,
-                                     MachineBasicBlock::iterator I) const override;
+  MachineBasicBlock::iterator
+  eliminateCallFramePseudoInstr(MachineFunction &MF,
+                                MachineBasicBlock &MBB,
+                                MachineBasicBlock::iterator I) const override;
 
   bool hasFP(const MachineFunction &MF) const override;
   void determineCalleeSaves(MachineFunction &MF, BitVector &SavedRegs,

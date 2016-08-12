@@ -47,6 +47,11 @@ namespace {
       return "OR1K Delay Slot Filler";
     }
 
+    MachineFunctionProperties getRequiredProperties() const override {
+      return MachineFunctionProperties().set(
+          MachineFunctionProperties::Property::AllVRegsAllocated);
+    }
+
     bool runOnMachineBasicBlock(MachineBasicBlock &MBB);
     bool runOnMachineFunction(MachineFunction &F) override {
       bool Changed = false;

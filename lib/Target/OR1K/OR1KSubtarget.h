@@ -19,7 +19,7 @@
 #include "OR1KFrameLowering.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/Target/TargetSubtargetInfo.h"
-#include "llvm/Target/TargetSelectionDAGInfo.h"
+#include "llvm/CodeGen/SelectionDAGTargetInfo.h"
 #include "llvm/Target/TargetMachine.h"
 
 #define GET_SUBTARGETINFO_HEADER
@@ -41,7 +41,7 @@ class OR1KSubtarget : public OR1KGenSubtargetInfo {
   const OR1KFrameLowering FrameLowering;
   const OR1KInstrInfo InstrInfo;
   const OR1KTargetLowering TLInfo;
-  const TargetSelectionDAGInfo TSInfo;
+  const SelectionDAGTargetInfo TSInfo;
 public:
   /// This constructor initializes the data members to match that
   /// of the specified triple.
@@ -74,7 +74,7 @@ public:
   const OR1KTargetLowering *getTargetLowering() const override {
     return &TLInfo;
   }
-  const TargetSelectionDAGInfo *getSelectionDAGInfo() const override {
+  const SelectionDAGTargetInfo *getSelectionDAGInfo() const override {
     return &TSInfo;
   }
 };

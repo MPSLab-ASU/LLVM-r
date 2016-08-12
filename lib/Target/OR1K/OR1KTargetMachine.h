@@ -25,7 +25,8 @@ class OR1KTargetMachine : public LLVMTargetMachine {
 public:
   OR1KTargetMachine(const Target &T, const Triple &TT,
                     StringRef CPU, StringRef FS,
-                    const TargetOptions &Options, Reloc::Model RM,
+                    const TargetOptions &Options,
+                    Optional<Reloc::Model> RM,
                     CodeModel::Model CM, CodeGenOpt::Level OL);
   ~OR1KTargetMachine() override;
 

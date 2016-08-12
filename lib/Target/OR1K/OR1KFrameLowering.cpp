@@ -54,7 +54,7 @@ void OR1KFrameLowering::determineFrameLayout(MachineFunction &MF) const {
   // If we have dynamic alloca then maxCallFrameSize needs to be aligned so
   // that allocations will be aligned.
   if (MFI->hasVarSizedObjects())
-    maxCallFrameSize = RoundUpToAlignment(maxCallFrameSize, StackAlign);
+    maxCallFrameSize = alignTo(maxCallFrameSize, StackAlign);
 
   // Update maximum call frame size.
   MFI->setMaxCallFrameSize(maxCallFrameSize);
@@ -64,7 +64,7 @@ void OR1KFrameLowering::determineFrameLayout(MachineFunction &MF) const {
     FrameSize += maxCallFrameSize;
 
   // Make sure the frame is aligned.
-  FrameSize = RoundUpToAlignment(FrameSize, StackAlign);
+  FrameSize = alignTo(FrameSize, StackAlign);
 
   // Update frame info.
   MFI->setStackSize(FrameSize);
@@ -255,13 +255,12 @@ void OR1KFrameLowering::emitPrologue(MachineFunction &MF,
   }
 }
 
-void OR1KFrameLowering::
+MachineBasicBlock::iterator OR1KFrameLowering::
 eliminateCallFramePseudoInstr(MachineFunction &MF, MachineBasicBlock &MBB,
                               MachineBasicBlock::iterator I) const {
   // Discard ADJCALLSTACKDOWN, ADJCALLSTACKUP instructions.
-  MBB.erase(I);
+  return MBB.erase(I);
 }
-
 
 void OR1KFrameLowering::emitEpilogue(MachineFunction &MF,
                                     MachineBasicBlock &MBB) const {

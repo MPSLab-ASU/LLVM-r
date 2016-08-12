@@ -38,7 +38,7 @@ OR1KInstrInfo::OR1KInstrInfo()
 }
 
 void OR1KInstrInfo::copyPhysReg(MachineBasicBlock &MBB,
-                                MachineBasicBlock::iterator I, DebugLoc DL,
+                                MachineBasicBlock::iterator I, const DebugLoc &DL,
                                 unsigned DestReg, unsigned SrcReg,
                                 bool KillSrc) const {
   if (OR1K::GPRRegClass.contains(DestReg, SrcReg))
@@ -78,7 +78,7 @@ loadRegFromStackSlot(MachineBasicBlock &MBB, MachineBasicBlock::iterator I,
     llvm_unreachable("Can't load this register from stack slot");
 }
 
-bool OR1KInstrInfo::AnalyzeBranch(MachineBasicBlock &MBB,
+bool OR1KInstrInfo::analyzeBranch(MachineBasicBlock &MBB,
                                   MachineBasicBlock *&TBB,
                                   MachineBasicBlock *&FBB,
                                   SmallVectorImpl<MachineOperand> &Cond,
@@ -93,7 +93,7 @@ bool OR1KInstrInfo::AnalyzeBranch(MachineBasicBlock &MBB,
 
     // Working from the bottom, when we see a non-terminator
     // instruction, we're done.
-    if (!isUnpredicatedTerminator(I))
+    if (!isUnpredicatedTerminator(*I))
       break;
 
     // A terminator that isn't a branch can't easily be handled
@@ -141,7 +141,7 @@ unsigned
 OR1KInstrInfo::InsertBranch(MachineBasicBlock &MBB, MachineBasicBlock *TBB,
                             MachineBasicBlock *FBB,
                             ArrayRef<MachineOperand> Cond,
-                            DebugLoc DL) const {
+                            const DebugLoc &DL) const {
   // Shouldn't be a fall through.
   assert(TBB && "InsertBranch must not be told to insert a fallthrough");
 
