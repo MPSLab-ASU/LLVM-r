@@ -148,6 +148,15 @@ namespace llvm {
                         const SmallVectorImpl<ISD::OutputArg> &Outs,
                         const SmallVectorImpl<SDValue> &OutVals,
                         const SDLoc &dl, SelectionDAG &DAG) const override;
+
+    MachineBasicBlock*
+    emitSelect(MachineInstr *MI, MachineBasicBlock *BB) const;
+
+    MachineBasicBlock*
+    emitAtomicBinary(MachineInstr *MI, MachineBasicBlock *BB,
+                     unsigned BinOpcode, bool Nand = false) const;
+    MachineBasicBlock*
+    emitAtomicCmpSwap(MachineInstr *MI, MachineBasicBlock *BB) const;
   };
 } // namespace llvm
 

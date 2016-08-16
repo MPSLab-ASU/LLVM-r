@@ -1157,10 +1157,45 @@ SDValue OR1KTargetLowering::LowerJumpTable(SDValue Op,
 MachineBasicBlock*
 OR1KTargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
                                                 MachineBasicBlock *BB) const {
-  unsigned Opc = MI.getOpcode();
+  switch (MI.getOpcode()) {
+  default:
+    llvm_unreachable("Unexpected instr type to insert");
 
+  case OR1K::Select:
+  case OR1K::Selectf32:
+    return emitSelect(MI, BB);
+
+  case OR1K::ATOMIC_LOAD_ADD_I32:
+    return emitAtomicBinary(MI, BB, OR1K::ADD);
+
+  case OR1K::ATOMIC_LOAD_AND_I32:
+    return emitAtomicBinary(MI, BB, OR1K::AND);
+
+  case OR1K::ATOMIC_LOAD_OR_I32:
+    return emitAtomicBinary(MI, BB, OR1K::OR);
+
+  case OR1K::ATOMIC_LOAD_XOR_I32:
+    return emitAtomicBinary(MI, BB, OR1K::XOR);
+
+  case OR1K::ATOMIC_LOAD_NAND_I32:
+    return emitAtomicBinary(MI, BB, 0, true);
+
+  case OR1K::ATOMIC_LOAD_SUB_I32:
+    return emitAtomicBinary(MI, BB, OR1K::SUB);
+
+  case OR1K::ATOMIC_SWAP_I32:
+    return emitAtomicBinary(MI, BB, 0);
+
+  case OR1K::ATOMIC_CMP_SWAP_I32:
+    return emitAtomicCmpSwap(MI, BB);
+  }
+}
+
+MachineBasicBlock*
+OR1KTargetLowering::emitSelect(MachineInstr *MI,
+                               MachineBasicBlock *BB) const {
   const TargetInstrInfo &TII = *Subtarget.getInstrInfo();
-  DebugLoc dl = MI.getDebugLoc();
+  DebugLoc dl = MI->getDebugLoc();
 
   assert((Opc == OR1K::Select || Opc == OR1K::Selectf32) &&
          "Unexpected instr type to insert");
@@ -1217,4 +1252,128 @@ OR1KTargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
 
   MI.eraseFromParent();   // The pseudo instruction is gone now.
   return BB;
+}
+
+// This function also handles OR1K::ATOMIC_SWAP_I32 (when BinOpcode == 0), and
+// OR1K::ATOMIC_LOAD_NAND_I32 (when Nand == true)
+MachineBasicBlock *
+OR1KTargetLowering::emitAtomicBinary(MachineInstr *MI, MachineBasicBlock *BB,
+                                     unsigned BinOpcode, bool Nand) const {
+  MachineFunction *MF = BB->getParent();
+  MachineRegisterInfo &RegInfo = MF->getRegInfo();
+  const TargetRegisterClass *RC = getRegClassFor(MVT::i32);
+  const TargetInstrInfo *TII = Subtarget.getInstrInfo();
+  DebugLoc DL = MI->getDebugLoc();
+
+  unsigned OldVal = MI->getOperand(0).getReg();
+  unsigned Ptr = MI->getOperand(1).getReg();
+  unsigned Incr = MI->getOperand(3).getReg();
+
+  unsigned StoreVal = RegInfo.createVirtualRegister(RC);
+  unsigned AndRes = RegInfo.createVirtualRegister(RC);
+  unsigned AllOnes = RegInfo.createVirtualRegister(RC);
+
+  // insert new blocks after the current block
+  const BasicBlock *LLVM_BB = BB->getBasicBlock();
+  MachineBasicBlock *loopMBB = MF->CreateMachineBasicBlock(LLVM_BB);
+  MachineBasicBlock *exitMBB = MF->CreateMachineBasicBlock(LLVM_BB);
+  MachineFunction::iterator It = ++BB->getIterator();
+  MF->insert(It, loopMBB);
+  MF->insert(It, exitMBB);
+
+  // Transfer the remainder of BB and its successor edges to exitMBB.
+  exitMBB->splice(exitMBB->begin(), BB,
+                  std::next(MachineBasicBlock::iterator(MI)), BB->end());
+  exitMBB->transferSuccessorsAndUpdatePHIs(BB);
+
+  //  thisMBB:
+  //    ...
+  //    fallthrough --> loopMBB
+  BB->addSuccessor(loopMBB);
+  loopMBB->addSuccessor(loopMBB);
+  loopMBB->addSuccessor(exitMBB);
+
+  //  loopMBB:
+  //    l.lwa oldval, 0(ptr)
+  //    <binop> storeval, oldval, incr
+  //    l.swa success, storeval, 0(ptr)
+  //    l.bnf success, r0, loopMBB
+  BB = loopMBB;
+  BuildMI(BB, DL, TII->get(OR1K::LWA), OldVal).addReg(Ptr).addImm(0);
+  if (Nand) {
+    //  l.and andres, oldval, incr
+    //  l.addi allones, r0, -1
+    //  l.xor storeval, allones, andres
+    BuildMI(BB, DL, TII->get(OR1K::AND), AndRes).addReg(OldVal).addReg(Incr);
+    BuildMI(BB, DL, TII->get(OR1K::ADDI), AllOnes).addReg(OR1K::R0).addImm(-1);
+    BuildMI(BB, DL, TII->get(OR1K::XOR), StoreVal).addReg(AllOnes).addReg(AndRes);
+  } else if (BinOpcode) {
+    //  <binop> storeval, oldval, incr
+    BuildMI(BB, DL, TII->get(BinOpcode), StoreVal).addReg(OldVal).addReg(Incr);
+  } else {
+    StoreVal = Incr;
+  }
+  BuildMI(BB, DL, TII->get(OR1K::SWA)).addReg(StoreVal).addReg(Ptr).addImm(0);
+  BuildMI(BB, DL, TII->get(OR1K::BNF)).addMBB(loopMBB);
+
+  MI->eraseFromParent(); // The instruction is gone now.
+
+  return exitMBB;
+}
+
+MachineBasicBlock *
+OR1KTargetLowering::emitAtomicCmpSwap(MachineInstr *MI,
+                                      MachineBasicBlock *BB) const {
+  MachineFunction *MF = BB->getParent();
+  const TargetInstrInfo *TII = Subtarget.getInstrInfo();
+  DebugLoc DL = MI->getDebugLoc();
+
+  unsigned Dest    = MI->getOperand(0).getReg();
+  unsigned Ptr     = MI->getOperand(1).getReg();
+  unsigned OldVal  = MI->getOperand(3).getReg();
+  unsigned NewVal  = MI->getOperand(4).getReg();
+
+  // insert new blocks after the current block
+  const BasicBlock *LLVM_BB = BB->getBasicBlock();
+  MachineBasicBlock *loop1MBB = MF->CreateMachineBasicBlock(LLVM_BB);
+  MachineBasicBlock *loop2MBB = MF->CreateMachineBasicBlock(LLVM_BB);
+  MachineBasicBlock *exitMBB = MF->CreateMachineBasicBlock(LLVM_BB);
+  MachineFunction::iterator It = ++BB->getIterator();
+  MF->insert(It, loop1MBB);
+  MF->insert(It, loop2MBB);
+  MF->insert(It, exitMBB);
+
+  // Transfer the remainder of BB and its successor edges to exitMBB.
+  exitMBB->splice(exitMBB->begin(), BB,
+                  std::next(MachineBasicBlock::iterator(MI)), BB->end());
+  exitMBB->transferSuccessorsAndUpdatePHIs(BB);
+
+  //  thisMBB:
+  //    ...
+  //    fallthrough --> loop1MBB
+  BB->addSuccessor(loop1MBB);
+  loop1MBB->addSuccessor(exitMBB);
+  loop1MBB->addSuccessor(loop2MBB);
+  loop2MBB->addSuccessor(loop1MBB);
+  loop2MBB->addSuccessor(exitMBB);
+
+  // loop1MBB:
+  //   l.lwa  dest, 0(ptr)
+  //   l.sfeq dest, oldval
+  //   l.bnf  exitMBB
+  BB = loop1MBB;
+  BuildMI(BB, DL, TII->get(OR1K::LWA), Dest).addReg(Ptr).addImm(0);
+  BuildMI(BB, DL, TII->get(OR1K::SFEQ)).addReg(Dest).addReg(OldVal);
+  BuildMI(BB, DL, TII->get(OR1K::BNF)).addMBB(exitMBB);
+
+  // loop2MBB:
+  //   l.swa  newval, 0(ptr)
+  //   l.bnf  loop1MBB
+  BB = loop2MBB;
+  BuildMI(BB, DL, TII->get(OR1K::SWA)).addReg(NewVal).addReg(Ptr).addImm(0);
+  BuildMI(BB, DL, TII->get(OR1K::BNF)).addMBB(loop1MBB);
+
+  MI->eraseFromParent(); // The instruction is gone now.
+
+  return exitMBB;
 }

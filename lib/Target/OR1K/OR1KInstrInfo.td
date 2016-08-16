@@ -704,6 +704,31 @@ let Uses = [FBIT], usesCustomInserter = 1, Predicates = [NoCmov] in {
                           (OR1Kselectcc (f32 GPR:$src), (f32 GPR:$src2)))]>;
 }
 
+// Atomic instructions with 2 source operands (ATOMIC_SWAP & ATOMIC_LOAD_*).
+class Atomic2Ops<PatFrag Op> :
+  Pseudo<(outs GPR:$dst), (ins MEMri:$ptr, GPR:$imm),
+         "#ATOMICBINOP $dst, $ptr, $imm",
+         [(set GPR:$dst, (Op ADDRri:$ptr, GPR:$imm))]>;
+
+// Atomic Compare & Swap.
+class AtomicCmpSwap<PatFrag Op> :
+  Pseudo<(outs GPR:$dst), (ins MEMri:$ptr, GPR:$cmp, GPR:$swap),
+         "#ATOMICCAS $dst, $ptr, $cmp, $swap",
+         [(set GPR:$dst, (Op ADDRri:$ptr, GPR:$cmp, GPR:$swap))]>;
+
+let usesCustomInserter = 1 in {
+  def ATOMIC_LOAD_ADD_I32  : Atomic2Ops<atomic_load_add_32>;
+  def ATOMIC_LOAD_SUB_I32  : Atomic2Ops<atomic_load_sub_32>;
+  def ATOMIC_LOAD_AND_I32  : Atomic2Ops<atomic_load_and_32>;
+  def ATOMIC_LOAD_OR_I32   : Atomic2Ops<atomic_load_or_32>;
+  def ATOMIC_LOAD_XOR_I32  : Atomic2Ops<atomic_load_xor_32>;
+  def ATOMIC_LOAD_NAND_I32 : Atomic2Ops<atomic_load_nand_32>;
+
+  def ATOMIC_SWAP_I32      : Atomic2Ops<atomic_swap_32>;
+
+  def ATOMIC_CMP_SWAP_I32  : AtomicCmpSwap<atomic_cmp_swap_32>;
+}
+
 // ADJCALLSTACKDOWN/UP implicitly use/def R1 because they may be expanded into
 // a stack adjustment and the codegen must know that they may modify the stack
 // pointer before prolog-epilog rewriting occurs.
