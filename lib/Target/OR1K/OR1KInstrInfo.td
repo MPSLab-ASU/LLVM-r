@@ -183,7 +183,6 @@ def HasFfl1      : Predicate<"Subtarget->hasFfl1()">,
 def HasExt       : Predicate<"Subtarget->hasExt()">,
                    AssemblerPredicate<"FeatureExt">;
 
-
 // -------------------------------------------------- //
 // Condition/SF instructions
 // -------------------------------------------------- //
@@ -237,6 +236,7 @@ defm SFGES : SF<0xb, "l.sfges", OR1K_CC_GE>;
 defm SFLTS : SF<0xc, "l.sflts", OR1K_CC_LT>;
 defm SFLES : SF<0xd, "l.sfles", OR1K_CC_LE>;
 }
+
 // -------------------------------------------------- //
 // ALU instructions
 // -------------------------------------------------- //
@@ -438,14 +438,11 @@ multiclass SHIFT<bits<2> op2Val, string asmstr, SDNode OpNode> {
   def _ri : SHIFT_RI<op2Val, asmstr, OpNode>;
 }
 
-
 defm SLL : SHIFT<0x0, "l.sll", shl>;
 defm SRL : SHIFT<0x1, "l.srl", srl>;
 defm SRA : SHIFT<0x2, "l.sra", sra>;
-let Predicates=[HasRor] in
+let Predicates = [HasRor] in
   defm ROR : SHIFT<0x3, "l.ror", rotr>;
-
-
 
 // -------------------------------------------------- //
 // STORE instructions
@@ -468,7 +465,6 @@ class STOREi32<bits<4> subOp, string asmstring, PatFrag opNode>
 
 
 def SWA : STOREi32<0x3, "l.swa", atomic_store_32>;
-//def SD : STORE<0x4, "l.sd">;
 def SW : STOREi32<0x5, "l.sw", store>;
 def SB : STOREi32<0x6, "l.sb", truncstorei8>;
 def SH : STOREi32<0x7, "l.sh", truncstorei16>;
@@ -490,9 +486,7 @@ class LOAD<bits<4> subop, string asmstring, list<dag> pattern>
 class LOADi32<bits<4> subop, string asmstring, PatFrag opNode>
   : LOAD<subop, asmstring, [(set (i32 GPR:$rD), (opNode ADDRri:$src))]>;
 
-//def LD : LOAD<0x0, "l.ld">;
 def LWZ : LOADi32<0x1, "l.lwz", load>;
-//def LWS : LOAD<0x2, "l.lws", load>;
 def LBZ : LOADi32<0x3, "l.lbz", zextloadi8>;
 def LBS : LOADi32<0x4, "l.lbs", sextloadi8>;
 def LHZ : LOADi32<0x5, "l.lhz", zextloadi16>;
@@ -516,7 +510,6 @@ def LWA : LWA_I;
 // -------------------------------------------------- //
 // BRANCH instructions
 // -------------------------------------------------- //
-
 
 class BRANCH<bits<4> subOp, string asmstring, list<dag> pattern>
   : InstBI<subOp, (outs), (ins brtarget:$dst),
@@ -561,7 +554,7 @@ class BRANCHL_R<bits<4> subOp, string asmstring>
 }
 
 // Jump/Branch
-let isBranch = 1, isTerminator = 1, hasDelaySlot=1 in {
+let isBranch = 1, isTerminator = 1, hasDelaySlot = 1 in {
   let isBarrier = 1 in {
     def J : BRANCH<0x0, "l.j", [(br bb:$dst)]>;
     let isIndirectBranch = 1 in {
@@ -575,7 +568,7 @@ let isBranch = 1, isTerminator = 1, hasDelaySlot=1 in {
 }
 
 // Jump and link
-let isCall=1, hasDelaySlot=1,
+let isCall = 1, hasDelaySlot = 1,
     Uses = [R1],
     // Potentially clobbered registers
     Defs = [R3, R4, R5, R6, R7, R8, R9, R11, R12, R13, R15, R17, R19, R21, R23,
@@ -583,6 +576,55 @@ let isCall=1, hasDelaySlot=1,
   def JAL  : BRANCHL<0x1, "l.jal">;
   def JALR : BRANCHL_R<0x2, "l.jalr">;
 }
+
+// FIXME: Do not use isCodeGenOnly = 1 to resolve conflicts
+let isReturn = 1, isTerminator = 1, hasDelaySlot = 1, isBarrier = 1, isCodeGenOnly = 1,
+    Inst = 0x44004800 in {
+  def RET : InstBR<0x1, (outs), (ins),
+                   "l.jr\tr9",
+                   [(retflag)]>;
+}
+
+//===----------------------------------------------------------------------===//
+// Other instructions
+//===----------------------------------------------------------------------===//
+
+class NOP_I<bits<2> op2Val, string asmstr>
+  : InstBI<0x5, (outs), (ins i16imm:$imm),
+           !strconcat(asmstr, "\t$imm"), []> {
+  bits<2> op2;
+  bits<16> imm;
+
+  let Inst{25-24} = op2;
+  let Inst{15-0} = imm;
+
+  let op2 = op2Val;
+}
+
+let hasSideEffects = 0 in
+  def NOP : NOP_I<0x1, "l.nop">;
+
+def : InstAlias<"l.nop", (NOP 0)>;
+
+class MOVHI_I <dag outs, dag ins, list<dag> pattern>
+  : InstOR1K<outs, ins,  "l.movhi\t$rD, $imm", pattern> {
+  bits<16> imm;
+  bits<5> rD;
+  let optype = 0;
+  let opcode = 0x6;
+  let Inst{16} = 0;
+  let Inst{15-0} = imm;
+  let Inst{25-21} = rD;
+}
+
+let isReMaterializable = 1, isAsCheapAsAMove = 1 in {
+  def MOVHI : MOVHI_I<(outs GPR:$rD), (ins i32imm:$imm),
+                      [(set GPR:$rD, i32hi16:$imm)]>;
+}
+
+//===----------------------------------------------------------------------===//
+// System instructions
+//===----------------------------------------------------------------------===//
 
 class MFSPR_I
   : InstRI<0xd, (outs GPR:$rD), (ins GPR:$rA, i16imm:$imm),
@@ -646,28 +688,20 @@ class RFE_I
 
 def RFE : RFE_I;
 
-class NOP_I<bits<2> op2Val, string asmstr>
-  : InstBI<0x5, (outs), (ins i16imm:$imm),
-           !strconcat(asmstr, "\t$imm"), []> {
-  bits<2> op2;
-  bits<16> imm;
+//===----------------------------------------------------------------------===//
+// Pseudo instructions
+//===----------------------------------------------------------------------===//
 
-  let Inst{25-24} = op2;
-  let Inst{15-0} = imm;
+let Uses = [FBIT], usesCustomInserter = 1, Predicates = [NoCmov] in {
+  def Select : Pseudo<(outs GPR:$dst), (ins GPR:$src, GPR:$src2),
+                       "# Select PSEUDO $dst $src $src2",
+                       [(set (i32 GPR:$dst),
+                        (OR1Kselectcc (i32 GPR:$src), (i32 GPR:$src2)))]>;
 
-  let op2 = op2Val;
-}
-
-let hasSideEffects = 0 in
-  def NOP : NOP_I<0x1, "l.nop">;
-
-def : InstAlias<"l.nop", (NOP 0)>;
-
-// FIXME: Do not use isCodeGenOnly = 1 to resolve conflicts
-let isReturn = 1, isTerminator = 1, hasDelaySlot=1, isBarrier = 1, isCodeGenOnly = 1, Inst = 0x44004800 in {
-  def RET : InstBR<0x1, (outs), (ins),
-                   "l.jr\tr9",
-                   [(retflag)]>;
+  def Selectf32 : Pseudo<(outs GPR:$dst), (ins GPR:$src, GPR:$src2),
+                         "# Select PSEUDO $dst $src $src2",
+                         [(set (f32 GPR:$dst),
+                          (OR1Kselectcc (f32 GPR:$src), (f32 GPR:$src2)))]>;
 }
 
 // ADJCALLSTACKDOWN/UP implicitly use/def R1 because they may be expanded into
@@ -690,39 +724,10 @@ let Defs = [R1], Uses = [R1] in {
                     [(set GPR:$dst, (OR1Kadjdynalloc GPR:$src))]>;
 }
 
-let Uses = [FBIT], usesCustomInserter = 1, Predicates = [NoCmov] in {
-  def Select : Pseudo<(outs GPR:$dst), (ins GPR:$src, GPR:$src2),
-                       "# Select PSEUDO $dst $src $src2",
-                       [(set (i32 GPR:$dst),
-                        (OR1Kselectcc (i32 GPR:$src), (i32 GPR:$src2)))]>;
-
-  def Selectf32 : Pseudo<(outs GPR:$dst), (ins GPR:$src, GPR:$src2),
-                         "# Select PSEUDO $dst $src $src2",
-                         [(set (f32 GPR:$dst),
-                          (OR1Kselectcc (f32 GPR:$src), (f32 GPR:$src2)))]>;
-}
-
-
 // PIC base construction.
 let hasSideEffects = 0, isNotDuplicable = 1, Defs = [R9] in
   def GETPC : Pseudo<(outs), (ins i32imm:$label),
   "#GETPC $label", []>;
-
-class MOVHI_I <dag outs, dag ins, list<dag> pattern>
-  : InstOR1K<outs, ins,  "l.movhi\t$rD, $imm", pattern> {
-  bits<16> imm;
-  bits<5> rD;
-  let optype = 0;
-  let opcode = 0x6;
-  let Inst{16} = 0;
-  let Inst{15-0} = imm;
-  let Inst{25-21} = rD;
-}
-
-let isReMaterializable = 1, isAsCheapAsAMove = 1 in {
-  def MOVHI : MOVHI_I<(outs GPR:$rD), (ins i32imm:$imm),
-                      [(set GPR:$rD, i32hi16:$imm)]>;
-}
 
 //===----------------------------------------------------------------------===//
 // Non-Instruction Patterns
@@ -777,6 +782,7 @@ def : Pat<(or GPR:$hi, (OR1KLo tjumptable:$lo)),
           (ORI GPR:$hi, tjumptable:$lo)>;
 def : Pat<(or GPR:$hi, (OR1KLo tconstpool:$lo)),
           (ORI GPR:$hi, tconstpool:$lo)>;
+
 //===----------------------------------------------------------------------===//
 // Floating Point Support
 //===----------------------------------------------------------------------===//
