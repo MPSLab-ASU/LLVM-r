@@ -464,7 +464,8 @@ class STOREi32<bits<4> subOp, string asmstring, PatFrag opNode>
   : STORE<subOp, asmstring, [(opNode (i32 GPR:$rB), ADDRri:$dst)]>;
 
 
-def SWA : STOREi32<0x3, "l.swa", atomic_store_32>;
+let Defs = [FBIT] in
+  def SWA : STOREi32<0x3, "l.swa", atomic_store_32>;
 def SW : STOREi32<0x5, "l.sw", store>;
 def SB : STOREi32<0x6, "l.sb", truncstorei8>;
 def SH : STOREi32<0x7, "l.sh", truncstorei16>;
