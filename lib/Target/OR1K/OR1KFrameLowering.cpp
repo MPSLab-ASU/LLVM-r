@@ -197,9 +197,9 @@ void OR1KFrameLowering::emitPrologue(MachineFunction &MF,
       BuildMI(MBB, MBBI, DL, TII->get(OR1K::ADD), ScratchReg)
         .addReg(ScratchReg).addReg(OR1K::R1);
     }
-    BuildMI(MBB, MBBI, DL, TII->get(OR1K::SRL_ri), ScratchReg)
+    BuildMI(MBB, MBBI, DL, TII->get(OR1K::SRLI), ScratchReg)
       .addReg(ScratchReg).addImm(AlignLog);
-    BuildMI(MBB, MBBI, DL, TII->get(OR1K::SLL_ri), OR1K::R1)
+    BuildMI(MBB, MBBI, DL, TII->get(OR1K::SLLI), OR1K::R1)
       .addReg(ScratchReg).addImm(AlignLog);
   } else if (isInt<16>(StackSize)) {
     if (StackSize) {

@@ -219,8 +219,8 @@ class SF_RI<bits<5> op2Val, string asmstr, PatLeaf Cond>
 }
 
 multiclass SF<bits<5> op2Val, string asmstr, PatLeaf Cond> {
-  def _rr : SF_RR<op2Val, asmstr, Cond>;
-  def _ri : SF_RI<op2Val, asmstr, Cond>;
+  def #NAME#  : SF_RR<op2Val, asmstr, Cond>;
+  def #NAME#I : SF_RI<op2Val, asmstr, Cond>;
 }
 
 // l.sfxx instructions
@@ -434,8 +434,8 @@ class SHIFT_RI<bits<2> op2Val, string asmstr, SDNode OpNode>
 }
 
 multiclass SHIFT<bits<2> op2Val, string asmstr, SDNode OpNode> {
-  def _rr : SHIFT_RR<op2Val, asmstr, OpNode>;
-  def _ri : SHIFT_RI<op2Val, asmstr, OpNode>;
+  def #NAME#  : SHIFT_RR<op2Val, asmstr, OpNode>;
+  def #NAME#I : SHIFT_RI<op2Val, asmstr, OpNode>;
 }
 
 defm SLL : SHIFT<0x0, "l.sll", shl>;
