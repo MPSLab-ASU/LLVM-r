@@ -305,14 +305,13 @@ bool OR1KAsmParser::ParseRegister(unsigned &RegNo, OperandVector &Operands) {
 bool OR1KAsmParser::ParseRegister(unsigned &RegNo,
                                   SMLoc &StartLoc, SMLoc &EndLoc) {
   SmallVector<std::unique_ptr<MCParsedAsmOperand>, 1> Operands;
-  if (ParseRegister(RegNo, Operands)) {
-    OR1KOperand &Operand = static_cast<OR1KOperand &>(*Operands.front());
-    StartLoc = Operand.getStartLoc();
-    EndLoc = Operand.getEndLoc();
-    return false;
-  } else {
+  if (ParseRegister(RegNo, Operands))
     return true;
-  }
+
+  OR1KOperand &Operand = static_cast<OR1KOperand &>(*Operands.front());
+  StartLoc = Operand.getStartLoc();
+  EndLoc = Operand.getEndLoc();
+  return false;
 }
 
 bool OR1KAsmParser::ParseImmediate(OperandVector &Operands) {
