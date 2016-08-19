@@ -186,6 +186,10 @@ namespace {
     bool runOnMachineFunction(MachineFunction &MF) override {
       const TargetMachine &TM = MF.getTarget();
 
+      // Don't touch naked functions.
+      if (MF.getFunction()->hasFnAttribute(Attribute::Naked))
+        return false;
+
       // Only emit a global base reg in PIC mode.
       if (TM.getRelocationModel() != Reloc::PIC_)
         return false;
