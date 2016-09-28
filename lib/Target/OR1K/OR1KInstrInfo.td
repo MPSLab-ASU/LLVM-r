@@ -465,7 +465,7 @@ class STOREi32<bits<4> subOp, string asmstring, PatFrag opNode>
 
 
 let Defs = [FBIT] in
-  def SWA : STOREi32<0x3, "l.swa", atomic_store_32>;
+  def SWA : STORE<0x3, "l.swa", []>;
 def SW : STOREi32<0x5, "l.sw", store>;
 def SB : STOREi32<0x6, "l.sb", truncstorei8>;
 def SH : STOREi32<0x7, "l.sh", truncstorei16>;
@@ -495,7 +495,7 @@ def LHS : LOADi32<0x6, "l.lhs", sextloadi16>;
 
 class LWA_I
   : InstOR1K<(outs GPR:$rD), (ins MEMri:$src),
-             "l.lwa\t$rD, $src", [(set (i32 GPR:$rD), (atomic_load_32 ADDRri:$src))]> {
+             "l.lwa\t$rD, $src", []> {
   let optype = 0b01;
   let opcode = 0xb;
 
@@ -785,6 +785,12 @@ def : Pat<(call texternalsym:$dst), (JAL texternalsym:$dst)>;
 // Loads
 def : Pat<(extloadi8  ADDRri:$src), (i32 (LBZ ADDRri:$src))>;
 def : Pat<(extloadi16 ADDRri:$src), (i32 (LHZ ADDRri:$src))>;
+
+// Atomic loads and stores
+// NB: ordinarily, non-relaxed loads/stores would require an appropriate barrier, but
+// OR1K ISA does not appear to define one.
+def : Pat<(atomic_store_32 ADDRri:$dst, (i32 GPR:$src)), (SW GPR:$src, ADDRri:$dst)>;
+def : Pat<(atomic_load_32 ADDRri:$src), (i32 (LWZ ADDRri:$src))>;
 
 // GlobalAddress, ExternalSymbol, Jumptable, ConstantPool
 def : Pat<(OR1KHi tglobaladdr:$dst), (MOVHI tglobaladdr:$dst)>;
