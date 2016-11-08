@@ -150,13 +150,13 @@ namespace llvm {
                         const SDLoc &dl, SelectionDAG &DAG) const override;
 
     MachineBasicBlock*
-    emitSelect(MachineInstr *MI, MachineBasicBlock *BB) const;
+    emitSelect(MachineInstr &MI, MachineBasicBlock *BB) const;
 
     MachineBasicBlock*
-    emitAtomicBinary(MachineInstr *MI, MachineBasicBlock *BB,
+    emitAtomicBinary(MachineInstr &MI, MachineBasicBlock *BB,
                      unsigned BinOpcode, bool Nand = false) const;
     MachineBasicBlock*
-    emitAtomicCmpSwap(MachineInstr *MI, MachineBasicBlock *BB) const;
+    emitAtomicCmpSwap(MachineInstr &MI, MachineBasicBlock *BB) const;
   };
 } // namespace llvm
 

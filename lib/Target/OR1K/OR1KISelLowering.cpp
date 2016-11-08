@@ -1192,13 +1192,10 @@ OR1KTargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
 }
 
 MachineBasicBlock*
-OR1KTargetLowering::emitSelect(MachineInstr *MI,
+OR1KTargetLowering::emitSelect(MachineInstr &MI,
                                MachineBasicBlock *BB) const {
   const TargetInstrInfo &TII = *Subtarget.getInstrInfo();
-  DebugLoc dl = MI->getDebugLoc();
-
-  assert((Opc == OR1K::Select || Opc == OR1K::Selectf32) &&
-         "Unexpected instr type to insert");
+  DebugLoc dl = MI.getDebugLoc();
 
   // To "insert" a SELECT instruction, we actually have to insert the diamond
   // control-flow pattern.  The incoming instruction knows the destination vreg
@@ -1257,17 +1254,17 @@ OR1KTargetLowering::emitSelect(MachineInstr *MI,
 // This function also handles OR1K::ATOMIC_SWAP_I32 (when BinOpcode == 0), and
 // OR1K::ATOMIC_LOAD_NAND_I32 (when Nand == true)
 MachineBasicBlock *
-OR1KTargetLowering::emitAtomicBinary(MachineInstr *MI, MachineBasicBlock *BB,
+OR1KTargetLowering::emitAtomicBinary(MachineInstr &MI, MachineBasicBlock *BB,
                                      unsigned BinOpcode, bool Nand) const {
   MachineFunction *MF = BB->getParent();
   MachineRegisterInfo &RegInfo = MF->getRegInfo();
   const TargetRegisterClass *RC = getRegClassFor(MVT::i32);
   const TargetInstrInfo *TII = Subtarget.getInstrInfo();
-  DebugLoc DL = MI->getDebugLoc();
+  DebugLoc DL = MI.getDebugLoc();
 
-  unsigned OldVal = MI->getOperand(0).getReg();
-  unsigned Ptr = MI->getOperand(1).getReg();
-  unsigned Incr = MI->getOperand(3).getReg();
+  unsigned OldVal = MI.getOperand(0).getReg();
+  unsigned Ptr = MI.getOperand(1).getReg();
+  unsigned Incr = MI.getOperand(3).getReg();
 
   unsigned StoreVal = RegInfo.createVirtualRegister(RC);
   unsigned AndRes = RegInfo.createVirtualRegister(RC);
@@ -1316,22 +1313,22 @@ OR1KTargetLowering::emitAtomicBinary(MachineInstr *MI, MachineBasicBlock *BB,
   BuildMI(BB, DL, TII->get(OR1K::SWA)).addReg(StoreVal).addReg(Ptr).addImm(0);
   BuildMI(BB, DL, TII->get(OR1K::BNF)).addMBB(loopMBB);
 
-  MI->eraseFromParent(); // The instruction is gone now.
+  MI.eraseFromParent(); // The instruction is gone now.
 
   return exitMBB;
 }
 
 MachineBasicBlock *
-OR1KTargetLowering::emitAtomicCmpSwap(MachineInstr *MI,
+OR1KTargetLowering::emitAtomicCmpSwap(MachineInstr &MI,
                                       MachineBasicBlock *BB) const {
   MachineFunction *MF = BB->getParent();
   const TargetInstrInfo *TII = Subtarget.getInstrInfo();
-  DebugLoc DL = MI->getDebugLoc();
+  DebugLoc DL = MI.getDebugLoc();
 
-  unsigned Dest    = MI->getOperand(0).getReg();
-  unsigned Ptr     = MI->getOperand(1).getReg();
-  unsigned OldVal  = MI->getOperand(3).getReg();
-  unsigned NewVal  = MI->getOperand(4).getReg();
+  unsigned Dest    = MI.getOperand(0).getReg();
+  unsigned Ptr     = MI.getOperand(1).getReg();
+  unsigned OldVal  = MI.getOperand(3).getReg();
+  unsigned NewVal  = MI.getOperand(4).getReg();
 
   // insert new blocks after the current block
   const BasicBlock *LLVM_BB = BB->getBasicBlock();
@@ -1373,7 +1370,7 @@ OR1KTargetLowering::emitAtomicCmpSwap(MachineInstr *MI,
   BuildMI(BB, DL, TII->get(OR1K::SWA)).addReg(NewVal).addReg(Ptr).addImm(0);
   BuildMI(BB, DL, TII->get(OR1K::BNF)).addMBB(loop1MBB);
 
-  MI->eraseFromParent(); // The instruction is gone now.
+  MI.eraseFromParent(); // The instruction is gone now.
 
   return exitMBB;
 }
