@@ -20,7 +20,11 @@
 #include "llvm/Support/FormattedStream.h"
 #include "llvm/Support/TargetRegistry.h"
 #include "llvm/Target/TargetOptions.h"
+//#include "llvm-c/Core.h" //HwiSoo
+//#include "llvm/CodeGen/MachineModuleInfo.h" //HwiSoo
 using namespace llvm;
+
+
 
 extern "C" void LLVMInitializeOR1KTarget() {
   // Register the target.
@@ -77,6 +81,8 @@ bool OR1KPassConfig::addInstSelector() {
 
   // Prepend instructions to set the "global base reg" for PIC.
   addPass(createOR1KGlobalBaseRegPass());
+
+
   return false;
 }
 
@@ -86,4 +92,18 @@ bool OR1KPassConfig::addInstSelector() {
 
 void OR1KPassConfig::addPreEmitPass() {
   addPass(createOR1KDelaySlotFillerPass());
+//NEMESIS MOSLEM PASS
+  addPass(createNEMESISPass());
+  addPass(createZDCPass());
+  
+  
+  /*Failed
+//HwiSoo. Adding custom machine function to zdc pass
+
+  //Function *NewNn = Function::Create(Type::getVoidTy(getTM<OR1KTargetMachine>().getObjFileLowering()->getContext()), grGlobalVariable::ExternalLinkage, "FnForPZDCTable");
+  Function *NewFn = Function::Create(FunctionType::get(Type::getVoidTy(*unwrap(LLVMGetGlobalContext())),false), GlobalVariable::ExternalLinkage, "FnForPZDCTable");
+  MachineFunction *NewMF= new MachineFunction(NewFn, getTM<OR1KTargetMachine>(), 0, getAnalysis<MachineModuleInfo>());
+  addPass(createZDCPass(NewMF));
+  */
+
 }

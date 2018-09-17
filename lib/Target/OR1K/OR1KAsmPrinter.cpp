@@ -64,7 +64,7 @@ void OR1KAsmPrinter::printOperand(const MachineInstr *MI, int OpNum,
   unsigned TF = MO.getTargetFlags();
 
   switch (MO.getType()) {
-  case MachineOperand::MO_Register:
+  case MachineOperand::MO_Register: 
     O << OR1KInstPrinter::getRegisterName(MO.getReg());
     break;
 
@@ -201,7 +201,7 @@ void OR1KAsmPrinter::customEmitInstruction(const MachineInstr *MI) {
     OutStreamer->EmitInstruction(TmpInst, STI);
     return;
   }
-
+  //case OR1K::SW:
   case OR1K::GETPC: {
     MCInst TmpInst;
     // This is a pseudo op for a two instruction sequence with a label, which
@@ -234,6 +234,11 @@ void OR1KAsmPrinter::customEmitInstruction(const MachineInstr *MI) {
 
   if(MI->isInsideBundle())
     OutStreamer->AddComment("in delay slot");
+// moslem CFC
+if ( (Opcode == OR1K::XORI || Opcode == OR1K::XOR ||  Opcode == OR1K::ADDI ||  Opcode == OR1K::SFNEI )
+ && ( (MI->getOperand(0).getReg() == OR1K::R20) || (MI->getOperand(0).getReg() == OR1K::R21) || (MI->getOperand(0).getReg() == OR1K::R22) ) )
+    OutStreamer->AddComment("CFC");
+// end moslem
 
   MCInst TmpInst;
   MCInstLowering.Lower(MI, TmpInst);

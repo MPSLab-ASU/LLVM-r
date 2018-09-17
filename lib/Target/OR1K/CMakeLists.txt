@@ -23,6 +23,9 @@ add_llvm_target(OR1KCodeGen
   OR1KTargetMachine.cpp
   OR1KAsmPrinter.cpp
   OR1KMCInstLower.cpp
+  NEMESIS.cpp
+  ZDC.cpp
+  SWIFTR.cpp
   )
 
 add_subdirectory(InstPrinter)

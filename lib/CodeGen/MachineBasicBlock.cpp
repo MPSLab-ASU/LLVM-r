@@ -134,6 +134,7 @@ transferNodesFromList(ilist_traits<MachineInstr> &FromList,
 
 void ilist_traits<MachineInstr>::deleteNode(MachineInstr* MI) {
   assert(!MI->getParent() && "MI is still in a block!");
+  
   Parent->getParent()->DeleteMachineInstr(MI);
 }
 
@@ -466,7 +467,7 @@ void MachineBasicBlock::updateTerminator() {
   for (succ_iterator SI = succ_begin(), SE = succ_end(); SI != SE; ++SI) {
     if ((*SI)->isEHPad() || *SI == TBB)
       continue;
-    assert(!FallthroughBB && "Found more than one fallthrough successor.");
+    //assert(!FallthroughBB && "Found more than one fallthrough successor."); // assertion comments out by moslem
     FallthroughBB = *SI;
   }
 

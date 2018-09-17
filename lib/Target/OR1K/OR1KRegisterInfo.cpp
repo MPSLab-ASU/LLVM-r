@@ -29,6 +29,23 @@
 #define GET_REGINFO_TARGET_DESC
 #include "OR1KGenRegisterInfo.inc"
 using namespace llvm;
+static cl::opt<bool> reserve3Registers(
+  "reserve-3-registers",
+  cl::init(false),
+  cl::desc("reserves R20, R24 and R22 registers for CFC"),
+  cl::Hidden);
+static cl::opt<bool> reserve22Registers(
+  "reserve-22-registers",
+  cl::init(false),
+  cl::desc("reserves r8, R10,R12, ..., R31 are reserved"),
+  cl::Hidden);
+
+
+static cl::opt<bool> reserve18Registers(
+  "reserve-18-registers",
+  cl::init(false),
+  cl::desc("reserves r14, ..., R31 are reserved"),
+  cl::Hidden);
 
 OR1KRegisterInfo::OR1KRegisterInfo(const TargetInstrInfo &tii)
   : OR1KGenRegisterInfo(OR1K::R9), TII(tii) {
@@ -54,6 +71,60 @@ BitVector OR1KRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   Reserved.set(OR1K::R16);            // Global pointer
   if (hasBasePointer(MF))
     Reserved.set(getBaseRegister());  // Base pointer
+  //moslem CFC implementation
+  if (reserve3Registers){
+	Reserved.set(OR1K::R20);
+	Reserved.set(OR1K::R24);
+	Reserved.set(OR1K::R22);
+  }
+
+  //moslem 18 registers fro ZDC+CF+instruction counting
+  if (reserve18Registers){
+	Reserved.set(OR1K::R14);
+	Reserved.set(OR1K::R15);
+	Reserved.set(OR1K::R16);
+	Reserved.set(OR1K::R17);
+	Reserved.set(OR1K::R18);
+	Reserved.set(OR1K::R19);
+	Reserved.set(OR1K::R20);
+	Reserved.set(OR1K::R21);
+	Reserved.set(OR1K::R23);
+	Reserved.set(OR1K::R24);
+	Reserved.set(OR1K::R22);
+	Reserved.set(OR1K::R25);
+	Reserved.set(OR1K::R26);
+	Reserved.set(OR1K::R27);
+	Reserved.set(OR1K::R28);
+	Reserved.set(OR1K::R29);
+	Reserved.set(OR1K::R30);
+	Reserved.set(OR1K::R31);
+  }
+
+  //moslem CFC implementation
+  if (reserve22Registers){
+	Reserved.set(OR1K::R10);
+	Reserved.set(OR1K::R8);
+	Reserved.set(OR1K::R12);
+	Reserved.set(OR1K::R13);
+	Reserved.set(OR1K::R14);
+	Reserved.set(OR1K::R15);
+	Reserved.set(OR1K::R16);
+	Reserved.set(OR1K::R17);
+	Reserved.set(OR1K::R18);
+	Reserved.set(OR1K::R19);
+	Reserved.set(OR1K::R20);
+	Reserved.set(OR1K::R21);
+	Reserved.set(OR1K::R23);
+	Reserved.set(OR1K::R24);
+	Reserved.set(OR1K::R22);
+	Reserved.set(OR1K::R25);
+	Reserved.set(OR1K::R26);
+	Reserved.set(OR1K::R27);
+	Reserved.set(OR1K::R28);
+	Reserved.set(OR1K::R29);
+	Reserved.set(OR1K::R30);
+	Reserved.set(OR1K::R31);
+  }
   return Reserved;
 }
 

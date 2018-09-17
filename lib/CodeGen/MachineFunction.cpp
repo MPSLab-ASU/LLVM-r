@@ -270,11 +270,13 @@ void
 MachineFunction::DeleteMachineInstr(MachineInstr *MI) {
   // Strip it for parts. The operand array and the MI object itself are
   // independently recyclable.
+  
   if (MI->Operands)
     deallocateOperandArray(MI->CapOperands, MI->Operands);
   // Don't call ~MachineInstr() which must be trivial anyway because
   // ~MachineFunction drops whole lists of MachineInstrs wihout calling their
   // destructors.
+
   InstructionRecycler.Deallocate(Allocator, MI);
 }
 

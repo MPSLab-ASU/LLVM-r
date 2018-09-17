@@ -12,10 +12,12 @@
 //
 //===----------------------------------------------------------------------===//
 
+
 #ifndef TARGET_OR1K_H
 #define TARGET_OR1K_H
 #include "MCTargetDesc/OR1KBaseInfo.h"
 #include "MCTargetDesc/OR1KMCTargetDesc.h"
+
 
 namespace llvm {
 class FunctionPass;
@@ -30,9 +32,21 @@ FunctionPass *createOR1KISelDag(OR1KTargetMachine &TM);
 /// with useful instructions or nop's
 FunctionPass *createOR1KDelaySlotFillerPass();
 
+
+
+
 /// createOR1KGlobalBaseRegPass - This pass initializes a global base
 /// register for PIC on OR1K.
 FunctionPass* createOR1KGlobalBaseRegPass();
+
+
+
+///createNEMESIS - this pass implemet NEMESIS error detection and recovery
+FunctionPass* createNEMESISPass();
+FunctionPass* createZDCPass();
+
+
+
 
 extern Target TheOR1KTarget;
 } // end namespace llvm;
