@@ -87,7 +87,6 @@ namespace llvm{
 			
 
 			
-	//static MachineFunction* tzdcRecoveryMF = NULL;
 	static MachineBasicBlock* tzdcRecoveryMBB = NULL;
 			
 	struct NEMESIS : public MachineFunctionPass {
@@ -328,32 +327,21 @@ return false;
 			bool runOnMachineFunction(MachineFunction &MF) {
 				if (EnableTZDCNoStoreVoting)
 				{
-					//if(tzdcRecoveryMF == NULL)
-					if(tzdcRecoveryMBB == NULL)
+					//first try it for every function
+					if(EnableTZDC_WDC)
 					{
-						//Function *NewFn = Function::Create(FunctionType::get(Type::getVoidTy(*unwrap(LLVMGetGlobalContext())),false), GlobalVariable::ExternalLinkage, "FnForPZDCTable",unwrap(MF.getFunction()->getParent()));
-						
-						//HWISOO. parent is module
-						//const llvm::Module*
-						
-						//tzdcRecoveryMF = new MachineFunction(NewFn, MF.getTarget(), 7777, MF.getMMI());
-						
-						//create empty block for tzdcRecoverMF
-						//MachineBasicBlock *NewBB =  tzdcRecoveryMF->CreateMachineBasicBlock();
-						//tzdcRecoveryMBB = tzdcRecoveryMF->CreateMachineBasicBlock();
-						
-						
-
 						MachineFunction::iterator It = (MF.end())->getIterator();
 						It--;
-						It->dump();
 						tzdcRecoveryMBB = MF.CreateMachineBasicBlock(It->getBasicBlock());
 						It->addSuccessor(tzdcRecoveryMBB);
+						DebugLoc DL3= It->begin()->getDebugLoc();
+						
+						It = (MF.end())->getIterator();
 						MF.insert(It,tzdcRecoveryMBB);
 						
 						const TargetInstrInfo *TII = MF.getSubtarget().getInstrInfo();
 						
-						DebugLoc DL3= It->begin()->getDebugLoc();
+						
 						
 						MachineInstr* tempInst = BuildMI(MF, DL3 , TII->get(OR1K::JR)).addReg(OR1K::R30);
 						tzdcRecoveryMBB->insert((tzdcRecoveryMBB->instr_begin()), tempInst);
@@ -363,11 +351,6 @@ return false;
 						tzdcRecoveryMBB->push_back(tempInst2);
 						//tzdcRecoveryMBB->addSuccessor( &*((++It)--) );
 						
-						
-						
-						tempInst->getParent()->dump();
-						tzdcRecoveryMBB->dump();
-						It->dump();
 					
 					}
 					FUNCSIZE=100000;
@@ -381,8 +364,8 @@ return false;
 					
 					/*HWISOO. After l.bf, is there any other instructions? -> then it will be problem
 					we need to implement
-					1. triplication with offset
-					2. WDC
+					1. triplication with offset -done
+					2. WDC -done
 					3. SIG
 					4. Recovery Block
 					5. Interleaving
@@ -1464,8 +1447,20 @@ int memReg=strInst->getOperand(1).getReg();
 			}
 				
 			void wrongDirectionCheckingTZDC(MachineFunction &MF){
+				std::list<MachineBasicBlock*> insertedBlock;
 				for(MachineFunction::iterator MBB = MF.begin(), MBE = MF.end(); MBB != MBE; ++MBB) {
 					llvm::MachineBasicBlock::iterator cmpInst=NULL;
+					//skip inserted block
+					bool skipInsertedBlock = false;
+					for (std::list<MachineBasicBlock*>::iterator iter = insertedBlock.begin(); iter != insertedBlock.end(); ++iter) {
+						if(*iter == &(*MBB))
+						{
+							skipInsertedBlock=true;
+							break;
+						}
+					}
+					if(skipInsertedBlock) continue;
+
 					for (MachineBasicBlock::iterator I=MBB->begin(), E=MBB->end(); I !=E ; ++I){
 						if (isOriginalCMP(I))
 						{
@@ -1514,16 +1509,24 @@ int memReg=strInst->getOperand(1).getReg();
 							l.nop
 							l.j to original not-taken
 							l.nop
+						
 							*/
+							MachineInstr* splitPointMI=NULL;
 							{
 								NewBB->insert(NewBB->instr_begin(), shadowCMP);
 								MachineInstr *shadowBranch=  MF.CloneMachineInstr(I);
 								NewBB->push_back(shadowBranch);
 								MachineInstr *MInop1 = BuildMI(MF, DL3 , TII->get(OR1K::NOP)).addImm(0);
 								NewBB->push_back(MInop1);
+								//splitPointMI=MInop1;
+								
+								
 								
 								MachineInstr *MImfspr = BuildMI(MF, DL3 , TII->get(OR1K::MFSPR)).addReg(OR1K::R30).addReg(OR1K::R0).addImm(16);
 								NewBB->push_back(MImfspr);
+								
+								splitPointMI=MImfspr;
+								
 								MachineInstr *MIaddi = BuildMI(MF, DL3 , TII->get(OR1K::ADDI)).addReg(OR1K::R30).addReg(OR1K::R30).addImm(16);
 								NewBB->push_back(MIaddi);
 								
@@ -1532,6 +1535,8 @@ int memReg=strInst->getOperand(1).getReg();
 								tzdcRecoveryMBB->addSuccessor(NewBB);
 								MachineInstr *MInop2 = BuildMI(MF, DL3 , TII->get(OR1K::NOP)).addImm(0);
 								NewBB->push_back(MInop2);
+								
+								
 								
 								MachineInstr *copiedCMP=  MF.CloneMachineInstr(&*cmpInst);
 								NewBB->push_back(copiedCMP);
@@ -1548,62 +1553,88 @@ int memReg=strInst->getOperand(1).getReg();
 								MachineInstr *MInop4 = BuildMI(MF, DL3 , TII->get(OR1K::NOP)).addImm(0);
 								NewBB->push_back(MInop4);
 							}
-							/*
-							// inserts error detection instruction/branch to diagnosis routine if needed
-							// the condition of inserted branch should be opposite to the Original branch
-							MachineInstr *MICFDETECTION=NULL;
-							if (I->getOpcode() == OR1K::BF) 
-								//MICFDETECTION = BuildMI(MF, DL3 , TII->get(OR1K::BNF)).addMBB(wrongDirectionErrorBB);
-								MICFDETECTION = BuildMI(MF, DL3 , TII->get(OR1K::BNF)).addMBB(&*(MF.begin())); //DEBUG!!!!
-							else if (I->getOpcode() == OR1K::BNF) 
-								//MICFDETECTION = BuildMI(MF, DL3 , TII->get(OR1K::BF)).addMBB(wrongDirectionErrorBB);
-								MICFDETECTION = BuildMI(MF, DL3 , TII->get(OR1K::BF)).addMBB(&*(MF.begin())); //DEBUG!!!!
-							else
-								I->dump();
 
-							assert (MICFDETECTION!=NULL);
+							
+						
 
-							NewBB->push_back(MICFDETECTION);
-							MachineInstr *MInop = BuildMI(MF, DL3 , TII->get(OR1K::NOP)).addImm(0);
-							NewBB->push_back(MInop);
-							//////////////////////////////////////
+
+							/* in not taken block, we need to do like this
+							1. do same comparison
+							2. if TAKEN, go to recovery part of newBB
+							3. In that case, it will take care for checking and recovery
+							4. otherwise, we can just continue
+
 							
-							//direct jump to branch target BB in New BB, takes place if there is no CF error
-							MachineInstr *MIjump = BuildMI(MF, DL3 , TII->get(OR1K::J)).addMBB(I->getOperand(0).getMBB());
-							NewBB->push_back(MIjump);
-							NewBB->addSuccessor(I->getOperand(0).getMBB());
-							MachineInstr *MInop1 = BuildMI(MF, DL3 , TII->get(OR1K::NOP)).addImm(0);
-							NewBB->push_back(MInop1);
+							PREVIOUS idea
+							
+							cmp (do same cmp with shadow)
+							l.bnf (or l.bf. opposite to the previous one. if same, it will return to (original) not-taken place it should go
+							l.nop 0
+							#Else, it should go to recovery
+							
+							l.mfspr r30, r0, 16 #SPR16 == NPC
+							l.addi r30, r30, 16 #can I sure that it is right address? or can we just copy shadow2 of r9, and rollback it after jal?
+							
+							l.j RECOVERY_BLOCK_OR_FUNCTION #Can we jump that much?
+							l.nop 0
+							
+							#Now, we need to do branch again
+							
+							cmp (do same cmp with original one)
+							l.bf (or l.bnf) to original target
+							l.nop
+							
+							//maybe we don't need it, if not-taken block is always after the current BB
+							//l.j to original not-taken
+							//l.nop
 							*/
+							MachineBasicBlock* detectedBB=NULL;
+							{
+								
+								detectedBB=splitBlockAfterInstr(splitPointMI, MF);
+								
+								
+								
+								llvm::MachineBasicBlock::iterator nopNextI=std::next(I);
+								
+								
+								
+								MachineInstr *copiedCMP=  MF.CloneMachineInstr(&*cmpInst);
+								MBB->insert(nopNextI, copiedCMP);
+								
+								
+								MachineInstr *copiedBranch=  MF.CloneMachineInstr(I);
+								copiedBranch->getOperand(0).setMBB(detectedBB); 
+								MBB->insert(nopNextI, copiedBranch);
+								MachineInstr *MInop5 = BuildMI(MF, DL3 , TII->get(OR1K::NOP)).addImm(0);
+								MBB->insert(nopNextI, MInop5);
+								
+								
+								
+								tzdcRecoveryMBB->addSuccessor(detectedBB);
+								//HWISOO. this is for converting from # BB_ to .LBBn_
+								
+								
+							}
 							
-							//HWISOO. do we need it?
-							/*
-							MachineInstr *MIjump1 = BuildMI(MF, DL3 , TII->get(OR1K::J)).addMBB(I->getOperand(0).getMBB());
-							NewBB->push_back(MIjump1);
-							*/
 							
-							// change the dirrection of the original conditional branch to the NewBB
-							I->getOperand(0).setMBB(NewBB);     
+							//Make previous branch (if taken, branch to taken-block) -> (if taken, branch to inter-taken-block)
+							I->getOperand(0).setMBB(NewBB); 
 							
+							//N
+							insertedBlock.push_back(NewBB);
+							insertedBlock.push_back(detectedBB);
 							
-							/////////////////////adding check if the branch is not taken
-							// we insert a CMP and branch
-							//The CMP operands are the shadows, and the branch is a copy of the original branch with the target destination of diagnosis block
-							//MachineInstr *MIcfErrorDetection = BuildMI(MF, DL3 , TII->get(I->getOpcode())).addMBB(wrongDirectionErrorBB);
-							MachineInstr *MIcfErrorDetection = BuildMI(MF, DL3 , TII->get(I->getOpcode())).addMBB(&*(MF.begin())); //DEBUG!!!!
-							MachineInstr *MInop2 = BuildMI(MF, DL3 , TII->get(OR1K::NOP)).addImm(0);
-							MBB->push_back(shadowCMP1);
-							MBB->push_back(MIcfErrorDetection);
-							MBB->push_back(MInop2);
-							/////////////////////////////////////////
-							MBB++;
 							cmpInst=NULL;
-							break;     
-							// 
+							break;     //break for instr parsing in MBB
 							
 						}
+						
+						
+						
 					}//end of for
-				}// end of function
+				}// end of machine function
+				insertedBlock.clear();
 			}// end of function
 			
 			//note for OR1K::INLINEASM
