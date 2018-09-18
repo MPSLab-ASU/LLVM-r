@@ -1590,17 +1590,12 @@ int memReg=strInst->getOperand(1).getReg();
 							*/
 							MachineBasicBlock* detectedBB=NULL;
 							{
-								
 								detectedBB=splitBlockAfterInstr(splitPointMI, MF);
 								
-								
-								
 								llvm::MachineBasicBlock::iterator nopNextI=std::next(I);
+
 								
-								
-								
-								MachineInstr *copiedCMP=  MF.CloneMachineInstr(&*cmpInst);
-								MBB->insert(nopNextI, copiedCMP);
+								MBB->insert(nopNextI, shadowCMP1);
 								
 								
 								MachineInstr *copiedBranch=  MF.CloneMachineInstr(I);
