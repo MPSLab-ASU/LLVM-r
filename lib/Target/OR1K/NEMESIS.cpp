@@ -84,7 +84,12 @@ namespace llvm{
 			cl::init(false),
 			cl::desc("add wrong direction checking for tzdc. it should be used with enable-tzdc-no-store-voting"),
 			cl::Hidden);			
-			
+	static cl::opt<bool> DEBUG_LBB(
+			"debug-lbb",
+			cl::init(false),
+			cl::desc("print l.slli	r30, r0, (is #BB:0, or LOBB:1. this is testing for LBB or #BB (for debug)"),
+			cl::Hidden);			
+	
 
 			
 	static MachineBasicBlock* tzdcRecoveryMBB = NULL;
@@ -325,6 +330,7 @@ return false;
 
 
 			bool runOnMachineFunction(MachineFunction &MF) {
+
 				if (EnableTZDCNoStoreVoting)
 				{
 					//first try it for every function
@@ -541,6 +547,15 @@ fixCompares(MF);
 	
 
 				}
+				
+				
+				if (DEBUG_LBB)
+				{
+					printLBBDebug(MF);
+
+				}
+				
+				
 
 				return true;
 			}
@@ -1424,6 +1439,101 @@ int memReg=strInst->getOperand(1).getReg();
 					}//end of for
 				}// end of function
 			}// end of function
+			
+			//HWISOO: from lib/CodeGen/AsmPrinter/AsmPrinter.cpp
+			
+			bool AsmPrinterisBlockOnlyReachableByFallthrough(const MachineBasicBlock *MBB) const {
+			  // If this is a landing pad, it isn't a fall through.  If it has no preds,
+			  // then nothing falls through to it.
+			  if (MBB->isEHPad() || MBB->pred_empty())
+				return false;
+
+			  // If there isn't exactly one predecessor, it can't be a fall through.
+			  if (MBB->pred_size() > 1)
+				return false;
+
+			  // The predecessor has to be immediately before this block.
+			  MachineBasicBlock *Pred = *MBB->pred_begin();
+			  if (!Pred->isLayoutSuccessor(MBB))
+				return false;
+
+			  // If the block is completely empty, then it definitely does fall through.
+			  if (Pred->empty())
+				return true;
+
+			  // Check the terminators in the previous blocks
+			  for (const auto &MI : Pred->terminators()) {
+				// If it is not a simple branch, we are in a table somewhere.
+				if (!MI.isBranch() || MI.isIndirectBranch())
+				  return false;
+
+				// If we are the operands of one of the branches, this is not a fall
+				// through. Note that targets with delay slots will usually bundle
+				// terminators with the delay slot instruction.
+				for (ConstMIBundleOperands OP(MI); OP.isValid(); ++OP) {
+				  if (OP->isJTI())
+					return false;
+				  if (OP->isMBB() && OP->getMBB() == MBB)
+					return false;
+				}
+			  }
+
+			  return true;
+			}
+			
+			
+			
+			
+			
+			//HWISOO: from lib/Target/OR1K/OR1KAsmPrinter.cpp
+			bool isBlockOnlyReachableByFallthrough(const MachineBasicBlock*
+																   MBB) const {
+			  // The predecessor has to be immediately before this block.
+			  const MachineBasicBlock *Pred = *MBB->pred_begin();
+
+			  // If the predecessor is a switch statement, assume a jump table
+			  // implementation, so it is not a fall through.
+			  if (const BasicBlock *bb = Pred->getBasicBlock())
+				if (isa<SwitchInst>(bb->getTerminator()))
+				  return false;
+
+			  // Check default implementation
+			  if (!AsmPrinterisBlockOnlyReachableByFallthrough(MBB))
+				return false;
+
+			  // Otherwise, check the last instruction.
+			  // Check if the last terminator is an unconditional branch.
+			  MachineBasicBlock::const_iterator I = Pred->end();
+			  while (I != Pred->begin() && !(--I)->isTerminator()) ;
+
+			  return !I->isBarrier();
+			}
+
+
+			void printLBBDebug(MachineFunction &MF){ 
+				for(MachineFunction::iterator MBB = MF.begin(), MBE = MF.end(); MBB != MBE; ++MBB) {
+					MachineBasicBlock::iterator I=MBB->begin();
+					DebugLoc DL3= I->getDebugLoc();
+					const TargetInstrInfo *TII = MF.getSubtarget().getInstrInfo();
+					
+					
+					if (MBB->pred_empty() ||
+					(isBlockOnlyReachableByFallthrough(&*MBB) && !( MBB->isEHFuncletEntry()) ))
+					{
+						MachineInstr *MI_subi = BuildMI(MF, DL3 , TII->get(OR1K::SLLI)).addReg(OR1K::R30).addReg(OR1K::R0).addImm(0);
+						MBB->insert(I, MI_subi);
+					}
+					else
+					{
+						MachineInstr *MI_subi = BuildMI(MF, DL3 , TII->get(OR1K::SLLI)).addReg(OR1K::R30).addReg(OR1K::R0).addImm(1);
+						MBB->insert(I, MI_subi);						
+					}
+	  
+	  
+					//setH
+
+				}// end of function
+			}// end of function
 
 			
 			bool  isOriginalCMP(llvm::MachineBasicBlock::iterator inst){
@@ -1608,7 +1718,13 @@ int memReg=strInst->getOperand(1).getReg();
 								
 								tzdcRecoveryMBB->addSuccessor(detectedBB);
 								//HWISOO. this is for converting from # BB_ to .LBBn_
+								//PROBLEM: setHasAddressTaken causes segmentation fault when emitting BB
+								//#5 0x0000000000ea4160 llvm::Value::getSubclassDataFromValue() const /home/sohwisoo/LLVM-or1k/llvm-or1k/include/llvm/IR/Value.h:604:0
+								//#6 0x0000000001e2c2d2 llvm::BasicBlock::hasAddressTaken() const /home/sohwisoo/LLVM-or1k/llvm-or1k/include/llvm/IR/BasicBlock.h:307:0
+								//#7 0x0000000001e28c28 llvm::AsmPrinter::EmitBasicBlockStart(llvm::MachineBasicBlock const&) const /home/sohwisoo/LLVM-or1k/llvm-or1k/lib/CodeGen/AsmPrinter/AsmPrinter.cpp:2493:0
+
 								
+								//detectedBB->setHasAddressTaken();
 								
 							}
 							
