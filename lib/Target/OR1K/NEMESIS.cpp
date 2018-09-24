@@ -83,13 +83,18 @@ namespace llvm{
 			"enable-tzdc-wdc",
 			cl::init(false),
 			cl::desc("add wrong direction checking for tzdc. it should be used with enable-tzdc-no-store-voting"),
+			cl::Hidden);
+	static cl::opt<bool> EnableTZDC_SIG(
+			"enable-tzdc-sig",
+			cl::init(false),
+			cl::desc("add signature checking (in basic block) for tzdc. it should be used with enable-tzdc-no-store-voting"),
 			cl::Hidden);			
 	static cl::opt<bool> DEBUG_LBB(
 			"debug-lbb",
 			cl::init(false),
 			cl::desc("print l.slli	r30, r0, (is #BB:0, or LOBB:1. this is testing for LBB or #BB (for debug)"),
 			cl::Hidden);			
-	
+
 
 			
 	static MachineBasicBlock* tzdcRecoveryMBB = NULL;
@@ -333,7 +338,13 @@ return false;
 
 				if (EnableTZDCNoStoreVoting)
 				{
-					//first try it for every function
+					
+					if(EnableTZDC_WDC || EnableTZDC_SIG)
+						splitMultipleTerminator(MF);
+					
+					if(EnableTZDC_SIG)
+						insertTZDCSignature(MF);
+					
 					if(EnableTZDC_WDC)
 					{
 						MachineFunction::iterator It = (MF.end())->getIterator();
@@ -348,25 +359,40 @@ return false;
 						const TargetInstrInfo *TII = MF.getSubtarget().getInstrInfo();
 						
 						
+
 						
-						MachineInstr* tempInst = BuildMI(MF, DL3 , TII->get(OR1K::JR)).addReg(OR1K::R30);
-						tzdcRecoveryMBB->insert((tzdcRecoveryMBB->instr_begin()), tempInst);
-						
-						
-						MachineInstr* tempInst2 = BuildMI(MF, DL3 , TII->get(OR1K::ADDI)).addReg(OR1K::R30).addReg(OR1K::R30).addImm(0);
-						tzdcRecoveryMBB->push_back(tempInst2);
 						//tzdcRecoveryMBB->addSuccessor( &*((++It)--) );
 						
-					
+						
+						//This part is integrated with wdc part.
+						//WDCAvailabilityCheck(MF);
+						
+
 					}
 					FUNCSIZE=100000;
 					
 					
 					triplicateInstructionsTZDC(MF);
-					if(EnableTZDC_WDC)
-						wrongDirectionCheckingTZDC(MF);
 					
-					//insertVotingOperationsCmpOnlyTZDC(MF) //HWISOO. do we really need it?
+					
+					
+					if(EnableTZDC_WDC)
+					{
+						/*
+						HWISOO. WDC can not be applied if
+						#1 l.sfne r3, #30 
+						
+						#2 l.add r3, r0, r1  #r1 is changed
+						
+						#3 l.bf
+						
+						This is because, in intermediate block, we need to execute shadow version of #1.
+						But shadow register of r3 is already updated by shadow of #2.
+						This part is integrated with wdc part.
+						*/
+						wrongDirectionCheckingTZDC(MF);
+					}
+					//insertVotingOperationsCmpOnlyTZDC(MF) //HWISOO. do we really need it? -> currently no. WDC will care for it
 					
 					/*HWISOO. After l.bf, is there any other instructions? -> then it will be problem
 					we need to implement
@@ -377,10 +403,22 @@ return false;
 					5. Interleaving
 					6. (by hand) insert voting for critical
 					
+					091918: Think about current issues
+					- Do we need signature comparison for every functions, or only one for the end of the program?
+					  -> currently latter one.
+					  -> Then, currently we need to manaully insert
+					     -> voting for critical store/load
+						 -> FINAL signature checking
+					- How can we arrange for the sequences of current methods?
+					  - It means, sequence of triplicationg, inserting signature, and WDC
+				    
 					
 					
 					*/
 					
+					insertRecoveryBlock(MF);
+					
+					insertCopyingReturnAddress(MF);
 				}
 				
 				
@@ -1010,17 +1048,15 @@ int numBBs=0;
 				}
 			} //end-of-function
 
+			
+
 
 			MachineBasicBlock* splitBlockAfterInstr(MachineInstr *MI, MachineFunction &MF) {
-
-
-
-
 				// Create a new MBB for the code after the OrigBB.
 				MachineBasicBlock *NewBB =
 					MF.CreateMachineBasicBlock( (MI->getParent())->getBasicBlock());
 				MachineFunction::iterator MBBI = (MI->getParent())->getIterator();
-
+				
 				(MI->getParent())->addSuccessor(NewBB);
 
 				++MBBI;
@@ -1040,6 +1076,7 @@ int numBBs=0;
 				//HWISOO: else means that it is end or end-1
 				//In that case, how can we split?
 
+				
 
 				return NewBB;
 			}
@@ -1517,6 +1554,7 @@ int memReg=strInst->getOperand(1).getReg();
 					const TargetInstrInfo *TII = MF.getSubtarget().getInstrInfo();
 					
 					
+					//HWISOO. this is a method to distinguish between .LBBM_N and BB#N
 					if (MBB->pred_empty() ||
 					(isBlockOnlyReachableByFallthrough(&*MBB) && !( MBB->isEHFuncletEntry()) ))
 					{
@@ -1555,8 +1593,628 @@ int memReg=strInst->getOperand(1).getReg();
 				}
 				return false;
 			}
+			
+			void splitMultipleTerminator(MachineFunction &MF){
+				std::list<MachineBasicBlock*> insertedBlock;
+				for(MachineFunction::iterator MBB = MF.begin(), MBE = MF.end(); MBB != MBE; ++MBB) {
+					//count number of terminators
+					unsigned int count=0;
+					
+					
+					for (const auto &MI : MBB->terminators()) {
+						count++;
+					}
+					
+					
+					if(count>1)
+					{
+						//If all insts after the first terminator, we split it and automatically signitaure inserter will not insert SIG
+						MachineInstr* firstTerminator = MBB->getFirstTerminator();
+						
+						
+						/*
+						MachineBasicBlock::iterator firstT_iter;
+						bool shouldWeSplit=false;
+						*/
+						//for (firstT_iter=MBB->begin(); &(*firstT_iter) != firstTerminator;  ++firstT_iter);
+						
+						/*
+						//if we could not find it, firstT_iter will cause error as it is not initialized.
+						//if(firstT_iter!=MBB->end()) //HWISOO. there should be any instrs (second terminator should exist)
+						{
+							firstT_iter++;
+							for (MachineBasicBlock::iterator E=MBB->end(); firstT_iter !=E ; ++firstT_iter){
+								//HWISOO: we only want to exclude "l.j" "l.bf" "l.jr" "l.jal" something like it
+								if(!firstT_iter->isBranch() || (firstT_iter->getOpcode() > 96 && firstT_iter->getOpcode() < 129) )
+								{
+									errs()<<"DEBUG:not branch!\n";
+									firstT_iter->dump();
+									shouldWeSplit=true;
+									break;
+								}
+
+							}//end of for
+						}
+						*/
+						
+						//if(!shouldWeSplit)
+						//	continue;
+
+						
+						
+						//HWISOO. it seems that splitBlockAfterInstr puts instr to nextBB
+						MachineBasicBlock::iterator instrAfterFirstTerminator;
+						for (instrAfterFirstTerminator=MBB->begin(); &(*instrAfterFirstTerminator) != firstTerminator;  ++instrAfterFirstTerminator);
+						instrAfterFirstTerminator++;
+						
+						MachineBasicBlock *newBB = splitBlockAfterInstr(instrAfterFirstTerminator, MF);
+						
+
+						
+						
+						//HWISOO. move previous block's successors to new block
+						//except successor for branch's successor, and newBB
+						MachineBasicBlock* succ_branch=NULL;
+						if(firstTerminator->getOperand(0).isMBB())
+							succ_branch=firstTerminator->getOperand(0).getMBB();
+						
+						for (MachineBasicBlock::succ_iterator SI = MBB->succ_begin(),
+						SE = MBB->succ_end(); SI != SE; ++SI)
+						{
+							if((*SI) != succ_branch && (*SI) != newBB)
+							{
+								newBB->addSuccessor(*SI);
+							}
+						}
+						
+						for (MachineBasicBlock::succ_iterator SI = newBB->succ_begin(),
+						SE = newBB->succ_end(); SI != SE; ++SI)
+						{
+							MBB->removeSuccessor(*SI);
+						}
+						
+						
+						
+						
+						//DEBUG_REMOVEIT
+						/*
+						errs() <<"--debug--";
+						//if (MBB->pred_empty() ||
+						//(isBlockOnlyReachableByFallthrough(&*MBB) && !( MBB->isEHFuncletEntry()) ))
+						errs() <<newBB->pred_empty();
+						errs() <<isBlockOnlyReachableByFallthrough(&*newBB);
+						errs() <<!( newBB->isEHFuncletEntry());
+						*/
+
+					}
+					
+
+				}// end of machine function
+			}// end of function
+			
+				
+			void insertTZDCSignature(MachineFunction &MF){
+				std::list<MachineBasicBlock*> insertedBlock;
+				for(MachineFunction::iterator MBB = MF.begin(), MBE = MF.end(); MBB != MBE; ++MBB) {
+					//HWISOO. we need 3 signature-point
+					//1. start of the blcok
+					//2. just before the first terminator (assume that there is only 0 ir 1 terminator)
+					//3. intermediate point: how can we select this point? and do we need it? (it means, do we still need asymmetric signature?)
+					//if there is only 1 inst, we skip inserting signature
+					
+					
+					
+					MachineBasicBlock::iterator startPoint = MBB->begin();
+					MachineBasicBlock::iterator intermediatePoint;
+					MachineBasicBlock::iterator firstTerminator = MBB->getFirstTerminator();;
+					
+					unsigned int count = 0;
+					
+					for (MachineBasicBlock::iterator I=MBB->begin(); I !=firstTerminator ; ++I){
+						count++;
+					}//end of for
+					
+					if(count<=1)
+						continue;
+					
+					intermediatePoint = MBB->begin();
+					for (unsigned int i=0; i<(count/2) ; ++intermediatePoint,i++);
+					
+					//Now we calculated for all 3 positions
+					//MBB->insert
+					//MBB->insert
+					//MBB->insert
+					
+					
+					//startPoint
+					//for (MachineBasicBlock::iterator I=MBB->begin(), E=MBB->end(); I !=E ; ++I){
+					//}//end of for
+				}// end of machine function
+			}// end of function
+				
+				
+			void insertRecoveryBlock(MachineFunction &MF){
+				
+				DebugLoc DL3= MF.begin()->begin()->getDebugLoc();
+				const TargetInstrInfo *TII = MF.getSubtarget().getInstrInfo();
+
+				for (auto& reg : functionCallArgs ){
+					MachineInstr *cmpInst = BuildMI(MF, DL3 , TII->get(OR1K::SFNE)).addReg(reg).addReg(getSlaveReg1(reg));
+					MachineInstr *copyMoveM = BuildMI(MF, DL3 , TII->get(OR1K::CMOV)).addReg(reg).addReg(getSlaveReg2(reg)).addReg(reg);
+					MachineInstr *copyMoveD = BuildMI(MF, DL3 , TII->get(OR1K::CMOV)).addReg(getSlaveReg1(reg)).addReg(getSlaveReg2(reg)).addReg(getSlaveReg1(reg));
+
+					tzdcRecoveryMBB->insert(tzdcRecoveryMBB->end(), cmpInst);
+					tzdcRecoveryMBB->insert(tzdcRecoveryMBB->end(), copyMoveM);
+					tzdcRecoveryMBB->insert(tzdcRecoveryMBB->end(), copyMoveD);
+				}
+				
+				
+						
+				MachineInstr* returnInstr = BuildMI(MF, DL3 , TII->get(OR1K::JR)).addReg(OR1K::R30);
+				tzdcRecoveryMBB->push_back(returnInstr);
+				
+				MachineInstr *MInop = BuildMI(MF, DL3 , TII->get(OR1K::NOP)).addImm(0);
+				tzdcRecoveryMBB->push_back(MInop);
+
+
+			}
+			
 				
 			void wrongDirectionCheckingTZDC(MachineFunction &MF){
+				std::list<MachineBasicBlock*> insertedBlock;
+				for(MachineFunction::iterator MBB = MF.begin(), MBE = MF.end(); MBB != MBE; ++MBB) {
+					llvm::MachineBasicBlock::iterator cmpInst=NULL;
+					
+					
+					
+					std::list<unsigned int> changedRelatedRegs;
+					std::list<unsigned int> usedRelatedRegs;
+					std::list<MachineInstr*> relatedInstrs;
+					int lastCmpRegs[2] = {-1, -1};
+					bool existRelatedInstr = false;
+					
+					//skip inserted block
+					bool skipInsertedBlock = false;
+					for (std::list<MachineBasicBlock*>::iterator iter = insertedBlock.begin(); iter != insertedBlock.end(); ++iter) {
+						if(*iter == &(*MBB))
+						{
+							skipInsertedBlock=true;
+							break;
+						}
+					}
+					if(skipInsertedBlock) continue;
+					
+					
+					
+					for (MachineBasicBlock::iterator I=MBB->begin(), E=MBB->end(); I !=E ; ++I){
+						if (isOriginalCMP(I))
+						{
+							cmpInst=I;
+							for (unsigned int opcount = 0; opcount < 2; opcount++)
+							{
+								if(I->getOperand(opcount).isReg())
+									lastCmpRegs[opcount] = I->getOperand(opcount).getReg();
+							}
+						}
+						else if(cmpInst)
+						{
+							if(!I->isConditionalBranch())
+							{	
+								/* HWISOO
+								Now we need to find out which instr should be moved and copied to intermediate blocks (of WDC)
+								1. any instruction which overwrite one of lastCmpRegs
+								2. any instruction which uses (both read and write) any changedRelatedRegs
+								3. any instruction which overwrite any related usedRegs
+									1 & 2 & 3 -> We need to insert this insrt to relatedInstrs, and also "destination" register to changedRelatedRegs
+									
+								Maybe later we can find better way with llvm-provided dependency
+								And can dependencies between memory make problem?
+								*/
+								
+								bool alreadyInserted = false;
+								for (unsigned int opcount = 0; opcount < I->getNumOperands(); opcount++)
+								{
+									if (alreadyInserted) break;
+									
+									if (I->getOperand(opcount).isReg())
+									{
+										if(opcount == 0 && !(I->mayStore())) //Destination reg
+										{
+											int targetReg = I->getOperand(0).getReg();
+											if (targetReg == lastCmpRegs[0] || targetReg == lastCmpRegs[1])
+											{
+												changedRelatedRegs.push_back(targetReg);
+												relatedInstrs.push_back(I);
+												alreadyInserted = true;
+												existRelatedInstr = true;
+												errs()<<"DEBUG1\n";
+												I->dump();
+												
+												for (unsigned int inside_opcount = 1; inside_opcount < I->getNumOperands(); inside_opcount++)
+												{
+													if(I->getOperand(inside_opcount).isReg())
+														usedRelatedRegs.push_back(I->getOperand(inside_opcount).getReg());
+												}
+												
+											}
+											else
+											{
+												for (std::list<unsigned int>::const_iterator changedRegIter = changedRelatedRegs.begin(); changedRegIter != changedRelatedRegs.end(); ++changedRegIter)
+													if (targetReg == *changedRegIter)
+													{
+														changedRelatedRegs.push_back(targetReg);
+														relatedInstrs.push_back(I);
+														alreadyInserted = true;
+														existRelatedInstr = true;
+														
+														errs()<<"DEBUG2\n";
+														I->dump();
+														
+														for (unsigned int inside_opcount = 1; inside_opcount < I->getNumOperands(); inside_opcount++)
+														{
+															if(I->getOperand(inside_opcount).isReg())
+																usedRelatedRegs.push_back(I->getOperand(inside_opcount).getReg());
+														}
+														
+														break;
+
+													}
+													
+												if(!alreadyInserted)
+												{
+													for (std::list<unsigned int>::const_iterator usedRegIter = usedRelatedRegs.begin(); usedRegIter != usedRelatedRegs.end(); ++usedRegIter)
+														if (targetReg == *usedRegIter)
+														{
+															changedRelatedRegs.push_back(targetReg);
+															relatedInstrs.push_back(I);
+															alreadyInserted = true;
+															existRelatedInstr = true;
+															
+															errs()<<"DEBUG4\n";
+															I->dump();
+														
+															for (unsigned int inside_opcount = 1; inside_opcount < I->getNumOperands(); inside_opcount++)
+															{
+															if(I->getOperand(inside_opcount).isReg())
+																usedRelatedRegs.push_back(I->getOperand(inside_opcount).getReg());
+															}
+															
+															break;
+
+														}
+												}
+											}
+										}
+										else //Source reg
+										{
+											//impossible cond 1. if some reigster is used after load overwrite it
+											unsigned sourceReg = I->getOperand(opcount).getReg();
+											for (std::list<unsigned int>::const_iterator changedRegIter = changedRelatedRegs.begin(); changedRegIter != changedRelatedRegs.end(); ++changedRegIter)
+												if (sourceReg == *changedRegIter)
+												{
+													relatedInstrs.push_back(I);
+													if(!(I->mayStore())) //HWISOO. operand0 may not be source. need to find better way
+													{
+														assert(I->getOperand(0).isReg());
+														changedRelatedRegs.push_back(I->getOperand(0).getReg());
+														
+														for (unsigned int inside_opcount = 1; inside_opcount < I->getNumOperands(); inside_opcount++)
+														{
+															if(I->getOperand(inside_opcount).isReg())
+																usedRelatedRegs.push_back(I->getOperand(inside_opcount).getReg());
+														}
+													}
+													else//store
+													{
+														for (unsigned int inside_opcount = 0; inside_opcount < I->getNumOperands(); inside_opcount++)
+														{
+															if(I->getOperand(inside_opcount).isReg())
+																usedRelatedRegs.push_back(I->getOperand(inside_opcount).getReg());
+														}
+													}
+													alreadyInserted = true;
+													existRelatedInstr = true;
+														errs()<<"DEBUG3\n";
+														I->dump();
+													break;
+												}
+										}
+									}
+								}
+							}
+							
+							else //Conditional branch. now we need to check if there is any related Instr
+							{
+								if(existRelatedInstr)
+								{
+									errs() << "==============================================\n";
+									errs() << "Check\n F: "<< MF.getName() << "BB: " << MBB->getName() << "\n";
+									errs() << "------------compare instrs-------------------\n";
+									cmpInst->dump();
+									errs() << "------------related instrs-------------------\n";
+									for (std::list<MachineInstr*>::iterator iter = relatedInstrs.begin(); iter != relatedInstrs.end(); ++iter) {
+										(*iter)->dump();					
+									}
+									
+									errs() << "==============================================\n";
+								}
+								
+								
+								//before here we checked "related insts"
+								//which should be copied(and moved) to intermediate blocks
+								//Now, make WDC
+								DebugLoc DL3= I->getDebugLoc();
+								const TargetInstrInfo *TII = MF.getSubtarget().getInstrInfo();
+
+								
+								MachineInstr *shadowCMP=  MF.CloneMachineInstr(&*cmpInst);
+								shadowCMP->setFlags(0);
+								for (unsigned int opcount=0; opcount < cmpInst->getNumOperands(); opcount++)
+									if (cmpInst->getOperand(opcount).isReg()) shadowCMP->getOperand(opcount).setReg(getSlaveReg1(cmpInst->getOperand(opcount).getReg()));
+
+								MachineInstr *shadowCMP1=  MF.CloneMachineInstr(&*shadowCMP);
+
+								//create a new BB newBB: this will handle taken branches
+								MachineBasicBlock *NewBB =  MF.CreateMachineBasicBlock();
+								MBB->addSuccessor(NewBB);
+								MachineFunction::iterator It = (MF.end())->getIterator();
+								MF.insert(It,NewBB);
+								
+								
+
+								
+								/* in taken block, we need to do like this
+								cmp (do same cmp with shadow)
+								l.bf (or l.bnf. same to the previous one. if same, it will return to (original) place it should go
+								l.nop 0
+								#Else, it should go to recovery
+								
+								l.mfspr r30, r0, 16 #SPR16 == NPC
+								l.addi r30, r30, 16 #can I sure that it is right address? or can we just copy shadow2 of r9, and rollback it after jal?
+								
+								l.j RECOVERY_BLOCK_OR_FUNCTION #Can we jump that much?
+								l.nop 0
+								
+								#Now, we need to do branch again
+								
+								cmp (do same cmp with original one)
+								l.bf (or l.bnf) to original target
+								l.nop
+								l.j to original not-taken
+								l.nop
+							
+								*/
+								MachineFunction::iterator nextBB;
+								MachineInstr* splitPointMI=NULL;
+								//MachineInstr* relatedMovePointTaken=NULL;
+								//MachineInstr* relatedMovePointNotTaken=NULL; this is simply end of MBB
+								MachineInstr* branchInTaken;
+								MachineInstr* branchInDetected;
+								MachineInstr* jumpInDetected;
+								{
+									NewBB->insert(NewBB->instr_begin(), shadowCMP);
+									MachineInstr *shadowBranch=  MF.CloneMachineInstr(I);
+									NewBB->push_back(shadowBranch);
+									
+									branchInTaken=shadowBranch;
+									
+									MachineInstr *MInop1 = BuildMI(MF, DL3 , TII->get(OR1K::NOP)).addImm(0);
+									NewBB->push_back(MInop1);
+									//splitPointMI=MInop1;
+									
+									
+									
+									MachineInstr *MImfspr = BuildMI(MF, DL3 , TII->get(OR1K::MFSPR)).addReg(OR1K::R30).addReg(OR1K::R0).addImm(16);
+									NewBB->push_back(MImfspr);
+									
+									splitPointMI=MImfspr;
+									
+									MachineInstr *MIaddi = BuildMI(MF, DL3 , TII->get(OR1K::ADDI)).addReg(OR1K::R30).addReg(OR1K::R30).addImm(16);
+									NewBB->push_back(MIaddi);
+									
+									MachineInstr *MIBranch = BuildMI(MF, DL3 , TII->get(OR1K::J)).addMBB(tzdcRecoveryMBB);
+									NewBB->push_back(MIBranch);
+									tzdcRecoveryMBB->addSuccessor(NewBB);
+									MachineInstr *MInop2 = BuildMI(MF, DL3 , TII->get(OR1K::NOP)).addImm(0);
+									NewBB->push_back(MInop2);
+									
+									
+									MachineInstr *copiedCMP=  MF.CloneMachineInstr(&*cmpInst);
+									NewBB->push_back(copiedCMP);
+									
+									//relatedMovePointTaken=copiedCMP;
+
+									MachineInstr *copiedBranch=  MF.CloneMachineInstr(I);
+									NewBB->push_back(copiedBranch);
+									
+									branchInDetected=copiedBranch;
+									
+									MachineInstr *MInop3 = BuildMI(MF, DL3 , TII->get(OR1K::NOP)).addImm(0);
+									NewBB->push_back(MInop3);
+									
+									nextBB = MBB->getIterator();
+									nextBB++;
+									
+									MachineInstr *MIJump = BuildMI(MF, DL3 , TII->get(OR1K::J)).addMBB(&*nextBB);
+									NewBB->push_back(MIJump);
+									
+									jumpInDetected=MIJump;
+									
+									MachineInstr *MInop4 = BuildMI(MF, DL3 , TII->get(OR1K::NOP)).addImm(0);
+									NewBB->push_back(MInop4);
+								}
+
+								
+							
+
+
+								/* in not taken block, we need to do like this
+								1. do same comparison
+								2. if TAKEN, go to recovery part of newBB
+								3. In that case, it will take care for checking and recovery
+								4. otherwise, we can just continue
+
+								
+								PREVIOUS idea
+								
+								cmp (do same cmp with shadow)
+								l.bnf (or l.bf. opposite to the previous one. if same, it will return to (original) not-taken place it should go
+								l.nop 0
+								#Else, it should go to recovery
+								
+								l.mfspr r30, r0, 16 #SPR16 == NPC
+								l.addi r30, r30, 16 #can I sure that it is right address? or can we just copy shadow2 of r9, and rollback it after jal?
+								
+								l.j RECOVERY_BLOCK_OR_FUNCTION #Can we jump that much?
+								l.nop 0
+								
+								#Now, we need to do branch again
+								
+								cmp (do same cmp with original one)
+								l.bf (or l.bnf) to original target
+								l.nop
+								
+								//maybe we don't need it, if not-taken block is always after the current BB
+								//l.j to original not-taken
+								//l.nop
+								*/
+								MachineBasicBlock* detectedBB=NULL;
+								{
+									detectedBB=splitBlockAfterInstr(splitPointMI, MF);
+									
+									llvm::MachineBasicBlock::iterator nopNextI=std::next(I);
+
+									
+									MBB->insert(nopNextI, shadowCMP1);
+									
+									
+									MachineInstr *copiedBranch=  MF.CloneMachineInstr(I);
+									copiedBranch->getOperand(0).setMBB(detectedBB); 
+									MBB->insert(nopNextI, copiedBranch);
+									MachineInstr *MInop5 = BuildMI(MF, DL3 , TII->get(OR1K::NOP)).addImm(0);
+									MBB->insert(nopNextI, MInop5);
+									
+									
+									
+									tzdcRecoveryMBB->addSuccessor(detectedBB);
+									//HWISOO. this is for converting from # BB_ to .LBBn_
+									//PROBLEM: setHasAddressTaken causes segmentation fault when emitting BB
+									//#5 0x0000000000ea4160 llvm::Value::getSubclassDataFromValue() const /home/sohwisoo/LLVM-or1k/llvm-or1k/include/llvm/IR/Value.h:604:0
+									//#6 0x0000000001e2c2d2 llvm::BasicBlock::hasAddressTaken() const /home/sohwisoo/LLVM-or1k/llvm-or1k/include/llvm/IR/BasicBlock.h:307:0
+									//#7 0x0000000001e28c28 llvm::AsmPrinter::EmitBasicBlockStart(llvm::MachineBasicBlock const&) const /home/sohwisoo/LLVM-or1k/llvm-or1k/lib/CodeGen/AsmPrinter/AsmPrinter.cpp:2493:0
+
+									//detectedBB->setHasAddressTaken();
+									detectedBB->addSuccessor(&(*nextBB));
+									
+								}
+								
+								
+								//Make previous branch (if taken, branch to taken-block) -> (if taken, branch to inter-taken-block)
+								I->getOperand(0).setMBB(NewBB); 
+								
+								//N
+								insertedBlock.push_back(NewBB);
+								insertedBlock.push_back(detectedBB);
+								
+								cmpInst=NULL;
+								
+								
+								
+								//HWISOO: in here, we need to insert "moving" part if there is any related instrs
+								//Note that we also SHOULD move shadow instrs
+								if(existRelatedInstr)
+								{
+									//HWISOO: I realized that we need to generate "new block" for this
+									//both for taken/not taken
+									
+									MachineBasicBlock *takenRemainedBlock =  MF.CreateMachineBasicBlock();
+									MachineBasicBlock *notTakenRemainedBlock =  MF.CreateMachineBasicBlock();
+
+									detectedBB->addSuccessor(takenRemainedBlock);
+									detectedBB->addSuccessor(notTakenRemainedBlock);
+									MBB->addSuccessor(notTakenRemainedBlock);
+									
+									//notTakenRemainedBlock should be placed between MBB and nextBB
+									
+									
+									MachineFunction::iterator It = (MF.end())->getIterator();
+									MF.insert(It,takenRemainedBlock);
+									
+									It = MBB->getIterator();
+									MF.insert(++It,notTakenRemainedBlock);
+									
+									
+									//MachineFunction::iterator It = (MF.end())->getIterator();
+									//MF.insert(It,NewBB);
+									
+									for (std::list<MachineInstr*>::iterator iter = relatedInstrs.begin(); iter != relatedInstrs.end(); ++iter) {
+										//find iterator from the block
+										MachineBasicBlock::iterator mbb_I;
+										for (mbb_I=MBB->begin(); &(*mbb_I) !=(*iter) ; ++mbb_I);
+										
+										
+										
+										MachineInstr* target3 = (mbb_I--);
+										MachineInstr* target2 = (mbb_I--);
+										MachineInstr* target1 = (mbb_I);
+
+										MBB->remove(target1);
+										takenRemainedBlock->insert(takenRemainedBlock->end(), target1);
+										MachineInstr* target1_inNotTaken = MF.CloneMachineInstr(target1);
+										notTakenRemainedBlock->insert(notTakenRemainedBlock->end(), target1_inNotTaken);
+										
+										
+										MBB->remove(target2);
+										takenRemainedBlock->insert(takenRemainedBlock->end(), target2);
+										MachineInstr* target2_inNotTaken = MF.CloneMachineInstr(target2);
+										notTakenRemainedBlock->insert(notTakenRemainedBlock->end(), target2_inNotTaken);
+										
+										MBB->remove(target3);
+										takenRemainedBlock->insert(takenRemainedBlock->end(), target3);
+										MachineInstr* target3_inNotTaken = MF.CloneMachineInstr(target3);
+										notTakenRemainedBlock->insert(notTakenRemainedBlock->end(), target3_inNotTaken);
+										
+
+									}
+									
+									
+									
+									//we need to change target of previous branch
+									//1. branch in NewBB(taken-branch) //branchInTaken
+									//2. branch in detected block  //branchInDetected
+									//3. jump in detected block //jumpInDetected
+									//+ notTakenRemainedBlock should be placed between MBB and nextBB
+									
+									MachineInstr* takenRemainedJumpInstr = BuildMI(MF, DL3 , TII->get(OR1K::J)).addMBB(branchInTaken->getOperand(0).getMBB());
+									takenRemainedBlock->insert(takenRemainedBlock->end(), takenRemainedJumpInstr);
+									
+									//if notTakenRemainedBlock is placed well, we don't need it
+									//MachineInstr* notTakenRemainedJumpInstr = BuildMI(MF, DL3 , TII->get(OR1K::J)).addMBB(jumpInDetected->getOperand(0).getMBB());
+									//notTakenRemainedBlock->insert(notTakenRemainedBlock->end(), notTakenRemainedJumpInstr);
+									
+										
+									branchInTaken->getOperand(0).setMBB(takenRemainedBlock);
+									branchInDetected->getOperand(0).setMBB(takenRemainedBlock);
+									jumpInDetected->getOperand(0).setMBB(notTakenRemainedBlock);
+									
+									insertedBlock.push_back(takenRemainedBlock);
+									insertedBlock.push_back(notTakenRemainedBlock);
+								}
+								break;     //break for instr parsing in MBB
+							
+							}
+						}
+					}//end of for
+					
+					changedRelatedRegs.clear();
+					usedRelatedRegs.clear();
+					relatedInstrs.clear();
+					
+				}// end of machine function
+				insertedBlock.clear();
+			}
+				
+			void oldWrongDirectionCheckingTZDC(MachineFunction &MF){
 				std::list<MachineBasicBlock*> insertedBlock;
 				for(MachineFunction::iterator MBB = MF.begin(), MBE = MF.end(); MBB != MBE; ++MBB) {
 					llvm::MachineBasicBlock::iterator cmpInst=NULL;
@@ -1621,6 +2279,7 @@ int memReg=strInst->getOperand(1).getReg();
 							l.nop
 						
 							*/
+							MachineFunction::iterator nextBB;
 							MachineInstr* splitPointMI=NULL;
 							{
 								NewBB->insert(NewBB->instr_begin(), shadowCMP);
@@ -1655,7 +2314,7 @@ int memReg=strInst->getOperand(1).getReg();
 								MachineInstr *MInop3 = BuildMI(MF, DL3 , TII->get(OR1K::NOP)).addImm(0);
 								NewBB->push_back(MInop3);
 								
-								MachineFunction::iterator nextBB = MBB->getIterator();
+								nextBB = MBB->getIterator();
 								nextBB++;
 								
 								MachineInstr *MIJump = BuildMI(MF, DL3 , TII->get(OR1K::J)).addMBB(&*nextBB);
@@ -1725,6 +2384,7 @@ int memReg=strInst->getOperand(1).getReg();
 
 								
 								//detectedBB->setHasAddressTaken();
+								detectedBB->addSuccessor(&(*nextBB));
 								
 							}
 							
