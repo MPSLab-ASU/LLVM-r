@@ -84,10 +84,20 @@ namespace llvm{
 			cl::init(false),
 			cl::desc("add wrong direction checking for tzdc. it should be used with enable-tzdc-no-store-voting"),
 			cl::Hidden);
+	static cl::opt<bool> EnableTZDC_INT(
+			"enable-tzdc-int",
+			cl::init(false),
+			cl::desc("apply interleaving for tzdc. it should be used with enable-tzdc-no-store-voting"),
+			cl::Hidden);
 	static cl::opt<bool> EnableTZDC_SIG(
 			"enable-tzdc-sig",
 			cl::init(false),
 			cl::desc("add signature checking (in basic block) for tzdc. it should be used with enable-tzdc-no-store-voting"),
+			cl::Hidden);			
+	static cl::opt<bool> EnableTZDC_jumpRegCheck(
+			"enable-tzdc-jumpRegCheck",
+			cl::init(false),
+			cl::desc("add register checking before jalr and jr for tzdc. it should be used with enable-tzdc-no-store-voting"),
 			cl::Hidden);			
 	static cl::opt<bool> DEBUG_LBB(
 			"debug-lbb",
@@ -96,8 +106,9 @@ namespace llvm{
 			cl::Hidden);			
 
 
-			
+	std::list<MachineBasicBlock*> intSkipBlock;
 	static MachineBasicBlock* tzdcRecoveryMBB = NULL;
+	unsigned int signatureIndex = 10;
 			
 	struct NEMESIS : public MachineFunctionPass {
 		//const	TargetMachine &TM;
@@ -341,9 +352,7 @@ return false;
 					
 					if(EnableTZDC_WDC || EnableTZDC_SIG)
 						splitMultipleTerminator(MF);
-					
-					if(EnableTZDC_SIG)
-						insertTZDCSignature(MF);
+
 					
 					if(EnableTZDC_WDC)
 					{
@@ -367,7 +376,7 @@ return false;
 						//This part is integrated with wdc part.
 						//WDCAvailabilityCheck(MF);
 						
-
+						intSkipBlock.push_back(tzdcRecoveryMBB);
 					}
 					FUNCSIZE=100000;
 					
@@ -392,6 +401,17 @@ return false;
 						*/
 						wrongDirectionCheckingTZDC(MF);
 					}
+					
+					if(EnableTZDC_INT)
+					{
+						interleavingTZDC(MF);
+						
+					}
+					
+					
+					if(EnableTZDC_SIG)
+						insertTZDCSignature(MF);
+					
 					//insertVotingOperationsCmpOnlyTZDC(MF) //HWISOO. do we really need it? -> currently no. WDC will care for it
 					
 					/*HWISOO. After l.bf, is there any other instructions? -> then it will be problem
@@ -419,6 +439,11 @@ return false;
 					insertRecoveryBlock(MF);
 					
 					insertCopyingReturnAddress(MF);
+					
+					if(EnableTZDC_jumpRegCheck)
+						insertRegisterCheckForJump(MF);
+					
+					intSkipBlock.clear();
 				}
 				
 				
@@ -1447,6 +1472,194 @@ int memReg=strInst->getOperand(1).getReg();
 				}//end of for
 			}
 			
+			int distinguishInstr(llvm::MachineBasicBlock::iterator I){
+				/*
+				return values
+				-1: if registers are not ori/shadow regs, or >= 2 types
+				1: master
+				2: shadow1
+				3: shadow 2
+				*/
+				int result = 0; //initial
+				
+				for (unsigned int opcount=0 ; opcount < I->getNumOperands() ;opcount++){
+					if(I->getOperand(opcount).isReg())
+					{
+						unsigned int target = I->getOperand(opcount).getReg();
+						switch(target)
+						{
+							case OR1K::R1:
+							case OR1K::R2:
+							case OR1K::R3:
+							case OR1K::R4:
+							case OR1K::R5:
+							case OR1K::R6:
+							case OR1K::R7:
+							case OR1K::R9:
+							case OR1K::R11:
+							if(result == 0)
+								result = 1;
+							else if(result != 1)
+								result = -1;
+							break;
+							case OR1K::R10:
+							case OR1K::R12:
+							case OR1K::R13:
+							case OR1K::R14:
+							case OR1K::R15:
+							case OR1K::R16:
+							case OR1K::R17:
+							case OR1K::R19:
+							case OR1K::R8:
+							if(result == 0)
+								result = 2;
+							else if(result != 2)
+								result = -1;
+							break;
+							case OR1K::R21:
+							case OR1K::R22:
+							case OR1K::R23:
+							case OR1K::R24:
+							case OR1K::R25:
+							case OR1K::R26:
+							case OR1K::R27:
+							case OR1K::R29:
+							case OR1K::R31:
+							if(result == 0)
+								result = 3;
+							else if(result != 3)
+								result = -1;
+							break;
+							case OR1K::R18:
+							case OR1K::R20:
+							case OR1K::R28:
+							case OR1K::R30:
+								result = -1;
+							break;
+							default:
+							break;
+						}
+						if(result == -1)
+							break;
+					}
+				}
+				if (result == 0)
+					result = -1;
+				return result;
+			}
+			void emitInstrs(MachineFunction::iterator MBB, MachineBasicBlock::iterator I, std::list<MachineInstr*> &instrs)
+			{
+				for (std::list<MachineInstr*>::iterator iter = instrs.begin(); iter != instrs.end(); ++iter) 
+				{
+					MBB->remove(*iter);
+					MBB->insert(I, *iter);
+				}
+				instrs.clear();
+			}
+			
+			void interleavingTZDC(MachineFunction &MF){
+				for(MachineFunction::iterator MBB = MF.begin(), MBE = MF.end(); MBB != MBE; ++MBB) {
+					//skip inserted block
+					bool skipInterleaving = false;
+					for (std::list<MachineBasicBlock*>::iterator iter = intSkipBlock.begin(); iter != intSkipBlock.end(); ++iter) {
+						if(*iter == &(*MBB))
+						{
+							skipInterleaving=true;
+							break;
+						}
+					}
+					if(skipInterleaving) continue;
+					
+					std::list<MachineInstr*> InstrsM; //Matser
+					std::list<MachineInstr*> InstrsS1; //Shadow1
+					std::list<MachineInstr*> InstrsS2; //Shadow2
+
+					//DebugLoc DL3= MBB->begin()->getDebugLoc();
+					//const TargetInstrInfo *TII = MF.getSubtarget().getInstrInfo();
+					
+					
+					for (MachineBasicBlock::iterator I=MBB->begin(), E=MBB->end(); I !=E ; ++I){
+						//break. emit point
+						if(I->isTerminator())
+						{
+							emitInstrs(MBB, I, InstrsM);
+							emitInstrs(MBB, I, InstrsS1);
+							emitInstrs(MBB, I, InstrsS2);
+
+							break;
+						}
+						//intermediate. emit point //HWISOO:Not sure that this one will be called
+						else if( (I->isBranch() &&  !(I->getOpcode() > 96 && I->getOpcode() < 129)))
+						{
+							emitInstrs(MBB, I, InstrsM);
+							emitInstrs(MBB, I, InstrsS1);
+							emitInstrs(MBB, I, InstrsS2);
+							
+						}//intermediate. emit point
+						else if( I->getOpcode() == OR1K::JAL || I->getOpcode() == OR1K::JALR)
+						{
+							emitInstrs(MBB, I, InstrsM);
+							emitInstrs(MBB, I, InstrsS1);
+							emitInstrs(MBB, I, InstrsS2);		
+						}
+						
+						else if(I->getOpcode()==OR1K::NOP)
+							continue;
+
+						else if(I->getOpcode()==OR1K::INLINEASM) //intermediate. emit point
+						{
+							emitInstrs(MBB, I, InstrsM);
+							emitInstrs(MBB, I, InstrsS1);
+							emitInstrs(MBB, I, InstrsS2);													
+						}
+						
+						else
+						{
+							if(I->isCFIInstruction()||I->getOpcode()==OR1K::NOP)
+							{
+								continue;
+							}
+							int distinguishResult = distinguishInstr(I);
+							if(distinguishResult==-1) //intermediate. emit point
+							{
+								errs() << "DISTINGUISH-1\n F: "<< MF.getName() << "BB: " << I->getParent()->getName() << "Instr: " << *I << "\n";
+								I->dump();
+								for (unsigned int opcount=0 ; opcount < I->getNumOperands() ;opcount++){
+									errs()<<I->getOperand(opcount);
+								}
+								emitInstrs(MBB, I, InstrsM);
+								emitInstrs(MBB, I, InstrsS1);
+								emitInstrs(MBB, I, InstrsS2);
+							}
+							else
+							{
+								if(distinguishResult == 1)
+								{
+									InstrsM.push_back(I);
+								}
+								else if(distinguishResult == 2)
+								{
+									InstrsS1.push_back(I);
+								}
+								else if(distinguishResult == 3)
+								{
+									InstrsS2.push_back(I);
+								}
+								//errs() << "CheckNotZero\n F: "<< MF.getName() << "BB: " << I->getParent()->getName() << "Instr: " << *I << "\n";
+								//I->dump();								
+							}
+							
+							
+						}
+							
+						
+						
+					}//end of for
+					InstrsM.clear();
+					InstrsS1.clear();
+					InstrsS2.clear();
+				}// end of function
+			}// end of function
 			
 			void triplicateInstructionsTZDC(MachineFunction &MF){
 				//First part: triplication 
@@ -1694,7 +1907,6 @@ int memReg=strInst->getOperand(1).getReg();
 			
 				
 			void insertTZDCSignature(MachineFunction &MF){
-				std::list<MachineBasicBlock*> insertedBlock;
 				for(MachineFunction::iterator MBB = MF.begin(), MBE = MF.end(); MBB != MBE; ++MBB) {
 					//HWISOO. we need 3 signature-point
 					//1. start of the blcok
@@ -1702,11 +1914,48 @@ int memReg=strInst->getOperand(1).getReg();
 					//3. intermediate point: how can we select this point? and do we need it? (it means, do we still need asymmetric signature?)
 					//if there is only 1 inst, we skip inserting signature
 					
+					//skip inserted block
+					bool skipSIG = false;
+					for (std::list<MachineBasicBlock*>::iterator iter = intSkipBlock.begin(); iter != intSkipBlock.end(); ++iter) {
+						if(*iter == &(*MBB))
+						{
+							skipSIG=true;
+							break;
+						}
+					}
+					
+					
+					if(skipSIG) continue;
+					
+					
+					
+					DebugLoc DL3= MBB->begin()->getDebugLoc();
+					const TargetInstrInfo *TII = MF.getSubtarget().getInstrInfo();
 					
 					
 					MachineBasicBlock::iterator startPoint = MBB->begin();
 					MachineBasicBlock::iterator intermediatePoint;
-					MachineBasicBlock::iterator firstTerminator = MBB->getFirstTerminator();;
+					//MachineBasicBlock::iterator firstTerminator = MBB->getFirstTerminator();
+					//HWISOO. getFirstTerminator does not work well (maybe) as our previous codes modified it too much.
+					MachineBasicBlock::iterator firstTerminator;
+					MachineBasicBlock::iterator I=MBB->begin();
+					for (MachineBasicBlock::iterator E=MBB->end(); I !=E ; ++I){
+						unsigned int opcode = I->getOpcode();
+						if (I->isBranch() && !(opcode > 96 && opcode < 129))
+						{
+							//errs()<<"isBranch and notCmp?\n";
+							//I->dump();
+							break;
+						}
+						else if (opcode == OR1K::JR || opcode == OR1K::RET || opcode == OR1K::J)
+						{
+							//errs()<<"JR or RET\n";
+							//I->dump();
+							break;							
+						}
+						
+					}//end of for
+					firstTerminator = I;
 					
 					unsigned int count = 0;
 					
@@ -1721,9 +1970,15 @@ int memReg=strInst->getOperand(1).getReg();
 					for (unsigned int i=0; i<(count/2) ; ++intermediatePoint,i++);
 					
 					//Now we calculated for all 3 positions
-					//MBB->insert
-					//MBB->insert
-					//MBB->insert
+					
+					MachineInstr *Signature1 = BuildMI(MF, DL3 , TII->get(OR1K::ADDI)).addReg(OR1K::R20).addReg(OR1K::R20).addImm(signatureIndex*3);
+					MachineInstr *Signature2 = BuildMI(MF, DL3 , TII->get(OR1K::ADDI)).addReg(OR1K::R28).addReg(OR1K::R28).addImm(signatureIndex*1);
+					MachineInstr *Signature3 = BuildMI(MF, DL3 , TII->get(OR1K::ADDI)).addReg(OR1K::R28).addReg(OR1K::R28).addImm(signatureIndex*2);
+					signatureIndex+=1;
+					
+					MBB->insert(startPoint,Signature1);
+					MBB->insert(intermediatePoint,Signature2);
+					MBB->insert(firstTerminator,Signature3);
 					
 					
 					//startPoint
@@ -1732,6 +1987,50 @@ int memReg=strInst->getOperand(1).getReg();
 				}// end of machine function
 			}// end of function
 				
+				
+			void insertRegisterCheckForJump(MachineFunction &MF){
+				for(MachineFunction::iterator MBB = MF.begin(), MBE = MF.end(); MBB != MBE; ++MBB) {
+					DebugLoc DL3= MBB->begin()->getDebugLoc();
+					const TargetInstrInfo *TII = MF.getSubtarget().getInstrInfo();
+				
+					for (MachineBasicBlock::iterator I=MBB->begin(), E=MBB->end(); I !=E ; ++I){
+						if(I->getOpcode()==OR1K::JALR || I->getOpcode()==OR1K::JR || I->getOpcode() == OR1K::RET)
+						{
+							unsigned int targetReg=OR1K::R30;
+							if(I->getOpcode()==OR1K::RET)
+								targetReg=OR1K::R9; //HWISOO. can I sure that it is always R9?
+							else
+							{
+								assert(I->getOperand(0).isReg());
+								targetReg = I->getOperand(0).getReg();
+							}
+							if(targetReg == OR1K::R30) continue;
+							
+							
+							MachineInstr *cmpInst = BuildMI(MF, DL3 , TII->get(OR1K::SFNE)).addReg(targetReg).addReg(getSlaveReg1(targetReg));
+							MBB->insert(I,cmpInst);
+							
+							MachineInstr *MImfspr = BuildMI(MF, DL3 , TII->get(OR1K::MFSPR)).addReg(OR1K::R30).addReg(OR1K::R0).addImm(16);
+							MBB->insert(I,MImfspr);
+							
+							
+							MachineInstr *MIaddi = BuildMI(MF, DL3 , TII->get(OR1K::ADDI)).addReg(OR1K::R30).addReg(OR1K::R30).addImm(16);
+							MBB->insert(I,MIaddi);
+							
+							MachineInstr *MIBranch = BuildMI(MF, DL3 , TII->get(OR1K::BF)).addMBB(tzdcRecoveryMBB);
+							MBB->insert(I,MIBranch);
+							
+							MachineInstr *MInop = BuildMI(MF, DL3 , TII->get(OR1K::NOP)).addImm(0);
+							MBB->insert(I,MInop);
+						}					
+						else{
+
+						}
+						
+					}
+				}// end of machine function
+
+			}
 				
 			void insertRecoveryBlock(MachineFunction &MF){
 				
@@ -2115,6 +2414,8 @@ int memReg=strInst->getOperand(1).getReg();
 								//N
 								insertedBlock.push_back(NewBB);
 								insertedBlock.push_back(detectedBB);
+								intSkipBlock.push_back(NewBB);
+								intSkipBlock.push_back(detectedBB);
 								
 								cmpInst=NULL;
 								
@@ -2199,6 +2500,8 @@ int memReg=strInst->getOperand(1).getReg();
 									
 									insertedBlock.push_back(takenRemainedBlock);
 									insertedBlock.push_back(notTakenRemainedBlock);
+									//intSkipBlock.push_back(takenRemainedBlock);
+									//intSkipBlock.push_back(notTakenRemainedBlock);
 								}
 								break;     //break for instr parsing in MBB
 							
