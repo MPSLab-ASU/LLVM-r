@@ -214,7 +214,7 @@ bool Filler::runOnMachineBasicBlock(MachineBasicBlock &MBB) {
 
 			if (DelaySlotCopyR9ToR22)
 			{
-				if (I->getOpcode()==OR1K::JAL)
+				if (I->getOpcode()==OR1K::JAL || I->getOpcode()==OR1K::JALR)
 					BuildMI(MBB, std::next(I), DebugLoc(), TII->get(OR1K::ADDI), OR1K::R22).addReg(OR1K::R9).addImm(0);
 				else
 					BuildMI(MBB, std::next(I), DebugLoc(), TII->get(OR1K::NOP)).addImm(0);

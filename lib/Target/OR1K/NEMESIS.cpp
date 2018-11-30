@@ -89,16 +89,53 @@ namespace llvm{
 			cl::init(false),
 			cl::desc("apply interleaving for tzdc. it should be used with enable-tzdc-no-store-voting"),
 			cl::Hidden);
+	static cl::opt<bool> EnableTZDC_INT_4INTERLEAVING(
+			"enable-tzdc-int-4interleaving",
+			cl::init(false),
+			cl::desc("apply interleaving for tzdc. it should be used with enable-tzdc-no-store-voting. it should not be used with enable-tzdc-int"),
+			cl::Hidden);
+	static cl::opt<bool> EnableTZDC_INT_5INTERLEAVING(
+			"enable-tzdc-int-5interleaving",
+			cl::init(false),
+			cl::desc("apply interleaving for tzdc. it should be used with enable-tzdc-no-store-voting. it should not be used with enable-tzdc-int"),
+			cl::Hidden);
+
 	static cl::opt<bool> EnableTZDC_SIG(
 			"enable-tzdc-sig",
 			cl::init(false),
 			cl::desc("add signature checking (in basic block) for tzdc. it should be used with enable-tzdc-no-store-voting"),
-			cl::Hidden);			
+			cl::Hidden);
+	static cl::opt<bool> EnableTZDC_3SIG(
+			"enable-tzdc-3sig",
+			cl::init(false),
+			cl::desc("add signature checking with 3regs for tzdc. it should be used with enable-tzdc-no-store-voting"),
+			cl::Hidden);
+	static cl::opt<bool> EnableTZDC_3SIG_WITH_WDC(
+			"enable-tzdc-3sig-with-wdc",
+			cl::init(false),
+			cl::desc("add signature checking with 3regs for tzdc. it should be used with enable-tzdc-no-store-voting. It also inserts end of block signature to wdc blocks"),
+			cl::Hidden);
+	static cl::opt<bool> EnableTZDC_3SIG_WITH_WDC_INT(
+			"enable-tzdc-3sig-with-wdc-int",
+			cl::init(false),
+			cl::desc("add signature checking with 3regs for tzdc. it should be used with enable-tzdc-no-store-voting. It also inserts end of block signature to wdc blocks. And it will be interleaved between instructions"),
+			cl::Hidden);
 	static cl::opt<bool> EnableTZDC_jumpRegCheck(
 			"enable-tzdc-jumpRegCheck",
 			cl::init(false),
 			cl::desc("add register checking before jalr and jr for tzdc. it should be used with enable-tzdc-no-store-voting"),
-			cl::Hidden);			
+			cl::Hidden);	
+	static cl::opt<bool> tzdcComplexVoting(
+			"enable-tzdc-complexVoting",
+			cl::init(false),
+			cl::desc("do complex voting for tzdc. it should be used with enable-tzdc-no-store-voting"),
+			cl::Hidden);	
+	static cl::opt<bool> EnableSWIFTR_jumpRegCheck(
+			"enable-swiftr-jumpRegCheck",
+			cl::init(false),
+			cl::desc("add register checking before jalr and jr for swiftr."),
+			cl::Hidden);	
+			
 	static cl::opt<bool> DEBUG_LBB(
 			"debug-lbb",
 			cl::init(false),
@@ -350,7 +387,7 @@ return false;
 				if (EnableTZDCNoStoreVoting)
 				{
 					
-					if(EnableTZDC_WDC || EnableTZDC_SIG)
+					if(EnableTZDC_WDC || EnableTZDC_SIG || EnableTZDC_3SIG)
 						splitMultipleTerminator(MF);
 
 					
@@ -407,11 +444,24 @@ return false;
 						interleavingTZDC(MF);
 						
 					}
-					
-					
+                    else if(EnableTZDC_INT_4INTERLEAVING)
+                    {
+                        interleavingTZDC_4Interleaving(MF);
+                    }
+                    else if(EnableTZDC_INT_5INTERLEAVING)
+                    {
+                        interleavingTZDC_5Interleaving(MF);
+                    }
+                    
 					if(EnableTZDC_SIG)
 						insertTZDCSignature(MF);
-					
+					else if (EnableTZDC_3SIG)
+						insertTZDC_3Signature(MF);
+					else if (EnableTZDC_3SIG_WITH_WDC)
+                        insertTZDC_3Signature_withWDC(MF);
+                    else if (EnableTZDC_3SIG_WITH_WDC_INT)
+                        insertTZDC_3Signature_withWDC_INT(MF);
+                    
 					//insertVotingOperationsCmpOnlyTZDC(MF) //HWISOO. do we really need it? -> currently no. WDC will care for it
 					
 					/*HWISOO. After l.bf, is there any other instructions? -> then it will be problem
@@ -436,7 +486,10 @@ return false;
 					
 					*/
 					
-					insertRecoveryBlock(MF);
+					if(tzdcComplexVoting)
+						insertComplexRecoveryBlock(MF);
+					else
+						insertRecoveryBlock(MF);
 					
 					insertCopyingReturnAddress(MF);
 					
@@ -477,6 +530,8 @@ return false;
 					
 					insertCopyingReturnAddress(MF);
 					
+                    if(EnableSWIFTR_jumpRegCheck)
+                        insertSWIFTRRegisterCheckForJump(MF);
 				}
 
 			
@@ -1556,14 +1611,329 @@ int memReg=strInst->getOperand(1).getReg();
 				}
 				instrs.clear();
 			}
+
+
+			void emitInstrs_4Interleaving(MachineFunction::iterator MBB, MachineBasicBlock::iterator I, std::list<MachineInstr*> &instrsM, std::list<MachineInstr*> &instrsS1, std::list<MachineInstr*> &instrsS2)
+			{
+                //count # of instrs.
+                unsigned int countM=0, countS1=0, countS2=0;
+                countM = instrsM.size();
+                countS1 = instrsS1.size();
+                countS2 = instrsS2.size();
+                
+                
+                
+                if( countM != countS1 || countM != countS2)
+                {
+                    if(countS1-1 == countM && countS1-1 == countS2)
+                    {
+                        errs()<<"\nCHECK THAT it is a bug with r12 reservation(give up interleaving4)\n";
+                        MBB->dump();
+                        
+                        errs()<< "----I---\n";
+                        I->dump();
+                        
+                        errs()<< "-------\n";
+                        
+                        errs()<<"instrsM:"<<countM<<", instrS1"<<countS1<<", instrS2"<<countS2<<"\n";
+                        
+                        errs()<<"----------instrM---------\n";
+                        for (std::list<MachineInstr*>::iterator iter = instrsM.begin(); iter != instrsM.end(); ++iter) 
+                            (*iter)->dump();
+                        errs()<<"----------instrS1---------\n";
+                        for (std::list<MachineInstr*>::iterator iter = instrsS1.begin(); iter != instrsS1.end(); ++iter) 
+                            (*iter)->dump();                    
+                        errs()<<"----------instrS2---------\n";
+                        for (std::list<MachineInstr*>::iterator iter = instrsS2.begin(); iter != instrsS2.end(); ++iter) 
+                            (*iter)->dump();
+                        
+                        
+                        
+                        
+                        
+                        emitInstrs(MBB, I, instrsM);
+                        emitInstrs(MBB, I, instrsS1);
+                        emitInstrs(MBB, I, instrsS2);
+                        return;
+                    }
+                    
+                    else if (!( ((countM-1) == countS1) && ((countM-1) == countS2)))
+                    {
+                        errs()<<"CHECK! check that why # of instrs for master, shadow1, shadow2 are different\n";
+                        MBB->dump();
+                        
+                        errs()<< "----I---\n";
+                        I->dump();
+                        
+                        errs()<< "-------\n";
+                        
+                        errs()<<"instrsM:"<<countM<<", instrS1"<<countS1<<", instrS2"<<countS2<<"\n";
+                        
+                        errs()<<"----------instrM---------\n";
+                        for (std::list<MachineInstr*>::iterator iter = instrsM.begin(); iter != instrsM.end(); ++iter) 
+                            (*iter)->dump();
+                        errs()<<"----------instrS1---------\n";
+                        for (std::list<MachineInstr*>::iterator iter = instrsS1.begin(); iter != instrsS1.end(); ++iter) 
+                            (*iter)->dump();                    
+                        errs()<<"----------instrS2---------\n";
+                        for (std::list<MachineInstr*>::iterator iter = instrsS2.begin(); iter != instrsS2.end(); ++iter) 
+                            (*iter)->dump();
+                        
+                        
+                        exit(0);
+                    }
+                }
+                
+                if (countS1 <= 4)
+                {
+                    emitInstrs(MBB, I, instrsM);
+                    emitInstrs(MBB, I, instrsS1);
+                    emitInstrs(MBB, I, instrsS2);      
+                }
+                else
+                {
+                    std::list<MachineInstr*>::iterator iterM = instrsM.begin();
+                    std::list<MachineInstr*>::iterator iterS1 = instrsS1.begin();
+                    std::list<MachineInstr*>::iterator iterS2 = instrsS2.begin();
+
+                    for(int i=0; i<4; i++)
+                    {
+                        MBB->remove(*iterM);
+                        MBB->insert(I, *iterM);
+                        iterM++;
+                    }
+                    for(int i=0; i<2; i++)
+                    {
+                        MBB->remove(*iterS1);
+                        MBB->insert(I, *iterS1);
+                        iterS1++;
+                    }
+                    for(int i=0; i<countS1-4; i++)
+                    {
+                        MBB->remove(*iterM);
+                        MBB->insert(I, *iterM);
+                        iterM++;
+                        MBB->remove(*iterS1);
+                        MBB->insert(I, *iterS1);
+                        iterS1++;
+                        MBB->remove(*iterS2);
+                        MBB->insert(I, *iterS2);
+                        iterS2++;
+                    }
+                    if(countM-1 == countS1)
+                    {
+                        MBB->remove(*iterM);
+                        MBB->insert(I, *iterM);
+                        iterM++;                        
+                    }
+                    
+                    for(int i=0; i<2; i++)
+                    {
+                        MBB->remove(*iterS1);
+                        MBB->insert(I, *iterS1);
+                        iterS1++;
+                    }
+                    for(int i=0; i<4; i++)
+                    {
+                        MBB->remove(*iterS2);
+                        MBB->insert(I, *iterS2);
+                        iterS2++;
+                    }                    
+                    
+                    if(iterM != instrsM.end() || iterS1 != instrsS1.end() || iterS2 != instrsS2.end())
+                    {
+                        errs()<<"Check that emit 4 interleaving does not work well.\n";
+                        MBB->dump();
+                        exit(1);
+
+                    }
+                    
+                    
+                    instrsM.clear();
+                    instrsS1.clear();
+                    instrsS2.clear();
+
+                }
+                
+                /*
+				for (std::list<MachineInstr*>::iterator iter = instrs.begin(); iter != instrs.end(); ++iter) 
+				{
+					MBB->remove(*iter);
+					MBB->insert(I, *iter);
+				}
+				instrs.clear();
+                
+                */
+			}
+
+
+
+
+			void emitInstrs_5Interleaving(MachineFunction::iterator MBB, MachineBasicBlock::iterator I, std::list<MachineInstr*> &instrsM, std::list<MachineInstr*> &instrsS1, std::list<MachineInstr*> &instrsS2)
+			{
+                //count # of instrs.
+                unsigned int countM=0, countS1=0, countS2=0;
+                countM = instrsM.size();
+                countS1 = instrsS1.size();
+                countS2 = instrsS2.size();
+                
+                
+                
+                if( countM != countS1 || countM != countS2)
+                {
+                    if(countS1-1 == countM && countS1-1 == countS2)
+                    {
+                        errs()<<"\nCHECK THAT it is a bug with r12 reservation(give up interleaving4)\n";
+                        MBB->dump();
+                        
+                        errs()<< "----I---\n";
+                        I->dump();
+                        
+                        errs()<< "-------\n";
+                        
+                        errs()<<"instrsM:"<<countM<<", instrS1"<<countS1<<", instrS2"<<countS2<<"\n";
+                        
+                        errs()<<"----------instrM---------\n";
+                        for (std::list<MachineInstr*>::iterator iter = instrsM.begin(); iter != instrsM.end(); ++iter) 
+                            (*iter)->dump();
+                        errs()<<"----------instrS1---------\n";
+                        for (std::list<MachineInstr*>::iterator iter = instrsS1.begin(); iter != instrsS1.end(); ++iter) 
+                            (*iter)->dump();                    
+                        errs()<<"----------instrS2---------\n";
+                        for (std::list<MachineInstr*>::iterator iter = instrsS2.begin(); iter != instrsS2.end(); ++iter) 
+                            (*iter)->dump();
+                        
+                        
+                        
+                        
+                        
+                        emitInstrs(MBB, I, instrsM);
+                        emitInstrs(MBB, I, instrsS1);
+                        emitInstrs(MBB, I, instrsS2);
+                        return;
+                    }
+                    
+                    else if (!( ((countM-1) == countS1) && ((countM-1) == countS2)))
+                    {
+                        errs()<<"CHECK! check that why # of instrs for master, shadow1, shadow2 are different\n";
+                        MBB->dump();
+                        
+                        errs()<< "----I---\n";
+                        I->dump();
+                        
+                        errs()<< "-------\n";
+                        
+                        errs()<<"instrsM:"<<countM<<", instrS1"<<countS1<<", instrS2"<<countS2<<"\n";
+                        
+                        errs()<<"----------instrM---------\n";
+                        for (std::list<MachineInstr*>::iterator iter = instrsM.begin(); iter != instrsM.end(); ++iter) 
+                            (*iter)->dump();
+                        errs()<<"----------instrS1---------\n";
+                        for (std::list<MachineInstr*>::iterator iter = instrsS1.begin(); iter != instrsS1.end(); ++iter) 
+                            (*iter)->dump();                    
+                        errs()<<"----------instrS2---------\n";
+                        for (std::list<MachineInstr*>::iterator iter = instrsS2.begin(); iter != instrsS2.end(); ++iter) 
+                            (*iter)->dump();
+                        
+                        
+                        exit(0);
+                    }
+                }
+                
+                if (countS1 <= 5)
+                {
+                    emitInstrs(MBB, I, instrsM);
+                    emitInstrs(MBB, I, instrsS1);
+                    emitInstrs(MBB, I, instrsS2);      
+                }
+                else
+                {
+                    std::list<MachineInstr*>::iterator iterM = instrsM.begin();
+                    std::list<MachineInstr*>::iterator iterS1 = instrsS1.begin();
+                    std::list<MachineInstr*>::iterator iterS2 = instrsS2.begin();
+
+                    for(int i=0; i<5; i++)
+                    {
+                        MBB->remove(*iterM);
+                        MBB->insert(I, *iterM);
+                        iterM++;
+                    }
+                    for(int i=0; i<3; i++)
+                    {
+                        MBB->remove(*iterS1);
+                        MBB->insert(I, *iterS1);
+                        iterS1++;
+                    }
+                    for(int i=0; i<countS1-5; i++)
+                    {
+                        MBB->remove(*iterM);
+                        MBB->insert(I, *iterM);
+                        iterM++;
+                        MBB->remove(*iterS1);
+                        MBB->insert(I, *iterS1);
+                        iterS1++;
+                        MBB->remove(*iterS2);
+                        MBB->insert(I, *iterS2);
+                        iterS2++;
+                    }
+                    if(countM-1 == countS1)
+                    {
+                        MBB->remove(*iterM);
+                        MBB->insert(I, *iterM);
+                        iterM++;                        
+                    }
+                    
+                    for(int i=0; i<2; i++)
+                    {
+                        MBB->remove(*iterS1);
+                        MBB->insert(I, *iterS1);
+                        iterS1++;
+                    }
+                    for(int i=0; i<5; i++)
+                    {
+                        MBB->remove(*iterS2);
+                        MBB->insert(I, *iterS2);
+                        iterS2++;
+                    }                    
+                    
+                    if(iterM != instrsM.end() || iterS1 != instrsS1.end() || iterS2 != instrsS2.end())
+                    {
+                        errs()<<"Check that emit 4 interleaving does not work well.\n";
+                        MBB->dump();
+                        exit(1);
+
+                    }
+                    
+                    
+                    instrsM.clear();
+                    instrsS1.clear();
+                    instrsS2.clear();
+
+                }
+                
+                /*
+				for (std::list<MachineInstr*>::iterator iter = instrs.begin(); iter != instrs.end(); ++iter) 
+				{
+					MBB->remove(*iter);
+					MBB->insert(I, *iter);
+				}
+				instrs.clear();
+                
+                */
+			}
 			
 			void interleavingTZDC(MachineFunction &MF){
 				for(MachineFunction::iterator MBB = MF.begin(), MBE = MF.end(); MBB != MBE; ++MBB) {
 					//skip inserted block
+					
+                    
+                    
 					bool skipInterleaving = false;
 					for (std::list<MachineBasicBlock*>::iterator iter = intSkipBlock.begin(); iter != intSkipBlock.end(); ++iter) {
 						if(*iter == &(*MBB))
 						{
+                            errs()<<"This block will be skipped\n";
+                            MBB->dump();
 							skipInterleaving=true;
 							break;
 						}
@@ -1576,8 +1946,8 @@ int memReg=strInst->getOperand(1).getReg();
 
 					//DebugLoc DL3= MBB->begin()->getDebugLoc();
 					//const TargetInstrInfo *TII = MF.getSubtarget().getInstrInfo();
-					
-					
+
+                    
 					for (MachineBasicBlock::iterator I=MBB->begin(), E=MBB->end(); I !=E ; ++I){
 						//break. emit point
 						if(I->isTerminator())
@@ -1585,15 +1955,28 @@ int memReg=strInst->getOperand(1).getReg();
 							emitInstrs(MBB, I, InstrsM);
 							emitInstrs(MBB, I, InstrsS1);
 							emitInstrs(MBB, I, InstrsS2);
-
+                            
 							break;
 						}
+                        
+                        else if(std::next(I) == E)
+                        {
+                            
+							emitInstrs(MBB, I, InstrsM);
+							emitInstrs(MBB, I, InstrsS1);
+							emitInstrs(MBB, I, InstrsS2);
+
+                            
+							break;
+                        
+                        }
 						//intermediate. emit point //HWISOO:Not sure that this one will be called
 						else if( (I->isBranch() &&  !(I->getOpcode() > 96 && I->getOpcode() < 129)))
 						{
 							emitInstrs(MBB, I, InstrsM);
 							emitInstrs(MBB, I, InstrsS1);
 							emitInstrs(MBB, I, InstrsS2);
+                            
 							
 						}//intermediate. emit point
 						else if( I->getOpcode() == OR1K::JAL || I->getOpcode() == OR1K::JALR)
@@ -1601,6 +1984,7 @@ int memReg=strInst->getOperand(1).getReg();
 							emitInstrs(MBB, I, InstrsM);
 							emitInstrs(MBB, I, InstrsS1);
 							emitInstrs(MBB, I, InstrsS2);		
+                            
 						}
 						
 						else if(I->getOpcode()==OR1K::NOP)
@@ -1610,7 +1994,8 @@ int memReg=strInst->getOperand(1).getReg();
 						{
 							emitInstrs(MBB, I, InstrsM);
 							emitInstrs(MBB, I, InstrsS1);
-							emitInstrs(MBB, I, InstrsS2);													
+							emitInstrs(MBB, I, InstrsS2);	
+                         
 						}
 						
 						else
@@ -1660,6 +2045,371 @@ int memReg=strInst->getOperand(1).getReg();
 					InstrsS2.clear();
 				}// end of function
 			}// end of function
+            
+            
+            
+            
+            
+            
+            void interleavingTZDC_4Interleaving(MachineFunction &MF){
+				for(MachineFunction::iterator MBB = MF.begin(), MBE = MF.end(); MBB != MBE; ++MBB) {
+					//skip inserted block
+					
+                    
+                    
+					bool skipInterleaving = false;
+					for (std::list<MachineBasicBlock*>::iterator iter = intSkipBlock.begin(); iter != intSkipBlock.end(); ++iter) {
+						if(*iter == &(*MBB))
+						{
+                            errs()<<"This block will be skipped\n";
+                            MBB->dump();
+							skipInterleaving=true;
+							break;
+						}
+					}
+					if(skipInterleaving) continue;
+					
+					std::list<MachineInstr*> InstrsM; //Matser
+					std::list<MachineInstr*> InstrsS1; //Shadow1
+					std::list<MachineInstr*> InstrsS2; //Shadow2
+
+					//DebugLoc DL3= MBB->begin()->getDebugLoc();
+					//const TargetInstrInfo *TII = MF.getSubtarget().getInstrInfo();
+
+                    
+					for (MachineBasicBlock::iterator I=MBB->begin(), E=MBB->end(); I !=E ; ++I){
+						//break. emit point
+						if(I->isTerminator())
+						{
+                            //HWISOO. in some cases we need to include this for instrsM or S1 or S2
+                            
+                            if( !(I->isBranch()) &&   !(I->isCall()) && !(I->isReturn()) && !(I->isCompare()) &&  !(I->getOpcode() == OR1K::NOP || (I->getOpcode() > 96 && I->getOpcode() < 129) /*comparee*/) )
+                            {
+                                int distinguishResult = distinguishInstr(I);
+
+                                if(distinguishResult==-1) //intermediate. emit point
+                                {
+                                    errs() << "distinguishResult in the end of MBB\n"<< MF.getName() << "BB: " << I->getParent()->getName() << "Instr: " << *I << "\n";
+                                    exit(1);
+                                }
+                                else
+                                {
+                                    if(distinguishResult == 1)
+                                    {
+                                        InstrsM.push_back(I);
+                                    }
+                                    else if(distinguishResult == 2)
+                                    {
+                                        InstrsS1.push_back(I);
+                                    }
+                                    else if(distinguishResult == 3)
+                                    {
+                                        InstrsS2.push_back(I);
+                                    }
+                                    //errs() << "CheckNotZero\n F: "<< MF.getName() << "BB: " << I->getParent()->getName() << "Instr: " << *I << "\n";
+                                    //I->dump();								
+                                }
+                                
+                                I++;
+                            }
+                            
+                            
+							emitInstrs_4Interleaving(MBB, I, InstrsM, InstrsS1, InstrsS2);
+                            
+							break;
+						}
+                        
+                        else if(std::next(I) == E)
+                        {
+                            //HWISOO. in some cases we need to include this for instrsM or S1 or S2
+                            
+                            if( !(I->isBranch()) &&   !(I->isCall()) && !(I->isReturn()) && !(I->isCompare()) &&  !(I->getOpcode() == OR1K::NOP || (I->getOpcode() > 96 && I->getOpcode() < 129) /*comparee*/) )
+                            {
+                                int distinguishResult = distinguishInstr(I);
+
+                                if(distinguishResult==-1) //intermediate. emit point
+                                {
+                                    errs() << "distinguishResult in the end of MBB\n"<< MF.getName() << "BB: " << I->getParent()->getName() << "Instr: " << *I << "\n";
+                                    exit(1);
+                                }
+                                else
+                                {
+                                    if(distinguishResult == 1)
+                                    {
+                                        InstrsM.push_back(I);
+                                    }
+                                    else if(distinguishResult == 2)
+                                    {
+                                        InstrsS1.push_back(I);
+                                    }
+                                    else if(distinguishResult == 3)
+                                    {
+                                        InstrsS2.push_back(I);
+                                    }
+                                    //errs() << "CheckNotZero\n F: "<< MF.getName() << "BB: " << I->getParent()->getName() << "Instr: " << *I << "\n";
+                                    //I->dump();								
+                                }
+                                
+                                I++;
+                            }
+							
+                            
+                            emitInstrs_4Interleaving(MBB, I, InstrsM, InstrsS1, InstrsS2);
+
+                            
+							break;
+                        
+                        }
+						//intermediate. emit point //HWISOO:Not sure that this one will be called
+						else if( (I->isBranch() &&  !(I->getOpcode() > 96 && I->getOpcode() < 129)))
+						{
+							emitInstrs_4Interleaving(MBB, I, InstrsM, InstrsS1, InstrsS2);
+                            
+							
+						}//intermediate. emit point
+						else if( I->getOpcode() == OR1K::JAL || I->getOpcode() == OR1K::JALR)
+						{
+							emitInstrs_4Interleaving(MBB, I, InstrsM, InstrsS1, InstrsS2);
+                            
+						}
+						
+						else if(I->getOpcode()==OR1K::NOP)
+							continue;
+
+						else if(I->getOpcode()==OR1K::INLINEASM) //intermediate. emit point
+						{
+							emitInstrs_4Interleaving(MBB, I, InstrsM, InstrsS1, InstrsS2);
+                         
+						}
+						
+						else
+						{
+							if(I->isCFIInstruction()||I->getOpcode()==OR1K::NOP)
+							{
+								continue;
+							}
+							int distinguishResult = distinguishInstr(I);
+							if(distinguishResult==-1) //intermediate. emit point
+							{
+								errs() << "DISTINGUISH-1\n F: "<< MF.getName() << "BB: " << I->getParent()->getName() << "Instr: " << *I << "\n";
+								I->dump();
+								for (unsigned int opcount=0 ; opcount < I->getNumOperands() ;opcount++){
+									errs()<<I->getOperand(opcount);
+								}
+								emitInstrs_4Interleaving(MBB, I, InstrsM, InstrsS1, InstrsS2);
+							}
+							else
+							{
+								if(distinguishResult == 1)
+								{
+									InstrsM.push_back(I);
+								}
+								else if(distinguishResult == 2)
+								{
+									InstrsS1.push_back(I);
+								}
+								else if(distinguishResult == 3)
+								{
+									InstrsS2.push_back(I);
+								}
+								//errs() << "CheckNotZero\n F: "<< MF.getName() << "BB: " << I->getParent()->getName() << "Instr: " << *I << "\n";
+								//I->dump();								
+							}
+							
+							
+						}
+							
+						
+						
+					}//end of for
+					InstrsM.clear();
+					InstrsS1.clear();
+					InstrsS2.clear();
+				}// end of function
+			}// end of function
+            
+            
+            
+            
+            void interleavingTZDC_5Interleaving(MachineFunction &MF){
+				for(MachineFunction::iterator MBB = MF.begin(), MBE = MF.end(); MBB != MBE; ++MBB) {
+					//skip inserted block
+					
+                    
+                    
+					bool skipInterleaving = false;
+					for (std::list<MachineBasicBlock*>::iterator iter = intSkipBlock.begin(); iter != intSkipBlock.end(); ++iter) {
+						if(*iter == &(*MBB))
+						{
+                            errs()<<"This block will be skipped\n";
+                            MBB->dump();
+							skipInterleaving=true;
+							break;
+						}
+					}
+					if(skipInterleaving) continue;
+					
+					std::list<MachineInstr*> InstrsM; //Matser
+					std::list<MachineInstr*> InstrsS1; //Shadow1
+					std::list<MachineInstr*> InstrsS2; //Shadow2
+
+					//DebugLoc DL3= MBB->begin()->getDebugLoc();
+					//const TargetInstrInfo *TII = MF.getSubtarget().getInstrInfo();
+
+                    
+					for (MachineBasicBlock::iterator I=MBB->begin(), E=MBB->end(); I !=E ; ++I){
+						//break. emit point
+						if(I->isTerminator())
+						{
+                            //HWISOO. in some cases we need to include this for instrsM or S1 or S2
+                            
+                            if( !(I->isBranch()) &&   !(I->isCall()) && !(I->isReturn()) && !(I->isCompare()) &&  !(I->getOpcode() == OR1K::NOP || (I->getOpcode() > 96 && I->getOpcode() < 129) /*comparee*/) )
+                            {
+                                int distinguishResult = distinguishInstr(I);
+
+                                if(distinguishResult==-1) //intermediate. emit point
+                                {
+                                    errs() << "distinguishResult in the end of MBB\n"<< MF.getName() << "BB: " << I->getParent()->getName() << "Instr: " << *I << "\n";
+                                    exit(1);
+                                }
+                                else
+                                {
+                                    if(distinguishResult == 1)
+                                    {
+                                        InstrsM.push_back(I);
+                                    }
+                                    else if(distinguishResult == 2)
+                                    {
+                                        InstrsS1.push_back(I);
+                                    }
+                                    else if(distinguishResult == 3)
+                                    {
+                                        InstrsS2.push_back(I);
+                                    }
+                                    //errs() << "CheckNotZero\n F: "<< MF.getName() << "BB: " << I->getParent()->getName() << "Instr: " << *I << "\n";
+                                    //I->dump();								
+                                }
+                                
+                                I++;
+                            }
+                            
+                            
+							emitInstrs_5Interleaving(MBB, I, InstrsM, InstrsS1, InstrsS2);
+                            
+							break;
+						}
+                        
+                        else if(std::next(I) == E)
+                        {
+                            //HWISOO. in some cases we need to include this for instrsM or S1 or S2
+                            
+                            if( !(I->isBranch()) &&   !(I->isCall()) && !(I->isReturn()) && !(I->isCompare()) &&  !(I->getOpcode() == OR1K::NOP || (I->getOpcode() > 96 && I->getOpcode() < 129) /*comparee*/) )
+                            {
+                                int distinguishResult = distinguishInstr(I);
+
+                                if(distinguishResult==-1) //intermediate. emit point
+                                {
+                                    errs() << "distinguishResult in the end of MBB\n"<< MF.getName() << "BB: " << I->getParent()->getName() << "Instr: " << *I << "\n";
+                                    exit(1);
+                                }
+                                else
+                                {
+                                    if(distinguishResult == 1)
+                                    {
+                                        InstrsM.push_back(I);
+                                    }
+                                    else if(distinguishResult == 2)
+                                    {
+                                        InstrsS1.push_back(I);
+                                    }
+                                    else if(distinguishResult == 3)
+                                    {
+                                        InstrsS2.push_back(I);
+                                    }
+                                    //errs() << "CheckNotZero\n F: "<< MF.getName() << "BB: " << I->getParent()->getName() << "Instr: " << *I << "\n";
+                                    //I->dump();								
+                                }
+                                
+                                I++;
+                            }
+							
+                            
+                            emitInstrs_5Interleaving(MBB, I, InstrsM, InstrsS1, InstrsS2);
+
+                            
+							break;
+                        
+                        }
+						//intermediate. emit point //HWISOO:Not sure that this one will be called
+						else if( (I->isBranch() &&  !(I->getOpcode() > 96 && I->getOpcode() < 129)))
+						{
+							emitInstrs_5Interleaving(MBB, I, InstrsM, InstrsS1, InstrsS2);
+                            
+							
+						}//intermediate. emit point
+						else if( I->getOpcode() == OR1K::JAL || I->getOpcode() == OR1K::JALR)
+						{
+							emitInstrs_5Interleaving(MBB, I, InstrsM, InstrsS1, InstrsS2);
+                            
+						}
+						
+						else if(I->getOpcode()==OR1K::NOP)
+							continue;
+
+						else if(I->getOpcode()==OR1K::INLINEASM) //intermediate. emit point
+						{
+							emitInstrs_5Interleaving(MBB, I, InstrsM, InstrsS1, InstrsS2);
+                         
+						}
+						
+						else
+						{
+							if(I->isCFIInstruction()||I->getOpcode()==OR1K::NOP)
+							{
+								continue;
+							}
+							int distinguishResult = distinguishInstr(I);
+							if(distinguishResult==-1) //intermediate. emit point
+							{
+								errs() << "DISTINGUISH-1\n F: "<< MF.getName() << "BB: " << I->getParent()->getName() << "Instr: " << *I << "\n";
+								I->dump();
+								for (unsigned int opcount=0 ; opcount < I->getNumOperands() ;opcount++){
+									errs()<<I->getOperand(opcount);
+								}
+								emitInstrs_5Interleaving(MBB, I, InstrsM, InstrsS1, InstrsS2);
+							}
+							else
+							{
+								if(distinguishResult == 1)
+								{
+									InstrsM.push_back(I);
+								}
+								else if(distinguishResult == 2)
+								{
+									InstrsS1.push_back(I);
+								}
+								else if(distinguishResult == 3)
+								{
+									InstrsS2.push_back(I);
+								}
+								//errs() << "CheckNotZero\n F: "<< MF.getName() << "BB: " << I->getParent()->getName() << "Instr: " << *I << "\n";
+								//I->dump();								
+							}
+							
+							
+						}
+							
+						
+						
+					}//end of for
+					InstrsM.clear();
+					InstrsS1.clear();
+					InstrsS2.clear();
+				}// end of function
+			}// end of function
+            
+            
+            
 			
 			void triplicateInstructionsTZDC(MachineFunction &MF){
 				//First part: triplication 
@@ -1682,6 +2432,7 @@ int memReg=strInst->getOperand(1).getReg();
 									slaveinst1->getOperand(opcount).setImm(I->getOperand(opcount).getImm()-TZDC_OFFSET); 
 									slaveinst2->getOperand(opcount).setImm(I->getOperand(opcount).getImm()-2*TZDC_OFFSET); 
 								}
+                                
 							} //end of for
 							MBB->insert(I, slaveinst1);
 							MBB->insert(I, slaveinst2);
@@ -1987,10 +2738,374 @@ int memReg=strInst->getOperand(1).getReg();
 				}// end of machine function
 			}// end of function
 				
+			void insertTZDC_3Signature(MachineFunction &MF){
+				for(MachineFunction::iterator MBB = MF.begin(), MBE = MF.end(); MBB != MBE; ++MBB) {					
+					//skip inserted block
+					bool skipSIG = false;
+					for (std::list<MachineBasicBlock*>::iterator iter = intSkipBlock.begin(); iter != intSkipBlock.end(); ++iter) {
+						if(*iter == &(*MBB))
+						{
+							skipSIG=true;
+							break;
+						}
+					}
+					
+					
+					if(skipSIG) continue;
+					
+					
+					
+					DebugLoc DL3= MBB->begin()->getDebugLoc();
+					const TargetInstrInfo *TII = MF.getSubtarget().getInstrInfo();
+					
+					
+					MachineBasicBlock::iterator startPoint = MBB->begin();
+					//MachineBasicBlock::iterator firstTerminator = MBB->getFirstTerminator();
+					//HWISOO. getFirstTerminator does not work well (maybe) as our previous codes modified it too much.
+					MachineBasicBlock::iterator firstTerminator;
+					MachineBasicBlock::iterator I=MBB->begin();
+					for (MachineBasicBlock::iterator E=MBB->end(); I !=E ; ++I){
+						unsigned int opcode = I->getOpcode();
+						if (I->isBranch() && !(opcode > 96 && opcode < 129))
+						{
+							//errs()<<"isBranch and notCmp?\n";
+							//I->dump();
+							break;
+						}
+						else if (opcode == OR1K::JR || opcode == OR1K::RET || opcode == OR1K::J)
+						{
+							//errs()<<"JR or RET\n";
+							//I->dump();
+							break;							
+						}
+						
+					}//end of for
+					firstTerminator = I;
+					
+					unsigned int count = 0;
+					
+					for (MachineBasicBlock::iterator I=MBB->begin(); I !=firstTerminator ; ++I){
+						count++;
+					}//end of for
+					
+					if(count<=1)
+						continue;
+					
+					
+					MachineInstr *Signature1 = BuildMI(MF, DL3 , TII->get(OR1K::ADDI)).addReg(OR1K::R18).addReg(OR1K::R18).addImm(signatureIndex*1);
+					MachineInstr *Signature2 = BuildMI(MF, DL3 , TII->get(OR1K::ADDI)).addReg(OR1K::R20).addReg(OR1K::R20).addImm(signatureIndex*2);
+					MachineInstr *Signature3 = BuildMI(MF, DL3 , TII->get(OR1K::ADDI)).addReg(OR1K::R28).addReg(OR1K::R28).addImm(signatureIndex*6);
+					MachineInstr *Signature4 = BuildMI(MF, DL3 , TII->get(OR1K::ADDI)).addReg(OR1K::R18).addReg(OR1K::R18).addImm(signatureIndex*5);
+					MachineInstr *Signature5 = BuildMI(MF, DL3 , TII->get(OR1K::ADDI)).addReg(OR1K::R20).addReg(OR1K::R20).addImm(signatureIndex*4);
+					signatureIndex+=1;
+					
+					MBB->insert(startPoint,Signature1);
+					MBB->insert(startPoint,Signature2);
+					MBB->insert(startPoint,Signature3);
+					MBB->insert(firstTerminator,Signature4);
+					MBB->insert(firstTerminator,Signature5);
+					
+				}// end of machine function
+			}// end of function
+				
+                
+                
+			void insertTZDC_3Signature_withWDC(MachineFunction &MF){
+				for(MachineFunction::iterator MBB = MF.begin(), MBE = MF.end(); MBB != MBE; ++MBB) {					
+					//skip inserted block
+					bool skipSIG = false;
+					for (std::list<MachineBasicBlock*>::iterator iter = intSkipBlock.begin(); iter != intSkipBlock.end(); ++iter) {
+						if(*iter == &(*MBB))
+						{
+							skipSIG=true;
+							break;
+						}
+					}
+					
+					
+					if(skipSIG) continue;
+					
+					
+					
+					DebugLoc DL3= MBB->begin()->getDebugLoc();
+					const TargetInstrInfo *TII = MF.getSubtarget().getInstrInfo();
+					
+					
+					MachineBasicBlock::iterator startPoint = MBB->begin();
+					//MachineBasicBlock::iterator firstTerminator = MBB->getFirstTerminator();
+					//HWISOO. getFirstTerminator does not work well (maybe) as our previous codes modified it too much.
+					MachineBasicBlock::iterator firstTerminator;
+					MachineBasicBlock::iterator I=MBB->begin();
+                    bool originalCompareFlag = false;
+					for (MachineBasicBlock::iterator E=MBB->end(); I !=E ; ++I){ 
+						unsigned int opcode = I->getOpcode();
+                        
+                        if(isOriginalCMP(I))
+                            originalCompareFlag = true;
+						else if (I->isBranch() && !(opcode > 96 && opcode < 129))
+						{
+							//errs()<<"isBranch and notCmp?\n";
+							//I->dump();
+							break;
+						}
+						else if (opcode == OR1K::JR || opcode == OR1K::RET || opcode == OR1K::J)
+						{
+							//errs()<<"JR or RET\n";
+							//I->dump();
+							break;							
+						}
+						
+					}//end of for
+					firstTerminator = I;
+					
+					unsigned int count = 0;
+					
+					for (MachineBasicBlock::iterator I=MBB->begin(); I !=firstTerminator ; ++I){
+						count++;
+					}//end of for
+					
+					if(count<=1)
+						continue;
+					
+					
+                    if(originalCompareFlag == true)
+                    {
+                        MachineBasicBlock::iterator afterAfterFirstTerminator = firstTerminator;
+                        (afterAfterFirstTerminator++)++;
+                        if (distinguishInstr(afterAfterFirstTerminator) != 2) 
+                        {
+                            errs() << "DEBUG:CHECK TERMINATOR\n";
+                            firstTerminator->dump();
+                            afterAfterFirstTerminator->dump();
+                            exit(1);
+                        }
+                        MachineBasicBlock* targetWDCMBB = firstTerminator->getOperand(0).getMBB();
+                        MachineBasicBlock::iterator beginOfWDCBlock = targetWDCMBB->begin();
+                        if (!(beginOfWDCBlock->getOpcode() > 96 && beginOfWDCBlock->getOpcode() < 129))
+                        {
+                            errs() << "DEBUG:CHECK THAT FIRSTTERMINATOR IS A BRANCH TO WDC BLOCK\n";
+                            firstTerminator->dump();
+                            beginOfWDCBlock->dump();
+                            targetWDCMBB->dump();
+                            exit(1);
+                        }
+                        
+                        
+                        MachineInstr *Signature1 = BuildMI(MF, DL3 , TII->get(OR1K::ADDI)).addReg(OR1K::R18).addReg(OR1K::R18).addImm(signatureIndex*1);
+                        MachineInstr *Signature2 = BuildMI(MF, DL3 , TII->get(OR1K::ADDI)).addReg(OR1K::R20).addReg(OR1K::R20).addImm(signatureIndex*2);
+                        MachineInstr *Signature3 = BuildMI(MF, DL3 , TII->get(OR1K::ADDI)).addReg(OR1K::R28).addReg(OR1K::R28).addImm(signatureIndex*6);
+                        MachineInstr *Signature4 = BuildMI(MF, DL3 , TII->get(OR1K::ADDI)).addReg(OR1K::R18).addReg(OR1K::R18).addImm(signatureIndex*5);
+                        MachineInstr *Signature5 = BuildMI(MF, DL3 , TII->get(OR1K::ADDI)).addReg(OR1K::R20).addReg(OR1K::R20).addImm(signatureIndex*4);
+
+                        
+                        
+                        MBB->insert(startPoint,Signature1);
+                        MBB->insert(startPoint,Signature2);
+                        MBB->insert(startPoint,Signature3);
+                        MBB->insert(afterAfterFirstTerminator,Signature4);
+                        MBB->insert(afterAfterFirstTerminator,Signature5);
+
+
+
+                        MachineInstr *Signature6 = BuildMI(MF, DL3 , TII->get(OR1K::ADDI)).addReg(OR1K::R18).addReg(OR1K::R18).addImm(signatureIndex*5);
+                        MachineInstr *Signature7 = BuildMI(MF, DL3 , TII->get(OR1K::ADDI)).addReg(OR1K::R20).addReg(OR1K::R20).addImm(signatureIndex*4);                        
+                        targetWDCMBB->insert(beginOfWDCBlock,Signature6);
+                        targetWDCMBB->insert(beginOfWDCBlock,Signature7);
+                    
+                        signatureIndex+=1;
+                    }
+                    else
+                    {
+                        MachineInstr *Signature1 = BuildMI(MF, DL3 , TII->get(OR1K::ADDI)).addReg(OR1K::R18).addReg(OR1K::R18).addImm(signatureIndex*1);
+                        MachineInstr *Signature2 = BuildMI(MF, DL3 , TII->get(OR1K::ADDI)).addReg(OR1K::R20).addReg(OR1K::R20).addImm(signatureIndex*2);
+                        MachineInstr *Signature3 = BuildMI(MF, DL3 , TII->get(OR1K::ADDI)).addReg(OR1K::R28).addReg(OR1K::R28).addImm(signatureIndex*6);
+                        MachineInstr *Signature4 = BuildMI(MF, DL3 , TII->get(OR1K::ADDI)).addReg(OR1K::R18).addReg(OR1K::R18).addImm(signatureIndex*5);
+                        MachineInstr *Signature5 = BuildMI(MF, DL3 , TII->get(OR1K::ADDI)).addReg(OR1K::R20).addReg(OR1K::R20).addImm(signatureIndex*4);
+                        signatureIndex+=1;
+                        
+                        MBB->insert(startPoint,Signature1);
+                        MBB->insert(startPoint,Signature2);
+                        MBB->insert(startPoint,Signature3);
+                        MBB->insert(firstTerminator,Signature4);
+                        MBB->insert(firstTerminator,Signature5);
+                    }
+                    
+
+					
+				}// end of machine function
+			}// end of function
+		
+
+
+            void insertTZDC_3Signature_withWDC_INT(MachineFunction &MF){
+				for(MachineFunction::iterator MBB = MF.begin(), MBE = MF.end(); MBB != MBE; ++MBB) {					
+					//skip inserted block
+					bool skipSIG = false;
+					for (std::list<MachineBasicBlock*>::iterator iter = intSkipBlock.begin(); iter != intSkipBlock.end(); ++iter) {
+						if(*iter == &(*MBB))
+						{
+							skipSIG=true;
+							break;
+						}
+					}
+					
+					
+					if(skipSIG) continue;
+					
+					
+					
+					DebugLoc DL3= MBB->begin()->getDebugLoc();
+					const TargetInstrInfo *TII = MF.getSubtarget().getInstrInfo();
+					
+					
+					MachineBasicBlock::iterator startPoint = MBB->begin();
+					//MachineBasicBlock::iterator firstTerminator = MBB->getFirstTerminator();
+					//HWISOO. getFirstTerminator does not work well (maybe) as our previous codes modified it too much.
+					MachineBasicBlock::iterator firstTerminator;
+					MachineBasicBlock::iterator I=MBB->begin();
+                    bool originalCompareFlag = false;
+					for (MachineBasicBlock::iterator E=MBB->end(); I !=E ; ++I){ 
+						unsigned int opcode = I->getOpcode();
+                        
+                        if(isOriginalCMP(I))
+                            originalCompareFlag = true;
+						else if (I->isBranch() && !(opcode > 96 && opcode < 129))
+						{
+							//errs()<<"isBranch and notCmp?\n";
+							//I->dump();
+							break;
+						}
+						else if (opcode == OR1K::JR || opcode == OR1K::RET || opcode == OR1K::J)
+						{
+							//errs()<<"JR or RET\n";
+							//I->dump();
+							break;							
+						}
+						
+					}//end of for
+					firstTerminator = I;
+					
+					unsigned int count = 0;
+					
+					for (MachineBasicBlock::iterator I=MBB->begin(); I !=firstTerminator ; ++I){
+						count++;
+					}//end of for
+					
+					if(count<=1)
+						continue;
+					
+					
+                    if(originalCompareFlag == true)
+                    {
+                        MachineBasicBlock::iterator afterAfterFirstTerminator = firstTerminator;
+                        (afterAfterFirstTerminator++)++;
+                        if (distinguishInstr(afterAfterFirstTerminator) != 2) 
+                        {
+                            errs() << "DEBUG:CHECK TERMINATOR\n";
+                            firstTerminator->dump();
+                            afterAfterFirstTerminator->dump();
+                            exit(1);
+                        }
+                        MachineBasicBlock* targetWDCMBB = firstTerminator->getOperand(0).getMBB();
+                        MachineBasicBlock::iterator beginOfWDCBlock = targetWDCMBB->begin();
+                        if (!(beginOfWDCBlock->getOpcode() > 96 && beginOfWDCBlock->getOpcode() < 129))
+                        {
+                            errs() << "DEBUG:CHECK THAT FIRSTTERMINATOR IS A BRANCH TO WDC BLOCK\n";
+                            firstTerminator->dump();
+                            beginOfWDCBlock->dump();
+                            targetWDCMBB->dump();
+                            exit(1);
+                        }
+                        
+                        
+                        MachineInstr *Signature1 = BuildMI(MF, DL3 , TII->get(OR1K::ADDI)).addReg(OR1K::R18).addReg(OR1K::R18).addImm(signatureIndex*1);
+                        MachineInstr *Signature2 = BuildMI(MF, DL3 , TII->get(OR1K::ADDI)).addReg(OR1K::R20).addReg(OR1K::R20).addImm(signatureIndex*2);
+                        MachineInstr *Signature3 = BuildMI(MF, DL3 , TII->get(OR1K::ADDI)).addReg(OR1K::R28).addReg(OR1K::R28).addImm(signatureIndex*6);
+                        MachineInstr *Signature4 = BuildMI(MF, DL3 , TII->get(OR1K::ADDI)).addReg(OR1K::R18).addReg(OR1K::R18).addImm(signatureIndex*5);
+                        MachineInstr *Signature5 = BuildMI(MF, DL3 , TII->get(OR1K::ADDI)).addReg(OR1K::R20).addReg(OR1K::R20).addImm(signatureIndex*4);
+
+                        
+                        
+                        MachineBasicBlock::iterator interPoint1 = MBB->begin();
+                        MachineBasicBlock::iterator interPoint2 = MBB->begin();
+                        unsigned int point1Count=(count)/3, point2Count=(count*2)/3;
+                        
+                        unsigned int currentIndex=0;
+                        for (MachineBasicBlock::iterator I=MBB->begin(); I !=firstTerminator ; ++I)
+                        {
+                            if(currentIndex == point1Count)
+                                interPoint1 = I;
+                            if(currentIndex == point2Count)
+                                interPoint2 = I;
+
+                            currentIndex++;
+                        }
+                        if (interPoint2 == MBB->begin())
+                            interPoint2 = firstTerminator;
+                        
+                        MBB->insert(startPoint,Signature1);
+                        MBB->insert(interPoint1,Signature2); // 1/3
+                        MBB->insert(interPoint2,Signature3); // 2/3
+                        MBB->insert(afterAfterFirstTerminator,Signature4);
+                        afterAfterFirstTerminator++;
+                        MBB->insert(afterAfterFirstTerminator,Signature5);
+
+
+
+                        MachineInstr *Signature6 = BuildMI(MF, DL3 , TII->get(OR1K::ADDI)).addReg(OR1K::R18).addReg(OR1K::R18).addImm(signatureIndex*5);
+                        MachineInstr *Signature7 = BuildMI(MF, DL3 , TII->get(OR1K::ADDI)).addReg(OR1K::R20).addReg(OR1K::R20).addImm(signatureIndex*4);                        
+                        targetWDCMBB->insert(beginOfWDCBlock,Signature6);
+                        beginOfWDCBlock++;
+                        targetWDCMBB->insert(beginOfWDCBlock,Signature7);
+                    
+                        signatureIndex+=1;
+                    }
+                    else
+                    {
+                        MachineInstr *Signature1 = BuildMI(MF, DL3 , TII->get(OR1K::ADDI)).addReg(OR1K::R18).addReg(OR1K::R18).addImm(signatureIndex*1);
+                        MachineInstr *Signature2 = BuildMI(MF, DL3 , TII->get(OR1K::ADDI)).addReg(OR1K::R20).addReg(OR1K::R20).addImm(signatureIndex*2);
+                        MachineInstr *Signature3 = BuildMI(MF, DL3 , TII->get(OR1K::ADDI)).addReg(OR1K::R28).addReg(OR1K::R28).addImm(signatureIndex*6);
+                        MachineInstr *Signature4 = BuildMI(MF, DL3 , TII->get(OR1K::ADDI)).addReg(OR1K::R18).addReg(OR1K::R18).addImm(signatureIndex*5);
+                        MachineInstr *Signature5 = BuildMI(MF, DL3 , TII->get(OR1K::ADDI)).addReg(OR1K::R20).addReg(OR1K::R20).addImm(signatureIndex*4);
+                        signatureIndex+=1;
+                        
+                        
+                        MachineBasicBlock::iterator interPoint1 = MBB->begin();
+                        MachineBasicBlock::iterator interPoint2 = MBB->begin();
+                        MachineBasicBlock::iterator interPoint3 = MBB->begin();
+                        unsigned int point1Count=(count)/4, point2Count=(count*2)/4, point3Count=(count*3)/4;
+                        
+                        unsigned int currentIndex=0;
+                        for (MachineBasicBlock::iterator I=MBB->begin(); I !=firstTerminator ; ++I)
+                        {
+                            if(currentIndex == point1Count)
+                                interPoint1 = I;
+                            if(currentIndex == point2Count)
+                                interPoint2 = I;
+                            if(currentIndex == point3Count)
+                                interPoint3 = I;
+
+                            currentIndex++;
+                        }
+                        if (interPoint3 == MBB->begin())
+                            interPoint3 = firstTerminator;
+                        
+                        MBB->insert(startPoint,Signature1);
+                        MBB->insert(interPoint1,Signature2); //1/4
+                        MBB->insert(interPoint2,Signature3); //2/4
+                        MBB->insert(interPoint3,Signature4); //3/4
+                        MBB->insert(firstTerminator,Signature5);
+                    }
+                    
+
+					
+				}// end of machine function
+			}// end of function
 				
 			void insertRegisterCheckForJump(MachineFunction &MF){
 				for(MachineFunction::iterator MBB = MF.begin(), MBE = MF.end(); MBB != MBE; ++MBB) {
-					DebugLoc DL3= MBB->begin()->getDebugLoc();
+					//DebugLoc DL3= MBB->begin()->getDebugLoc(); //HWISOO. this makes some problem
+                    DebugLoc DL3= MF.begin()->begin()->getDebugLoc(); 
 					const TargetInstrInfo *TII = MF.getSubtarget().getInstrInfo();
 				
 					for (MachineBasicBlock::iterator I=MBB->begin(), E=MBB->end(); I !=E ; ++I){
@@ -2031,6 +3146,135 @@ int memReg=strInst->getOperand(1).getReg();
 				}// end of machine function
 
 			}
+			
+			void insertSWIFTRRegisterCheckForJump(MachineFunction &MF){
+				for(MachineFunction::iterator MBB = MF.begin(), MBE = MF.end(); MBB != MBE; ++MBB) {
+					//DebugLoc DL3= MBB->begin()->getDebugLoc(); //HWISOO. this makes some problem
+                    DebugLoc DL3= MF.begin()->begin()->getDebugLoc(); 
+					const TargetInstrInfo *TII = MF.getSubtarget().getInstrInfo();
+				
+					for (MachineBasicBlock::iterator I=MBB->begin(), E=MBB->end(); I !=E ; ++I){
+						if(I->getOpcode()==OR1K::JALR || I->getOpcode()==OR1K::JR || I->getOpcode() == OR1K::RET)
+						{
+							unsigned int targetReg=OR1K::R30;
+							if(I->getOpcode()==OR1K::RET)
+								targetReg=OR1K::R9; //HWISOO. can I sure that it is always R9?
+							else
+							{
+								assert(I->getOperand(0).isReg());
+								targetReg = I->getOperand(0).getReg();
+							}
+							if(targetReg == OR1K::R30) continue;
+							
+							insertVoting(MF, &(*I), targetReg, &(*MBB));
+                            //newBB=insertVoting(MF, MI, Reg, lastCheck);
+						}					
+						else{
+
+						}
+						
+					}
+				}// end of machine function
+
+			}			
+
+
+
+			void insertComplexRecoveryBlock(MachineFunction &MF){
+				
+				DebugLoc DL3= MF.begin()->begin()->getDebugLoc();
+				const TargetInstrInfo *TII = MF.getSubtarget().getInstrInfo();
+
+				MachineBasicBlock* targetBlock = tzdcRecoveryMBB;
+				MachineBasicBlock* nextBlock = MF.CreateMachineBasicBlock();
+				
+				targetBlock->addSuccessor(nextBlock);
+				//hwisoo. temporal method
+				MF.begin()->addSuccessor(nextBlock);
+				
+				MachineFunction::iterator It = MF.begin();
+				for(MachineFunction::iterator E = MF.end(); It != E; It++)
+				{
+					if(&*It == targetBlock)
+						break;
+				}
+				It++;
+				MF.insert(It, nextBlock);
+				
+				intSkipBlock.push_back(nextBlock);
+				/*
+	
+				l.sfeq	M, S1
+				cmov M->S2
+				l.bf SKIP(NEXT)
+				l.sfeq	S1, S2
+				cmov S1->M
+				l.bf SKIP(NEXT)
+				l.sfeq	S2, M
+				cmov S2->S1
+				l.bf SKIP(NEXT)
+				l.nop 0
+				l.nop ERROR!
+				
+				*/
+	
+				
+				for (auto& reg : functionCallArgs ){
+					unsigned int shadow1 = getSlaveReg1(reg);
+					unsigned int shadow2 = getSlaveReg2(reg);
+					
+					
+					MachineInstr *cmpInst = BuildMI(MF, DL3 , TII->get(OR1K::SFEQ)).addReg(reg).addReg(shadow1);
+					MachineInstr *cmovInst = BuildMI(MF, DL3 , TII->get(OR1K::CMOV)).addReg(shadow2).addReg(reg).addReg(shadow2);
+					MachineInstr *skipInst = BuildMI(MF, DL3 , TII->get(OR1K::BF)).addMBB(nextBlock);
+					
+					targetBlock->insert(targetBlock->end(), cmpInst);
+					targetBlock->insert(targetBlock->end(), cmovInst);
+					targetBlock->insert(targetBlock->end(), skipInst);
+					
+					cmpInst = BuildMI(MF, DL3 , TII->get(OR1K::SFEQ)).addReg(shadow1).addReg(shadow2);
+					cmovInst = BuildMI(MF, DL3 , TII->get(OR1K::CMOV)).addReg(reg).addReg(shadow1).addReg(reg);
+					skipInst = BuildMI(MF, DL3 , TII->get(OR1K::BF)).addMBB(nextBlock);
+					
+					targetBlock->insert(targetBlock->end(), cmpInst);
+					targetBlock->insert(targetBlock->end(), cmovInst);
+					targetBlock->insert(targetBlock->end(), skipInst);
+					
+					cmpInst = BuildMI(MF, DL3 , TII->get(OR1K::SFEQ)).addReg(shadow2).addReg(reg);
+					cmovInst = BuildMI(MF, DL3 , TII->get(OR1K::CMOV)).addReg(shadow1).addReg(shadow2).addReg(shadow1);
+					skipInst = BuildMI(MF, DL3 , TII->get(OR1K::BF)).addMBB(nextBlock);
+					
+					targetBlock->insert(targetBlock->end(), cmpInst);
+					targetBlock->insert(targetBlock->end(), cmovInst);
+					targetBlock->insert(targetBlock->end(), skipInst);
+					
+					MachineInstr *nopInst = BuildMI(MF, DL3 , TII->get(OR1K::NOP)).addImm(0);
+					targetBlock->insert(targetBlock->end(), nopInst);
+					
+					MachineInstr *errorInst = BuildMI(MF, DL3 , TII->get(OR1K::NOP)).addImm(205);
+					targetBlock->insert(targetBlock->end(), errorInst);
+					
+					
+					targetBlock = nextBlock;
+					nextBlock = MF.CreateMachineBasicBlock();
+					targetBlock->addSuccessor(nextBlock);
+					MF.begin()->addSuccessor(nextBlock); //HWISOO. temporal solution
+					MF.insert(It, nextBlock);
+					
+					intSkipBlock.push_back(nextBlock);
+				}
+				
+				
+						
+				MachineInstr* returnInstr = BuildMI(MF, DL3 , TII->get(OR1K::JR)).addReg(OR1K::R30);
+				nextBlock->push_back(returnInstr);
+				
+				MachineInstr *MInop = BuildMI(MF, DL3 , TII->get(OR1K::NOP)).addImm(0);
+				nextBlock->push_back(MInop);
+
+
+			}
+			
 				
 			void insertRecoveryBlock(MachineFunction &MF){
 				
@@ -2488,6 +3732,9 @@ int memReg=strInst->getOperand(1).getReg();
 									
 									MachineInstr* takenRemainedJumpInstr = BuildMI(MF, DL3 , TII->get(OR1K::J)).addMBB(branchInTaken->getOperand(0).getMBB());
 									takenRemainedBlock->insert(takenRemainedBlock->end(), takenRemainedJumpInstr);
+
+                                    MachineInstr *MInopTakenRemained = BuildMI(MF, DL3 , TII->get(OR1K::NOP)).addImm(0);
+                                    takenRemainedBlock->insert(takenRemainedBlock->end(), MInopTakenRemained);
 									
 									//if notTakenRemainedBlock is placed well, we don't need it
 									//MachineInstr* notTakenRemainedJumpInstr = BuildMI(MF, DL3 , TII->get(OR1K::J)).addMBB(jumpInDetected->getOperand(0).getMBB());
@@ -2858,6 +4105,7 @@ int memReg=strInst->getOperand(1).getReg();
 												overwriteCmpsTwo[0] =true;
 											if (target == lastCmpRegs[1])
 												overwriteCmpsTwo[1] =true;
+											isPossibleToMoveInsts=false;
 										}
 									}
 									

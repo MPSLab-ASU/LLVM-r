@@ -155,6 +155,13 @@ namespace llvm{
 		cl::desc("Implement data-flow protection part of nZDC soft & hard error detection scheme. (ongoing work)"),
 		cl::Hidden);
 		
+    static cl::opt<bool> EnableHWISOODebug(
+		"enable-HWISOO-debug",
+		cl::init(false),
+		cl::desc("temporal debug for checking jalr BB"),
+		cl::Hidden);
+		
+    
 		
 	static cl::opt<bool> EnableHWISOO(
 		"enable-HWISOO",
@@ -1131,8 +1138,9 @@ default:
 						{
 							continue;
 						}
+
 						
-						if (std::next(I) == E || I->mayStore() || (I->getOpcode() > 96 && I->getOpcode() < 129)) //emit all instructions for interleaving
+						if (std::next(I) == E || I->mayStore() || (I->getOpcode() > 96 && I->getOpcode() < 129) || I->getOpcode() == OR1K::INLINEASM) //emit all instructions for interleaving
 						{
 							if (!(I->isBranch()) &&  /*!(I->mayStore())  &&*/  !(I->isCall()) && !(I->isReturn()) && !(I->isCompare()) &&  !(I->getOpcode() == OR1K::NOP) && !(I->getOpcode() > 96 && I->getOpcode() < 129))
 								interleavingQueue.push(I);
@@ -1147,18 +1155,25 @@ default:
 									}
 									
 									else if (interleavedI->getOperand(opcount).isImm() && (interleavedI->mayStore() || interleavedI->mayLoad()) ){
-										slaveinst->getOperand(opcount).setImm(interleavedI->getOperand(opcount).getImm()-MEMZDC_OFFSET); 
+										slaveinst->getOperand(opcount).setImm(interleavedI->getOperand(opcount).getImm()-EDDI_OFFSET); 
 									}
 									
 
 								} //end of for
 								if ((I->getOpcode() > 96 && I->getOpcode() < 129) || (I->mayStore() && interleavingQueue.size() != 1)
-								|| 	(I->isBranch()) || (I->isCall()) || (I->isReturn())  )
+								|| 	(I->isBranch()) || (I->isCall()) || (I->isReturn())   )
 								{
+                                    //HWISOO 181114. INLINEASM need to be cared more carefully
 									MBB->insert(I, slaveinst);
 									
 
 								}
+                                else if(I->getOpcode() == OR1K::INLINEASM)
+                                {
+                                    //HWISOO 181114. INLINEASM need to be cared more carefully
+                                    //Temporally do this, but we need to remove l.nop N by hand
+                                    MBB->insert(I, slaveinst);
+                                }
 								else
 								{
 									MBB->insertAfter(I, slaveinst);
@@ -1181,7 +1196,7 @@ default:
 										slaveinst->getOperand(opcount).setReg(getSlaveReg(interleavedI->getOperand(opcount).getReg())); 
 									}
 									else if (interleavedI->getOperand(opcount).isImm() && (interleavedI->mayStore() || interleavedI->mayLoad()) ){
-										slaveinst->getOperand(opcount).setImm(interleavedI->getOperand(opcount).getImm()-MEMZDC_OFFSET); 
+										slaveinst->getOperand(opcount).setImm(interleavedI->getOperand(opcount).getImm()-EDDI_OFFSET); 
 									}
 
 								} //end of for
@@ -1210,7 +1225,7 @@ default:
 										slaveinst->getOperand(opcount).setReg(getSlaveReg(interleavedI->getOperand(opcount).getReg())); 
 									}
 									else if (interleavedI->getOperand(opcount).isImm() && (interleavedI->mayStore() || interleavedI->mayLoad()) ){
-										slaveinst->getOperand(opcount).setImm(interleavedI->getOperand(opcount).getImm()-MEMZDC_OFFSET); 
+										slaveinst->getOperand(opcount).setImm(interleavedI->getOperand(opcount).getImm()-EDDI_OFFSET); 
 									}
 
 								} //end of for
@@ -1361,6 +1376,196 @@ default:
 				} //end-of-function
 				
 				
+                void  ArrangeInstrForEDDI_skipaddr(MachineFunction &MF) {
+					const TargetInstrInfo *TII = MF.getSubtarget().getInstrInfo();
+					for(MachineFunction::iterator MBB = MF.begin(), MBE = MF.end(); MBB != MBE; ++MBB) {
+                        bool afterCmp = false;
+                        MachineInstr* lastCmp = NULL;
+                        int lastCmpRegs[2] = {-1, -1};
+                        bool canMoveStore = true;
+                        bool canMoveCmp = true;
+                        
+                        bool overwriteCmpsTwo[2] = {false, false};
+                        //std::list<unsigned int> usedRegList;
+                        std::list<unsigned int> overwrittedRegList;
+                        std::list<MachineInstr*> storeList;
+                        
+                        bool isThereAnyStoreBetween=false;
+                        
+						for (MachineBasicBlock::instr_iterator I=MBB->instr_begin(), E=MBB->instr_end(); I !=E ; ++I){
+                            if (!afterCmp)
+                            {
+                                if (I->getOpcode() > 96 && I->getOpcode() < 129) { // register operand voting for /*compare*/ instructions
+                                    afterCmp = true;
+                                    
+                                    int regCount = 0;
+                                    for (unsigned int opcount=0 ; opcount < 2 ;opcount++)
+                                        if (I->getOperand(opcount).isReg() )
+                                        {
+                                            //lastCheck=insertVoting(MF, I, I->getOperand(opcount).getReg(), lastCheck);					
+                                            lastCmpRegs[regCount++] = I->getOperand(opcount).getReg();
+                                        }
+                                    lastCmp = &(*I);
+                                }
+                            
+                            }
+                            else
+                            {
+                                if( !(I->isBranch()) /*&& !(I->mayLoad())*/ &&  !(I->mayStore())  &&  !(I->isCall()) && !(I->isReturn()) && !(I->isCompare()) &&  !(I->getOpcode() == OR1K::NOP || (I->getOpcode() > 96 && I->getOpcode() < 129) /*comparee*/) && I->getOpcode() != OR1K::INLINEASM){
+                                    
+                                    for (unsigned int opcount = 0; opcount < I->getNumOperands(); opcount++)
+                                        if (I->getOperand(opcount).isReg())
+                                        {
+                                            if(opcount == 0 && !(I->mayStore())) //Dest
+                                            {
+                                                int targetReg = I->getOperand(0).getReg();
+                                                if (targetReg == lastCmpRegs[0] || targetReg == lastCmpRegs[1])
+                                                {
+                                                    canMoveCmp = false;
+                                                    if (targetReg == lastCmpRegs[0])
+                                                        overwriteCmpsTwo[0] =true;
+                                                    if (targetReg == lastCmpRegs[1])
+                                                        overwriteCmpsTwo[1] =true;
+                                                    
+                                                }
+                                                overwrittedRegList.push_back(I->getOperand(0).getReg());
+                                                //errs() << "DEBUG:INSERTINGusedwritten:"<<I->getOperand(0).getReg()<<"\n";
+                                                //printInstruction(I);
+                                            }
+                                            /*
+                                            else //Src
+                                            {
+                                                //usedRegList.push_back(I->getOperand(opcount).getReg());
+                                                //errs() << "DEBUG:INSERTINGused:"<<I->getOperand(opcount).getReg()<<"\n";
+                                                //printInstruction(I);
+                                            }
+                                            */
+                                        }
+                                }
+                                else if(I->mayStore())
+                                {
+                                    isThereAnyStoreBetween=true;
+                                    unsigned target = I->getOperand(0).getReg(); //data
+                                    storeList.push_back(&(*I));
+                                    for (std::list<unsigned int>::const_iterator overIter = overwrittedRegList.begin(); overIter != overwrittedRegList.end(); ++overIter)
+                                        if (target == *overIter)
+                                        {
+                                            //errs() << "DEBUG:usedwritten:"<<target<<"\n";
+                                            //printInstruction(I);
+                                            canMoveStore = false;
+                                            break;
+                                        }
+                                }
+                                else if (I->getOpcode() > 96 && I->getOpcode() < 129) { // register operand voting for /*compare*/ instructions
+                                    
+                                    errs()<< "DEBUG_HWISOO:more than 2 cmp in same BB";
+                                    MBB->dump();
+                                    
+                                    if (lastCmp != NULL)
+                                    {
+                                        lastCmpRegs[0] = -1;
+                                        lastCmpRegs[1] = -1;
+                                        lastCmp = NULL;
+                                        
+                                        //usedRegList.clear();
+                                        overwrittedRegList.clear();
+                                        storeList.clear();
+                                        
+                                        canMoveStore = true;
+                                        canMoveCmp = true;
+                                        
+                                        overwriteCmpsTwo[0] = false;
+                                        overwriteCmpsTwo[1] = false;
+                                        isThereAnyStoreBetween=false;
+                                    }
+                                    
+                                    
+                                    
+                                    int regCount = 0;
+                                    for (unsigned int opcount=0 ; opcount < 2 ;opcount++)
+                                        if (I->getOperand(opcount).isReg() )
+                                        {
+                                            //lastCheck=insertVoting(MF, I, I->getOperand(opcount).getReg(), lastCheck);					
+                                            lastCmpRegs[regCount++] = I->getOperand(opcount).getReg();
+                                        }
+                                    lastCmp = &(*I);
+                                }
+                                
+                                else if ( I->isBranch() && I->getOpcode() != OR1K::J  )
+                                {
+                                    
+                                    if(lastCmp != NULL && isThereAnyStoreBetween)
+                                    {
+                                        if(canMoveCmp)
+                                        {
+                                            MBB->remove(lastCmp);
+                                            MBB->insert(I,lastCmp);
+                                        }
+                                        else if(canMoveStore)
+                                        {
+                                            std::list<MachineInstr*>::iterator iter;
+											for (iter = storeList.begin(); iter != storeList.end(); ++iter) {
+												MBB->remove(*iter);
+												MBB->insert(lastCmp,*iter);				
+											}
+                                        }
+                                        else // can not move both
+                                        {
+                                            if(overwriteCmpsTwo[0] == true && overwriteCmpsTwo[1] == true)
+                                            {
+                                                errs()<< "HWISOO_DEBUG: FIXIT_BY_HAND. Can not move both store or compare for EDDI cmp->sw->bf case\n";
+                                            }
+                                            else if (overwriteCmpsTwo[0] == false && overwriteCmpsTwo[1] == false)
+                                            {
+												errs() << "ERROR! something's wrong with overwrite flags"<<"\n";
+												exit(1);
+                                            }
+                                            else
+                                            {
+                                                unsigned int target = -1;
+												if (overwriteCmpsTwo[0])
+													target=lastCmp->getOperand(0).getReg();
+												else
+													target=lastCmp->getOperand(1).getReg();
+                                            
+                                                //1. insert copying insts in front of lastCmp
+												DebugLoc DL3= lastCmp->getDebugLoc();
+												const TargetInstrInfo *TII = MF.getSubtarget().getInstrInfo();
+												MachineInstr *copyMoveM = BuildMI(MF, DL3 , TII->get(OR1K::ADDI)).addReg(OR1K::R28).addReg(target).addImm(0);
+												MachineInstr *copyMoveD = BuildMI(MF, DL3 , TII->get(OR1K::ADDI)).addReg(OR1K::R30).addReg(getSlaveReg(target)).addImm(0);
+												MBB->insert(lastCmp, copyMoveM);
+												MBB->insert(lastCmp, copyMoveD);
+												
+												
+												//2. move cmp
+												MBB->remove(lastCmp);
+												MBB->insert(I,lastCmp);
+												
+												//3. change target to R20
+												if (overwriteCmpsTwo[0])
+													lastCmp->getOperand(0).setReg(OR1K::R28);
+												else
+													lastCmp->getOperand(1).setReg(OR1K::R30);
+                                            
+                                            }
+                                            
+                                        }
+                                    }
+                                    isThereAnyStoreBetween = false;
+                                }
+                                
+                                else if(I->isBranch() || I->isCall() || std::next(I) == E)
+                                {
+
+                                
+                                }
+                            }
+ 
+
+						}// end of for
+					}//end of for
+				} //end-of-function
+                
 				void  insertEDDIErrorDetectors_skipaddr(MachineFunction &MF) {
 					const TargetInstrInfo *TII = MF.getSubtarget().getInstrInfo();
 					for(MachineFunction::iterator MBB = MF.begin(), MBE = MF.end(); MBB != MBE; ++MBB) {
@@ -1392,6 +1597,48 @@ default:
 				} //end-of-function
 				
 				
+			void insertRegisterCheckForJump(MachineFunction &MF){
+				for(MachineFunction::iterator MBB = MF.begin(), MBE = MF.end(); MBB != MBE; ++MBB) {
+					//DebugLoc DL3= MBB->begin()->getDebugLoc(); //HWISOO. this makes some problem
+                    DebugLoc DL3= MF.begin()->begin()->getDebugLoc(); 
+					const TargetInstrInfo *TII = MF.getSubtarget().getInstrInfo();
+				
+					for (MachineBasicBlock::iterator I=MBB->begin(), E=MBB->end(); I !=E ; ++I){
+						if(I->getOpcode()==OR1K::JALR || I->getOpcode()==OR1K::JR || I->getOpcode() == OR1K::RET)
+						{
+							//unsigned int targetReg=OR1K::R30;
+                            unsigned int targetReg;
+							if(I->getOpcode()==OR1K::RET)
+								targetReg=OR1K::R9; //HWISOO. can I sure that it is always R9?
+							else
+							{
+								assert(I->getOperand(0).isReg());
+								targetReg = I->getOperand(0).getReg();
+							}
+							//if(targetReg == OR1K::R30) continue;
+							
+							
+							MachineInstr *cmpInst = BuildMI(MF, DL3 , TII->get(OR1K::SFNE)).addReg(targetReg).addReg(getSlaveReg(targetReg));
+							MBB->insert(I,cmpInst);
+							
+							MachineInstr *MIBranch = BuildMI(MF, DL3 , TII->get(OR1K::BF)).addMBB(ErrorBB);
+							MBB->insert(I,MIBranch);
+                            
+                            MachineInstr *MInop = BuildMI(MF, DL3 , TII->get(OR1K::NOP)).addImm(0);
+                            MBB->insert(I,MInop);
+
+						
+						}					
+						else{
+
+						}
+						
+					}
+				}// end of machine function
+
+			}
+        
+                
 				void  checkCMPsSWIFT(MachineFunction &MF) {
 					const TargetInstrInfo *TII = MF.getSubtarget().getInstrInfo();
 					for(MachineFunction::iterator MBB = MF.begin(), MBE = MF.end(); MBB != MBE; ++MBB) {
@@ -1406,6 +1653,8 @@ default:
 									        MBB->insert(I, cmpInst); 	
 									        MachineInstr *MItest = BuildMI(MF, DL3 , TII->get(OR1K::BF)).addMBB(ErrorBB);
 									        MBB->insert(I, MItest); 
+                                            
+                                            
 										}	
 									}
 
@@ -1862,10 +2111,66 @@ default:
 					}// edn of for
 				}//end of function
 				
-				
+				void debugJALR(MachineFunction &MF) {
+					const TargetInstrInfo *TII = MF.getSubtarget().getInstrInfo();
+					for(MachineFunction::iterator MBB = MF.begin(), MBE = MF.end(); MBB != MBE ; ++MBB ) {
+						DebugLoc DL3= MBB->begin()->getDebugLoc();
+						llvm::MachineBasicBlock::iterator cmpInst=NULL;
+						for ( llvm::MachineBasicBlock::iterator I=MBB->begin(), E=MBB->end(); I !=E ; ++I){
+                            if (I->getOpcode()== OR1K::JALR)
+                            {
+                                errs()<<"--------JALR--------\n";
+                                I->dump();
+                                MBB->dump();
+                                errs()<<"FuncName:"<<MF.getName()<<"\n";
+                                errs()<<"--------JALR END--------\n";                                
+                                
+                                
+                            }
+                            if (I->getOpcode()== OR1K::MOVHI && !(I->getOperand(1).isImm()))
+                            {
+                                errs()<<"--------MOVHI--------\n";
+                                I->dump();
+                                //errs()<<I->getOperand(1).getType()<<"\n";
+                                //if(I->getOperand(1).isJumpTable()) 
+                                //    errs<<"JUMPTable!\n";
+                                I->getOperand(1).print(errs());
+                                errs()<<"\n";
+                                MBB->dump();
+                                errs()<<"FuncName:"<<MF.getName()<<"\n";
+                                errs()<<"--------MOVHI END--------\n";
+                            }
+                            if (I->getOpcode()== OR1K::JAL)
+                            {
+                                errs()<<"--------JAL--------\n";
+                                I->dump();
+                                MBB->dump();
+                                errs()<<"FuncName:"<<MF.getName()<<"\n";
+                                errs()<<"--------JAL END--------\n";
+                            }
+						}// end of for
+					}// edn of for
+				}//end of function
+                
+                
 				MachineBasicBlock* ErrorBB=NULL;
 				MachineBasicBlock* wrongDirectionErrorBB=NULL;
 				bool runOnMachineFunction(MachineFunction &MF) {
+                    if(EnableHWISOODebug)
+                    {
+                        //errs()<<MF.getName()<<"\n";
+                        //if (std::string::compare("vfprintf", MF.getName().c_str()) == 0)
+                        //if (MF.getName().compare("vfnprintf") == 0)
+                        //{
+                        debugJALR(MF);
+                            
+                        //}
+                         //   errs()<<"I found vfnprintf\n";
+                        
+                        
+                    }
+                    
+                    
 					if (EnablememZDC){
 						ErrorBB=makeErrorBB(MF); // Data flow errors will go to this bb
 						wrongDirectionErrorBB=makeErrorBB(MF); // wrong-direction control flow errors will go to this bb
@@ -2047,6 +2352,8 @@ default:
 
 						// inserts ZDC error detectors after store instructions
 						insertEDDIErrorDetectors(MF);
+                        
+                        
 
 
 						//HWISOO. test for generating ErrorBB automatically
@@ -2068,12 +2375,21 @@ default:
 						ErrorBB=makeErrorBB(MF); // Data flow errors will go to this bb
 						wrongDirectionErrorBB=makeErrorBB(MF); // wrong-direction control flow errors will go to this bb
 
+                        
+                        //try to remove compare -> store (replace flag) -> branch cases
+                        ArrangeInstrForEDDI_skipaddr(MF);
+                        
+                        
 						// duplicates computaional and load instructions
 						duplicateInstructionsEDDIInt(MF);
 
 						//implement wrong-direction control-flow checking
 						checkCMPsSWIFT(MF);
 
+                        //implement register comparison before the jump
+						insertRegisterCheckForJump(MF);
+                        
+                        
 						// inserts ZDC error detectors after store instructions
 						insertEDDIErrorDetectors_skipaddr(MF);
 
