@@ -29,3 +29,196 @@ TODO (not a complete list)
 - Floating point support
 - Integrated assembler support
 - Relocations
+
+
+
+
+==============================
+Example and guidelines for EDDI, SWIFTR and WholeSafe
+------------
+There are sample MiBench assembly files with EDDI, SWIFTR and WholeSafe in MiBenchExample/SampleAssembly.
+For the fault injection experiment, we modified mor1kx core with few features and there are few nop insturction for the simulation.
+- l.nop 1111 placed at the "Normal" end of each application
+- l.nop 100 and l.nop 200 placed at start / end of the FI range
+- l.nop 204 stands for detected dataflow error
+   - As EDDI is error detection scheme, whenever it finds mismatch between two stream it will raise DF error
+   - For WholeSafe, it only raise DF error if register values of three stream are all different; otherwise it will select major value and correct other one
+- l.nop 205 stands for detected controlflow error in WholeSafe
+
+High-level codes for the compilation are in MiBenchExample/HighLevelCodes
+- For each high-level application, we used definition of all library functions such as printf from mor1kx development and or1k-glibc
+- Also, we embedded input files as data structure. For example, in sha benchmark, you can find file_data in sha.c
+
+But if you want to compile assemblies with each protection technique, here is an example to compile application.
+(For the explanation we will use sha benchmark. you can find high-level c codes in MiBenchExample/HighLevelCodes/SHA/)
+
+1. Compile C codes to LLVM assembly and link them
+- YOUR_LLVM_BUILD_DIRECTORY/bin/clang -I OR1K-ELF-DIRECTORY/include/ -target or1k-elf  -emit-llvm -S *.c -O3
+- YOUR_LLVM_BUILD_DIRECTORY/bin/llvm-link *.ll -o SHA.LL
+
+2. Now we can generate assembly file without protection, or with SWIFTR
+- YOUR_LLVM_BUILD_DIRECTORY/bin/llc -compat-or1k-delay-filler=false --march=or1k SHA.LL -o SHA.s
+    - This command just generates assembly file without protection
+- YOUR_LLVM_BUILD_DIRECTORY/bin/llc -enable-SWIFTR-embeddedLib=true  -enable-swiftr-jumpRegCheck=true -enable-NEMESIS-CF=false   -compat-or1k-delay-filler=true -reserve-22-registers=true --march=or1k SHA.LL -o SHA-SWIFTR.s
+    - This command will generate sha assembly with SWIFTR protection. But we need to do few works by hand (Step 5.)
+  
+3. EDDI needs to duplicate whole memory. In same way, WholeSafe needs to triplicate memory.
+   For this, we need to 
+   i) place all data (variables and jump table values).
+   ii) duplicate/triplicate them.
+   iii) calculate distance between original memory and replicated memory (in other words, we need to calculate offset for memory operations in EDDI and WholeSafe).
+   
+   i) and ii) build application with register reserving (For EDDI, we need to reserve 18 regs. For WholeSafe, we need to reserve 22 regs)
+   - YOUR_LLVM_BUILD_DIRECTORY/bin/llc -reserve-18-registers=true --march=or1k SHA.LL -o SHA-REG18.s
+   - YOUR_LLVM_BUILD_DIRECTORY/bin/llc -reserve-22-registers=true --march=or1k SHA.LL -o SHA-REG22.s
+        - Then we need to place all data sequentially
+            - Move all jump tables (LJTI) at the end of program
+            - replace all .comm like
+                #from
+                        .type   tx_buff,@object
+                        .comm   tx_buff,32,1
+                ----------------------------------
+                #to
+                        .type   tx_buff,@object
+                tx_buff:
+                        .long   0
+                        .long   0
+                        .long   0
+                        .long   0
+                        .long   0
+                        .long   0
+                        .long   0
+                        .long   0
+            - remove all ".section" of data
+        - Then copy all variables and jump tables (once for EDDI and twice for WholeSafe).
+          We also need to rename copied variables (like tx_buff to tx_buff_shadow1/tx_buff_shadow2).
+        - You can find examples of these conversion and replication of data for sha in 
+          MiBenchExample/SampleAssembly/EDDI/SHA-EDDI.s and MiBenchExample/SampleAssembly/WHOLESAFE/SHA-WHOLESAFE.s
+          (Note after .data in these assembly)
+    
+    iii) You can calculate them by hand, or just build benchmark with few modification and run them.
+    - For example, you can insert these instructions to the main function of SHA-REG18.s and SHA-REG22.s
+        l.movhi r13, hi(int_handlers_shadow1)
+        l.movhi r23, hi(int_handlers_shadow2)
+        l.movhi r3, hi(int_handlers)
+        l.ori   r13, r13, lo(int_handlers_shadow1)
+        l.ori   r23, r23, lo(int_handlers_shadow2)
+        l.ori   r3, r3, lo(int_handlers)
+        and then you can calculate offset between r3 and r13
+    - In SHA of our example, offset is 1668 for EDDI and WholeSafe.
+    
+4. Now we can generate assembly with EDDI and WholeSafe with offset from step 3.
+- YOUR_LLVM_BUILD_DIRECTORY/bin/llc -enable-EDDI-INT-SKIPADDR=true -enable-NEMESIS-CF=false -delay-slot-copy-r9-to-r22=true -eddi_offset=-OFFSET_VALUE  -compat-or1k-delay-filler=true -reserve-18-registers=true  --march=or1k SHA.LL -o SHA-EDDI.s
+    - This command just generates assembly file with WholeSafe. you need to set OFFSET_VALUE from step 3.
+- YOUR_LLVM_BUILD_DIRECTORY/bin/llc -enable-tzdc-no-store-voting=true -enable-tzdc-wdc=true -enable-tzdc-int-5interleaving=true -enable-tzdc-3sig-with-wdc-int=true -enable-tzdc-jumpRegCheck=true -enable-NEMESIS-CF=false -tzdc-offset=-OFFSET_VALUE  -compat-or1k-delay-filler=true -reserve-22-registers=true -enable-tzdc-complexVoting=true  --march=or1k SHA.LL -o SHA-WHOLESAFE5.s
+    - This command just generates assembly file with WholeSafe. you need to set OFFSET_VALUE from step 3.
+    
+- For the example of sha, you can use -1668 like
+    - YOUR_LLVM_BUILD_DIRECTORY/bin/llc -enable-EDDI-INT-SKIPADDR=true -enable-NEMESIS-CF=false -delay-slot-copy-r9-to-r22=true -eddi_offset=-1668  -compat-or1k-delay-filler=true -reserve-18-registers=true  --march=or1k SHA.LL -o SHA-EDDI.s
+    
+    - YOUR_LLVM_BUILD_DIRECTORY/bin/llc -enable-tzdc-no-store-voting=true -enable-tzdc-wdc=true -enable-tzdc-int-5interleaving=true -enable-tzdc-3sig-with-wdc-int=true -enable-tzdc-jumpRegCheck=true -enable-NEMESIS-CF=false -tzdc-offset=-1668  -compat-or1k-delay-filler=true -reserve-22-registers=true -enable-tzdc-complexVoting=true  --march=or1k SHA.LL -o SHA-WHOLESAFE5.s
+    
+5. Finally we can complete assembly file with some modification by hand
+- For EDDI and WholeSafe, make data sequential (Do same works in step 3, or just use result of step 3)
+- Find one normal end of application (return or exit instruction of main function), and replace that instruction as l.nop 1111
+    - You also need to change your simulator/processor to recognize l.nop 1111 as end of program
+- Insert register copy instructions at the start of memset and main function
+    - For EDDI,
+        l.addi  r14, r1, 0
+        l.addi  r15, r2, 0
+        l.addi  r16, r3, 0
+        l.addi  r17, r4, 0
+        l.addi  r18, r5, 0
+        l.addi  r19, r6, 0
+        l.addi  r20, r7, 0
+        l.addi  r21, r8, 0
+        l.addi  r22, r9, 0
+        l.addi  r23, r10, 0
+        l.addi  r24, r11, 0
+        l.addi  r25, r12, 0
+        l.addi  r26, r13, 0
+    - For WholeSafe and SWIFTR,
+        l.addi  r10, r1, 0
+        l.addi  r12, r2, 0
+        l.addi  r13, r3, 0
+        l.addi  r14, r4, 0
+        l.addi  r15, r5, 0
+        l.addi  r16, r6, 0
+        l.addi  r17, r7, 0
+        l.addi  r19, r9, 0
+        l.addi  r8, r11, 0
+
+        l.addi  r21, r1, 0
+        l.addi  r22, r2, 0
+        l.addi  r23, r3, 0
+        l.addi  r24, r4, 0
+        l.addi  r25, r5, 0
+        l.addi  r26, r6, 0
+        l.addi  r27, r7, 0
+        l.addi  r29, r9, 0
+        l.addi  r31, r11, 0
+    -Also, for the start of main function in WholeSafe, insert signature initialization
+        l.addi  r18, r0, 0
+        l.addi  r20, r0, 0
+        l.addi  r28, r0, 0
+- (WholeSafe) we need to insert voting algorithm for critical operation by hand. 
+    For sha, only l.nop 4 is critical operation as in our simulation environment l.nop 4 will put character in r3, and this is only one operation for the output.
+    So right before the l.nop 4, insert these instructions
+        l.sfne      r3, r13
+        l.mfspr r30, r0, 16
+        l.addi  r30, r30, 16
+        l.bf    .LBB16_1
+        l.nop   0
+    (.LBB16_1 is an error recovery block of sim_putc function. In other application, you need to change it to the recovery block of simputc function)
+    Also, before the end of application (l.nop 1111), insert compare operation between triplicated signatures.
+    Currently we consider unrecoverable CF error if all signatures are different; if only two singatures matches, we consider that it is because of DF error.
+    So replace l.nop 1111 (that we replaced original end of application) like this
+    PREVIOUS
+        l.nop 1111
+    -----------------------------------
+    CURRENT
+        l.sfeq  r18, r20
+        l.bf    .LBB33_NOTCF
+        l.sfeq  r20, r28
+        l.bf    .LBB33_NOTCF
+        l.sfeq  r18, r28
+        l.bf    .LBB33_NOTCF
+        l.nop 0
+        l.nop 204
+    .LBB33_NOTCF:
+        l.nop 11111    
+- (EDDI) Similarly, insert comparison before the l.nop 4
+    l.sfne  r3, r16
+    l.bf    .LBB16_1
+    (.LBB16_1 is an detected error handling block of sim_putc function. In other application, you need to change it to the erorr block of simputc function)
+    Also, currently our LLVM has some bugs with l.nop 2 and l.nop 4.
+    If there are few instructions before l.nop 2 or l.nop 4 like
+        .intel_syntax
+        l.nop 1670
+        .att_syntax
+    please remove them
+    and
+        #APP
+        l.addi  r3,r16,0
+        #NO_APP
+    also remove them. 
+    (note that you should not remove l.nop 2 and l.nop 4)
+- (SWIFTR) Similar to EDDI, insert these instructions before l.nop 4
+        l.sfne      r3, r13
+        l.cmov  r3, r23, r3
+        l.cmov  r13, r23, r13
+    Also, please handle bugs with l.nop 2 and l.nop 4.
+    If there are few instructions before l.nop 2 or l.nop 4 like
+        .intel_syntax
+        l.nop 1670
+        .att_syntax
+        (If it exists, there will be one more. If it does not exist please don't mind)
+    please remove them and also
+        #APP
+        l.addi  r3,r13,0
+        #NO_APP
+        #APP
+        l.addi  r3,r23,0
+    remove them.
+    (note that you should not remove l.nop 2 and l.nop 4)
+- Finally, please insert l.nop 100 at the start of the main function, and l.nop 200 just before the end of main function (only before normal end) for FI range
